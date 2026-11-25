@@ -249,7 +249,7 @@ export class Space implements SpaceRuntime {
       // appctl sends --manager as the header on the write and as the manager the publish leaves.
       ...(manager ? ["--manager", manager.name, ...(manager.url ? ["--manager-url", manager.url] : [])] : []),
     ]);
-    // appctl ends an ephemeral app's line with "expires <when>  app <id>" (pneuma-space#40).
+    // appctl ends an ephemeral app's line with "expires <when>  app <id>".
     const app = result.code === 0 ? /\bexpires \S+ +app (\S+)\s*$/m.exec(result.output)?.[1] : undefined;
     return app ? { ...result, app } : result;
   }

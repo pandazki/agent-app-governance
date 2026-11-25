@@ -1,31 +1,24 @@
-# All in one: PneumaSpace (gateway, isolate runner, object store, Redis) plus a
-# headless pneuma Host. One command, loopback ports only, one trusted machine.
+# The local edition: PneumaSpace (gateway, isolate runner, object store, Redis), a headless
+# Chrome for the pictures on the owner page, and the Host. Loopback ports only, one trusted machine.
 #
 #   docker compose up -d --build
 #
 #   http://127.0.0.1:8080/apps/<name>/   your apps
 #   http://127.0.0.1:8081/               PneumaSpace console
-#   http://127.0.0.1:8090/               the Host: your apps, what waits for you, and the API the artifact CLI talks to
+#   http://127.0.0.1:8090/               the Host: your apps page, and the API the CLI talks to
 #                                        (to decide on that page, open the owner link: docker compose logs host | grep "owner link")
 #   ./apps/<name>/                       the app directories your coding agent opens
 #
 # The PneumaSpace services mirror pneuma-space/compose.yaml at the pinned commit;
 # every credential below is its single-trusted-machine default.
 #
-# Opt-in practice: the Host can put stored data back on undo (README, "Practice:
-# declaring that stored data can be put back"). Off unless you do all of this:
-#   1. docker compose --profile postgres up -d        adds PostgreSQL at postgres:5432
-#   2. before an app first declares a database ("db" in pneuma-space.json), put new databases on PostgreSQL:
-#      curl -X PUT http://127.0.0.1:8081/api/policy -H 'content-type: application/json' -d '{"db_backend":"postgres"}'
-#   3. in .env: PNEUMA_DATA_SNAPSHOT=postgres-template
-#               PNEUMA_DATA_SNAPSHOT_URL=postgresql://postgres:pneuma-local@postgres:5432/postgres
-#      then docker compose --profile postgres up -d again, so the Host picks them up.
-# Without the two variables the stack behaves as before. Apps on SQLite are not covered.
-name: pneuma-all-in-one
+# PostgreSQL is optional (--profile postgres). With it, undo can put an app's database back after a
+# one-way change: docs/reference.md, "Data snapshots for PostgreSQL". Apps on SQLite are not covered.
+name: agent-app-governance
 
 # pneuma-framework, which the Host is built on, comes from source at this commit (its packages are not on npm).
 # This line is where the commit is set: `bun run setup` reads it to fetch the same source into vendor/ for the
-# tests and the host-driven Host. Links in the READMEs into the framework's docs name the commit as well; move them with it.
+# tests and for `bun run drive`.
 # To build the Host on a local checkout instead, set PNEUMA_FRAMEWORK_CONTEXT to its path (.env.example).
 x-framework-context: &framework-context "${PNEUMA_FRAMEWORK_CONTEXT:-https://github.com/pandazki/pneuma-framework.git#c1ffce726866a3b315e9714c49a5547c2426fbcf}"
 
@@ -55,7 +48,7 @@ services:
       - gateway-data:/data
     environment:
       # Must name the network below: the gateway attaches what it starts to it. One variable sets both.
-      PNEUMA_SPACE_NETWORK: ${PNEUMA_SPACE_NETWORK:-pneuma-all-in-one}
+      PNEUMA_SPACE_NETWORK: ${PNEUMA_SPACE_NETWORK:-agent-app-governance}
       PNEUMA_SPACE_HTTP_PORT: ${PNEUMA_SPACE_HTTP_PORT:-8080}
       PNEUMA_SPACE_OBJECT_ROOT_USER: pneuma-local
       PNEUMA_SPACE_OBJECT_ROOT_PASSWORD: pneuma-local-secret
@@ -142,7 +135,7 @@ services:
   # for a picture of an app when a version goes live, when a waiting change has a preview, and once a day.
   # It sees apps as a visitor who is not signed in, through the gateway. A pictured page's own requests go only
   # to its own origin or over https; a WebSocket, and any request from a frame of another site, is not filtered
-  # and can reach every service on this network (README, "Pictures"). Nothing about releasing, approving or
+  # and can reach every service on this network (docs/reference.md). Nothing about releasing, approving or
   # undoing depends on it: stop it, or empty PNEUMA_SCREENSHOT_CDP, and the page shows placeholders. Not
   # published on any port.
   screenshot:
@@ -212,7 +205,7 @@ services:
 networks:
   space:
     # A fixed name, because the gateway is told it (PNEUMA_SPACE_NETWORK above). A second stack needs another one.
-    name: ${PNEUMA_SPACE_NETWORK:-pneuma-all-in-one}
+    name: ${PNEUMA_SPACE_NETWORK:-agent-app-governance}
 
 volumes:
   gateway-data:

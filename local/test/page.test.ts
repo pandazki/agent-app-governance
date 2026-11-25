@@ -85,7 +85,7 @@ const facts = (row: { facts: readonly { value: string }[] }) => row.facts.map((f
 const tags = (html: string) => [...html.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g)].map(([, name, attrs]) => ({ name: name!.toLowerCase(), attrs: attrs ?? "" }));
 
 beforeEach(() => {
-  work = mkdtempSync(join(tmpdir(), "space-all-in-one-page-"));
+  work = mkdtempSync(join(tmpdir(), "aag-page-"));
   space = new FakeSpace();
   host = new AppHost(options());
   // A stand-in for web/dist: the shell and the asset route only need the files to exist.

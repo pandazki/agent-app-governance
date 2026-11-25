@@ -38,21 +38,20 @@ COPY --from=space gateway/src /opt/pneuma-space/gateway/src
 COPY --from=space shared /opt/pneuma-space/shared
 COPY --from=space-templates . /opt/pneuma-space/templates
 
-# The layout under /framework is the one this image had when the Host lived in pneuma-framework's repository
-# as examples/space-all-in-one, kept as it was so that nothing about the running Host changes: the four
-# framework packages it imports, and this directory beside them.
+# The four framework packages the Host imports, and this directory beside them under /framework, so that
+# /framework/node_modules below resolves for both.
 WORKDIR /framework
 COPY --from=framework packages/core packages/core
 COPY --from=framework packages/host-kit packages/host-kit
 COPY --from=framework packages/backend-codex packages/backend-codex
 COPY --from=framework packages/backend-claude-code packages/backend-claude-code
-COPY package.json examples/space-all-in-one/package.json
-COPY src examples/space-all-in-one/src
-COPY bin examples/space-all-in-one/bin
-COPY overlay examples/space-all-in-one/overlay
-COPY policy examples/space-all-in-one/policy
+COPY package.json agent-app-governance/package.json
+COPY src agent-app-governance/src
+COPY bin agent-app-governance/bin
+COPY overlay agent-app-governance/overlay
+COPY policy agent-app-governance/policy
 COPY host-entrypoint.sh /usr/local/bin/host-entrypoint.sh
-COPY --from=page /repo/web/dist examples/space-all-in-one/web/dist
+COPY --from=page /repo/web/dist agent-app-governance/web/dist
 
 # The Host imports only dependency-free framework modules (governed-change,
 # workspace, enterprise-governance, release-rollout, build-thread), so linking
@@ -67,6 +66,6 @@ ENV PNEUMA_SPACE_CLI=/opt/pneuma-space/cli/appctl.ts \
     PNEUMA_HOST_PORT=8090 \
     PNEUMA_HOST_BIND=0.0.0.0
 EXPOSE 8090
-WORKDIR /framework/examples/space-all-in-one
+WORKDIR /framework/agent-app-governance
 ENTRYPOINT ["/usr/local/bin/host-entrypoint.sh"]
 CMD ["bun", "run", "src/serve.ts"]

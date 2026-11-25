@@ -22,9 +22,10 @@ import type { TestCoverage } from "./test-coverage";
 //   .pneuma/build-threads.json framework BuildThread transcript
 //   .pneuma/release-rollout.json  framework rollout state: what the address serves (active / previous)
 //
-// The Host keeps no state of its own about the app. Versions, history and the current
-// version belong to `@pneuma-framework/host-kit/change-record`, the framework's floor;
-// this Host writes its entries there with its own fields added.
+// Source, versions, history and the current version travel with the directory; they belong to
+// `@pneuma-framework/host-kit/change-record`, and this Host writes its entries there with its own
+// fields added. What does not travel: the app's stored data (on PneumaSpace), and the Host's own
+// state (pictures of apps and the owner token, in PNEUMA_HOST_STATE).
 // ---------------------------------------------------------------------------
 
 /**
@@ -385,7 +386,7 @@ export function describeAppsDir(appsDir: string, overlayDir: string, cliSource: 
 
 /**
  * Bring an app's copy of the CLI up to the Host's. The copy is how an agent talks to this Host, so a
- * copy from an earlier Host silently drops what it does not know (a live run sent `undo --to v4` as a
+ * copy from an earlier Host silently drops what it does not know (it would send `undo --to v4` as a
  * plain undo). It lives under `.pneuma/`, which is not part of any version. Returns whether it changed.
  */
 export function refreshCli(root: string, cliSource: string): boolean {

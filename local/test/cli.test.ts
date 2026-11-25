@@ -35,7 +35,7 @@ const cli = (cwd: string, ...args: string[]) =>
   runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: hostUrl, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
 
 beforeAll(async () => {
-  work = mkdtempSync(join(tmpdir(), "space-all-in-one-cli-"));
+  work = mkdtempSync(join(tmpdir(), "aag-cli-"));
   space = new FakeSpace();
   host = new AppHost({
     appsDir: join(work, "apps"),
@@ -760,7 +760,7 @@ describe("the Host's address, as the Host recorded it", () => {
   const own = (args: string[], env: Record<string, string> = {}) => bare(appDir(), ".pneuma/pneuma.mjs", args, { PNEUMA_AGENT: "codex", ...env });
 
   beforeAll(async () => {
-    addrWork = mkdtempSync(join(tmpdir(), "space-all-in-one-address-"));
+    addrWork = mkdtempSync(join(tmpdir(), "aag-address-"));
     // Two ports nobody holds: one for this Host, which records its address before it listens, and one left closed.
     const freePort = async () => {
       const placeholder = createTcpServer();
@@ -808,7 +808,7 @@ describe("the Host's address, as the Host recorded it", () => {
   });
 
   test("the copy run by its path from another directory finds the address recorded beside it", async () => {
-    const elsewhere = mkdtempSync(join(tmpdir(), "space-all-in-one-elsewhere-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "aag-elsewhere-"));
     try {
       const status = await bare(elsewhere, join(appDir(), ".pneuma", "pneuma.mjs"), ["status", "--app", "moved"]);
       expect(status.code).toBe(0);
@@ -930,7 +930,7 @@ describe("the agent a submit records, and where its name came from", () => {
     expect(claude.stdout).toContain("recorded agent: claude-code (detected from CLAUDECODE, CLAUDE_CODE_ENTRYPOINT)");
     expect(lastEntry()).toMatchObject({ agent: "claude-code", agent_source: "detected", agent_markers: ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] });
 
-    // A shell Codex started, as in pandazki/pneuma-framework#3: its own variables beside the inherited ones.
+    // A shell Codex started: its own variables beside the inherited ones.
     const codex = await submit({ CODEX_THREAD_ID: "019a2b3c-thread", CODEX_TOOL_CALL_ID: "call_1", ...inherited });
     expect(codex.stderr).toBe("");
     expect(codex.stdout).toContain("recorded agent: codex (detected from CODEX_THREAD_ID, CODEX_TOOL_CALL_ID)");
@@ -1011,7 +1011,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   const here = (args: string[], env: Record<string, string> = {}) => bare(appsDir(), ".pneuma/pneuma.mjs", args, { PNEUMA_AGENT: "codex", ...env });
 
   beforeAll(async () => {
-    rootWork = mkdtempSync(join(tmpdir(), "space-all-in-one-root-"));
+    rootWork = mkdtempSync(join(tmpdir(), "aag-root-"));
     const placeholder = createTcpServer();
     await new Promise<void>((resolve) => placeholder.listen(0, "127.0.0.1", resolve));
     const { port } = placeholder.address() as AddressInfo;
@@ -1103,7 +1103,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect((await bare(join(appsDir(), "alpha"), ".pneuma/pneuma.mjs", ["guide"])).stdout).toBe(guide.stdout);
 
     const listCommand = /`(node .+? list)`/.exec(guide.stdout)![1]!;
-    const elsewhere = mkdtempSync(join(tmpdir(), "space-all-in-one-anywhere-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "aag-anywhere-"));
     try {
       const list = await shell(elsewhere, listCommand);
       expect(list.code).toBe(0);
@@ -1114,7 +1114,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   });
 
   test("in an apps directory whose name has a space and a quote, the commands in the guide run as copied", async () => {
-    const spaced = join(mkdtempSync(join(tmpdir(), "space-all-in-one-spaced-")), "My Apps (Bob's)");
+    const spaced = join(mkdtempSync(join(tmpdir(), "aag-spaced-")), "My Apps (Bob's)");
     const placeholder = createTcpServer();
     await new Promise<void>((resolve) => placeholder.listen(0, "127.0.0.1", resolve));
     const { port } = placeholder.address() as AddressInfo;
@@ -1132,7 +1132,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     });
     const spacedServer = createHostServer(spacedHost);
     await new Promise<void>((resolve) => spacedServer.listen(port, "127.0.0.1", resolve));
-    const elsewhere = mkdtempSync(join(tmpdir(), "space-all-in-one-anywhere-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "aag-anywhere-"));
     try {
       spacedHost.announce();
       const guide = await bare(spaced, ".pneuma/pneuma.mjs", ["guide"]);
@@ -1153,7 +1153,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   });
 
   test("guide --write adds the block to the named file, replaces it on the next run, and touches nothing else", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "space-all-in-one-guide-"));
+    const dir = mkdtempSync(join(tmpdir(), "aag-guide-"));
     try {
       const file = join(dir, "AGENTS.md");
       writeFileSync(file, "# My instructions\n\nBe brief.\n");
@@ -1186,7 +1186,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   });
 
   test("guide --write replaces its own block when stray markers sit elsewhere in the file, and keeps the text around them", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "space-all-in-one-guide-"));
+    const dir = mkdtempSync(join(tmpdir(), "aag-guide-"));
     try {
       const file = join(dir, "AGENTS.md");
       const BEGIN = "<!-- pneuma-apps:begin (written by pneuma.mjs guide; guide --write replaces this block) -->";
@@ -1229,7 +1229,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   });
 
   test("guide refuses when it cannot tell where the apps live", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "space-all-in-one-noapps-"));
+    const dir = mkdtempSync(join(tmpdir(), "aag-noapps-"));
     try {
       writeFileSync(join(dir, "pneuma.mjs"), readFileSync(join(EXAMPLE, "bin", "pneuma.mjs")));
       const guide = await bare(dir, join(dir, "pneuma.mjs"), ["guide"], { PNEUMA_HOST: url });

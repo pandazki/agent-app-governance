@@ -628,8 +628,7 @@ export class AppHost {
 
   /**
    * Versions an earlier Host released never said whether they were one-way: that field did not exist.
-   * Left unmarked, an undo past the column drop that started this work would report success again.
-   * So, once, when such an app is put on the record, the preset's one-way rules are applied to each
+   * Left unmarked, an undo past a column drop among them would report success. So, once, when such an app is put on the record, the preset's one-way rules are applied to each
    * version against the version it was built on, and what they find is declared with a note. A
    * version that already carries a declaration is skipped, so running this twice adds nothing.
    */
@@ -1188,7 +1187,7 @@ export class AppHost {
       } catch (err) {
         throw await this.releasedButNotRecorded(name, record, null, err, () => {});
       }
-      await this.markServing(name, paths, entry.version!, outcome.address, outcome.probe, "space-all-in-one release");
+      await this.markServing(name, paths, entry.version!, outcome.address, outcome.probe, "release");
       this.log(`created ${name} ${entry.version} at ${outcome.address}`);
       return {
         status: "published",
@@ -1351,7 +1350,7 @@ export class AppHost {
           serving_version: serving,
         };
       }
-      await this.markServing(input.name, paths, version, released.address, released.probe, "space-all-in-one release (record mode)");
+      await this.markServing(input.name, paths, version, released.address, released.probe, "release (record mode)");
       this.log(`${input.name} ${changeId} ${asIs ? "released as it is" : "recorded and published"} as ${version}${note ? `; ${note}` : ""}`);
       const wayReason = oneWay?.reason ?? (asIs ? declared : undefined);
       return {
@@ -1698,7 +1697,7 @@ export class AppHost {
         );
       }
       if (workingTree !== undefined && !edited) restoreWorkingTree(record.versionDir(version), paths.root);
-      await this.markServing(name, paths, version, released.address, released.probe, "space-all-in-one release");
+      await this.markServing(name, paths, version, released.address, released.probe, "release");
       await threads.appendTurn(info.thread_id, {
         kind: "host_execution_receipt",
         proposal_id: change.change_id,
@@ -2327,7 +2326,7 @@ function cannotVouch(record: ChangeRecord, serving: string | null): { readonly w
   return undefined;
 }
 
-/** The one line status, list and the overview page show while `cannotVouch` holds; undefined otherwise. */
+/** The one line status, list and the owner page show while `cannotVouch` holds; undefined otherwise. */
 function servingUncertainLine(record: ChangeRecord, serving: string | null): string | undefined {
   const uncertain = cannotVouch(record, serving);
   return uncertain ? `${uncertain.why}. ${uncertain.undoUnfinished ? RUN_UNDO : NEXT_ANSWER_SETTLES}` : undefined;

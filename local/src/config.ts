@@ -118,7 +118,7 @@ export function previewTtlFromEnv(env: Env): number {
  * system's temporary directory. Never inside the apps directory, which the agent can write.
  */
 export function hostStateDir(env: Env = process.env): string {
-  return resolve(env.PNEUMA_HOST_STATE?.trim() || join(tmpdir(), "pneuma-host-state"));
+  return resolve(env.PNEUMA_HOST_STATE?.trim() || join(tmpdir(), "agent-app-governance-host-state"));
 }
 
 /**

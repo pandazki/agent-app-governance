@@ -49,7 +49,7 @@ const writeIntoDrafts = (name: string, rel: string, content: string) => {
 };
 
 beforeEach(() => {
-  work = mkdtempSync(join(tmpdir(), "space-all-in-one-"));
+  work = mkdtempSync(join(tmpdir(), "aag-"));
   space = new FakeSpace();
   host = makeHost(join(work, "apps"), space);
 });
@@ -1914,7 +1914,7 @@ describe("what the second review found", () => {
     const stuck = await noPreview.status("todo");
     expect(stuck).toMatchObject({ active_version: "v1", serving_version: "v1" });
     expect(stuck.serving_uncertain).toContain("the address could not be put back on v1 and may still serve the rejected build");
-    // list and the overview page say it too, although the versions agree.
+    // list and the owner page say it too, although the versions agree.
     expect(noPreview.summaries()[0]).toMatchObject({ serves_other_version: false, serving_uncertain: stuck.serving_uncertain });
     // The owner page tells this case from an unfinished undo: nothing is held up.
     const overview = await noPreview.overview();
@@ -2072,7 +2072,7 @@ describe("app directories made before the change record", () => {
   });
 
   test("a version the preset finds one-way is declared so when the app is put on the record, once", async () => {
-    // v2 is the column drop of the live run: released by the earlier Host, which had no way to say it was one-way.
+    // v2 is a column drop released by an earlier Host, which had no way to say it was one-way.
     await legacyApp("todo", true, DROP_NOTE);
     const declared = () => host.history("todo").filter((h) => h.kind === "declaration");
     expect(declared()).toHaveLength(1);
@@ -2176,7 +2176,7 @@ describe("what the test check covered", () => {
     await host.create("todo");
     expect(testScript("todo")).toBe("node --test '**/*.test.ts'");
 
-    // An app made from a template before pandazki/pneuma-space#35: its script runs the SDK's tests only. Opening it leaves that alone.
+    // An app made from an earlier template: its script runs the SDK's tests only. Opening it leaves that alone.
     const older = `${JSON.stringify({ name: "pneuma-space-app", scripts: { test: "node --test 'sdk/*.test.ts'" } }, null, 2)}\n`;
     edit("todo", "package.json", older);
     await host.status("todo");
@@ -2786,7 +2786,7 @@ describe("the preview ttl and the manager name, from the environment", () => {
     expect(() => previewTtlFromEnv({ PNEUMA_PREVIEW_TTL: "1h" })).toThrow('PNEUMA_PREVIEW_TTL must be a whole number of seconds above 0, not "1h"');
     expect(() => previewTtlFromEnv({ PNEUMA_PREVIEW_TTL: "0" })).toThrow("PNEUMA_PREVIEW_TTL must be");
     expect(managerFromEnv({})).toEqual({ name: "pneuma-host" });
-    // The served Host's overview page is where a person acts through it.
+    // The served Host's owner page is where a person acts through it.
     expect(managerFromEnv({ PNEUMA_MANAGER: "my-host" }, "http://127.0.0.1:48363")).toEqual({ name: "my-host", url: "http://127.0.0.1:48363/" });
     expect(() => managerFromEnv({ PNEUMA_MANAGER: "My Host" })).toThrow('PNEUMA_MANAGER must be a name PneumaSpace accepts');
   });

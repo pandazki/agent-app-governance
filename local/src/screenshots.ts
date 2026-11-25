@@ -33,8 +33,8 @@ import type { AppStatus, AppSummary } from "./host";
 // for, since Chrome runs such a frame in a process of its own. Through them a
 // pictured page can still send requests to those services: a handshake is a
 // GET whose answer the page cannot read, and an https frame from another site
-// sent plain-http GETs and POSTs in a trial with headless Chrome 158. The
-// README ("Pictures") says what that leaves on the compose stack.
+// can send plain-http GETs and POSTs (headless Chrome 158 does). docs/reference.md
+// says what that leaves on the compose stack.
 //
 // Nothing about releasing, approving or undoing waits for or depends on this.
 // Without a browser, or when it does not answer, the page shows a placeholder.

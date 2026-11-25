@@ -1,5 +1,5 @@
 {
-  "name": "space-all-in-one",
+  "name": "agent-app-governance-local",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "vendor/pneuma-framework/packages/backend-codex",
     "vendor/pneuma-framework/packages/backend-claude-code"
   ],
-  "description": "A headless Creation Host on PneumaSpace: one governed loop, driven either by a coding agent (Claude Code, Codex) or by the Host.",
+  "description": "The local edition of agent-app-governance: PneumaSpace and a Host that checks, approves, publishes and records every change to apps made by coding agents.",
   "scripts": {
     "setup": "sh scripts/setup.sh",
     "serve": "bun run src/serve.ts",

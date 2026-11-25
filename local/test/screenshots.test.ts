@@ -33,7 +33,7 @@ const edit = (name: string, rel: string, content: string) => {
 };
 
 beforeEach(() => {
-  work = mkdtempSync(join(tmpdir(), "space-all-in-one-shots-"));
+  work = mkdtempSync(join(tmpdir(), "aag-shots-"));
   shots = join(work, "state", "pictures");
   space = new FakeSpace();
   host = new AppHost({
@@ -265,7 +265,7 @@ describe.skipIf(!existsSync(CHROME))("capture over the DevTools protocol, agains
         return new Response("not found", { status: 404 });
       },
     });
-    const profile = mkdtempSync(join(tmpdir(), "space-all-in-one-chrome-"));
+    const profile = mkdtempSync(join(tmpdir(), "aag-chrome-"));
     const port = 9400 + Math.floor(Math.random() * 400);
     const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", `--remote-debugging-port=${port}`, "--remote-debugging-address=127.0.0.1", `--user-data-dir=${profile}`, "--no-first-run", "about:blank"], { stdio: "ignore" });
     try {

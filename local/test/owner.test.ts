@@ -27,7 +27,7 @@ let runs: Running[] = [];
 
 /** Start a Host with this owner token; null starts one with no owner link at all. */
 async function start(ownerToken: string | null = TOKEN, make: (options: ConstructorParameters<typeof AppHost>[0]) => AppHost = (o) => new AppHost(o)): Promise<Running> {
-  const work = mkdtempSync(join(tmpdir(), "space-all-in-one-owner-"));
+  const work = mkdtempSync(join(tmpdir(), "aag-owner-"));
   const space = new FakeSpace();
   const host = make({
     appsDir: join(work, "apps"),
@@ -116,7 +116,7 @@ describe("the owner link", () => {
   });
 
   test("is kept in the Host's own state directory, readable by the Host's user only, so it survives a restart", () => {
-    const dir = mkdtempSync(join(tmpdir(), "space-all-in-one-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "aag-state-"));
     try {
       const first = ownerTokenIn(join(dir, "state"));
       expect(first).toMatch(/^[A-Za-z0-9_-]{32}$/);

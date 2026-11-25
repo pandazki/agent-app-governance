@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pneuma-framework",
+      "name": "agent-app-governance-local",
       "dependencies": {
         "@pneuma-framework/backend-claude-code": "workspace:*",
         "@pneuma-framework/backend-codex": "workspace:*",

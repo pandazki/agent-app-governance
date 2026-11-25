@@ -31,7 +31,7 @@ function send(method: string, path: string, headers: Record<string, string>, bod
 const json = { "content-type": "application/json" };
 
 beforeAll(async () => {
-  work = mkdtempSync(join(tmpdir(), "space-all-in-one-server-"));
+  work = mkdtempSync(join(tmpdir(), "aag-server-"));
   const host = new AppHost({
     appsDir: join(work, "apps"),
     space: new FakeSpace(),
