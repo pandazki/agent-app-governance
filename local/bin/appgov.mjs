@@ -567,6 +567,7 @@ switch (command) {
         const where = h.version ? ` -> ${h.version}` : "";
         const why = h.reason ? ` (${h.reason})` : "";
         console.log(`${h.at} ${h.kind} ${h.outcome}${where} by ${h.agent} [${h.control}]: ${h.intent}${why}`);
+        if (h.author) console.log(`    the change was made by ${h.author}`);
         if (h.agent_candidates?.length) {
           console.log(`    agent unknown: markers of more than one agent were set (${h.agent_candidates.map((c) => `${c.agent}: ${c.markers.join(", ")}`).join("; ")})`);
         }

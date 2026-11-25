@@ -662,7 +662,8 @@ if (command === "create") {
   if (!args[0]) fail("create takes <name>");
   const dir = resolve(flags.into ?? args[0]);
   if (existsSync(dir) && readdirSync(dir).length) fail(`${dir} is not empty; name another directory with --into <dir>`);
-  const result = await call("POST", "/apps", { name: args[0] });
+  // The centre records who asked from the credential: with an agent token, as the agent named or detected here.
+  const result = await call("POST", "/apps", { name: args[0], ...agentFields(identifyAgent()) });
   let code = 0;
   out(result, (data) => (code = printChange(data)));
   if (result.status === "published" && result.working_copy) newCopy(dir, result.working_copy);
@@ -730,7 +731,8 @@ switch (command) {
       for (const h of history) {
         const where = h.version ? ` -> ${h.version}` : "";
         const why = h.reason ? ` (${h.reason})` : "";
-        console.log(`${h.at} ${h.kind} ${h.outcome}${where} by ${h.agent} [${h.control}]: ${h.intent}${why}`);
+        console.log(`${h.at} ${h.kind} ${h.outcome}${where} by ${h.agent}${h.credential ? ` (${h.credential})` : ""} [${h.control}]: ${h.intent}${why}`);
+        if (h.author) console.log(`    the change was made by ${h.author}`);
         if (h.changed_paths?.length) console.log(`    files: ${h.changed_paths.join(", ")}`);
         if (h.approval) console.log(`    approval: ${h.approval.reason_code} by ${h.approval.by.join(", ") || "nobody yet"} (${h.risks?.join(", ") ?? ""})`);
         const tests = h.checks?.find((check) => check.id === "npm-test");

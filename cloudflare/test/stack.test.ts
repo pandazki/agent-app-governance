@@ -110,6 +110,8 @@ describe("the Cloudflare edition end to end, offline", () => {
     // The preview was an ephemeral app, and it was discarded.
     expect(stack.plane.apps.some((a) => a.expiresAt !== null && a.status === "purged")).toBe(true);
     expect(stack.bucket.objects.has(folderKey("todo"))).toBe(true);
+    // Made with the agent token: the record names the agent and the token, not the Host on the owner's behalf.
+    expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(agent token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
   });
 
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {
@@ -138,16 +140,24 @@ describe("the Cloudflare edition end to end, offline", () => {
     const refused = await cli(copy(), ["approve", id]);
     expect(refused.code).toBe(2);
     expect(refused.out).toContain("an agent token cannot do it");
-    const approved = await cli(copy(), ["approve", id], { owner: true });
+    const approved = await cli(copy(), ["approve", id], { owner: true, env: { CODEX_THREAD_ID: "x" } });
     expect(approved.out).toContain("published v3");
     expect(approved.code).toBe(0);
     expect(stack.plane.serving("todo")).not.toBeNull();
+    // The approval is the owner's, recorded as theirs; the change's author stays beside it.
+    const history = (await cli(copy(), ["history"])).out;
+    expect(history).toContain("change needs_approval by test-agent (agent token");
+    expect(history).toMatch(/decision published -> v3 by user:owner \(owner session\) \[owner\]: Let visitors in/);
+    expect(history).toContain("    the change was made by test-agent");
   });
 
-  test("undo goes back one version: the earlier files serve and history shows it", async () => {
-    const undone = await cli(copy(), ["undo", "the owner wants sign-in back"]);
+  test("undo goes back one version: the earlier files serve and history shows it; the owner's undo is the owner's", async () => {
+    // Run by the owner from inside another agent's environment: the record names the owner, not that agent.
+    const undone = await cli(root, ["--host", stack.url, "--app", "todo", "undo", "the owner wants sign-in back"], { owner: true, env: { CLAUDECODE: "1" } });
     expect(undone.code).toBe(0);
     expect(undone.out).toContain("now on v2");
+    expect((await cli(copy(), ["fetch"])).code).toBe(0);
+    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v2 by owner \(owner session\) \[owner\]: the owner wants sign-in back/);
     expect(JSON.parse(readFileSync(join(copy(), "pneuma-space.json"), "utf8")).capabilities.identity).toEqual({ required: true });
     expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v2/);
   });

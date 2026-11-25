@@ -43,6 +43,8 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 
 `login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。它还在旁边写下这个中心部署时带的 CLI（`~/apps/.appgov/appgov.mjs`），以及一个 `AGENTS.md`（Claude Code 通过 `CLAUDE.md` 读到它），告诉在 `~/apps` 里启动的 agent：这个目录是什么，怎样列出、创建和取回应用，以及 `centre.json` 是凭据，不能打印、复制或提交。你在这个 `AGENTS.md` 里、它写的那一段之外留下的文字会保留。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
 
+历史记录按中心认证的凭据写下是谁做的，而不是按 CLI 运行时所在的环境：用主人会话做的操作记为主人的；用 agent 令牌做的操作记为 CLI 识别出的 agent（识别不出就是 `unknown`），并写上令牌的标签。一次决定会写明做决定的主人，以及那是哪个 agent 的改动。
+
 CLI 和中心会核对彼此说的 API 级别。级别不同的 CLI 会停下并说明；`node .appgov/appgov.mjs update` 会把它换成中心自己的 CLI。
 
 ## 创建应用

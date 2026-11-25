@@ -43,6 +43,8 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 
 `login` reads the owner credentials file and keeps the session (12 hours) next to it. `token create --write ~/apps` writes the centre's address and a new agent token to `~/apps/.appgov/centre.json` (mode 0600) and never prints the token. Beside it, it writes the CLI this centre was deployed with, at `~/apps/.appgov/appgov.mjs`, and an `AGENTS.md` (read by Claude Code through a `CLAUDE.md`) that tells an agent started in `~/apps` what the directory is, how to list, create and fetch apps, and that `centre.json` is a credential it must not print, copy or commit. Text you keep in that `AGENTS.md` outside the block it writes stays. Your agent works in `~/apps`. `token list` and `token revoke <id>` manage the tokens.
 
+The history names who acted from the credential the centre authenticated, not from the environment the CLI ran in: an operation with the owner's session is the owner's, and one with an agent token is recorded as the agent the CLI detected (or `unknown`), with the token's label. A decision names the owner who made it and the agent whose change it was.
+
 The CLI and the centre check that they speak the same API level. A CLI at another level stops and says so; `node .appgov/appgov.mjs update` replaces it with the centre's own.
 
 ## Create an app

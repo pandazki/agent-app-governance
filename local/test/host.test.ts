@@ -224,6 +224,21 @@ describe("changes a person has to decide", () => {
     expect(host.history("todo").at(-1)).toMatchObject({ kind: "decision", outcome: "denied" });
   });
 
+  test("a decision is recorded as the decider's, with the change's author beside it", async () => {
+    const manifest = JSON.parse(readFileSync(app("todo", "pneuma-space.json"), "utf8"));
+    manifest.capabilities.identity = { required: false };
+    edit("todo", "pneuma-space.json", JSON.stringify(manifest));
+    const result = await host.submit({ name: "todo", intent: "make it public", agent: "codex", agentProvenance: { source: "detected", markers: ["CODEX_THREAD_ID"] } });
+    if (result.status !== "needs_approval") throw new Error(`expected needs_approval, got ${result.status}`);
+    expect(host.history("todo").at(-1)).toMatchObject({ kind: "change", outcome: "needs_approval", agent: "codex", control: "agent-driven", agent_source: "detected" });
+
+    await host.resolve("todo", result.change_id, "approved", OWNER);
+    const decision = host.history("todo").at(-1)!;
+    // Not "by codex [agent-driven]": the owner decided. Where codex's name came from belongs to its own entry above.
+    expect(decision).toMatchObject({ kind: "decision", outcome: "published", agent: OWNER, control: "owner", author: "codex", approval: { by: [OWNER] } });
+    expect(decision.agent_source).toBeUndefined();
+  });
+
   test("a malformed file among the waiting changes is left out and named, and the others can still be decided", async () => {
     edit("todo", "src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
     const result = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });

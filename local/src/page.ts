@@ -640,7 +640,8 @@ function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean):
     item.version ? { label: w.d_version, value: `${item.version}${main.base_version ? ` ← ${str(main.base_version)}` : ""}`, mono: true } : null,
     { label: w.d_change, value: str(main.change_id), mono: true },
     { label: w.d_outcome, value: `${str(main.kind)} ${str(main.outcome)}`, mono: true },
-    { label: w.d_agent, value: `${str(main.agent)}${main.agent_source ? ` (${str(main.agent_source)})` : ""}${candidates.length ? `: ${candidates.map((c) => `${str(c?.agent)} ${list(c?.markers)}`).join("; ")}` : ""}`, mono: true },
+    // On a decision, `agent` is who decided; the agent that made the change is its `author`.
+    { label: w.d_agent, value: main.author !== undefined ? str(main.author) : `${str(main.agent)}${main.agent_source ? ` (${str(main.agent_source)})` : ""}${candidates.length ? `: ${candidates.map((c) => `${str(c?.agent)} ${list(c?.markers)}`).join("; ")}` : ""}`, mono: true },
     main.kind !== "snapshot" ? { label: w.d_guarantees, value: items(main.guarantees).length ? list(main.guarantees) : w.d_recorded_only, mono: true } : null,
     items(main.risks).length ? { label: w.d_risks, value: list(main.risks), mono: true } : null,
     approval ? { label: w.d_approval, value: `${str(approval.reason_code)} · ${list(approval.by)}${approval.preset ? ` (${str(approval.preset)})` : ""}`, mono: true } : null,

@@ -230,6 +230,16 @@ export interface HostEntryFields {
   readonly agent_candidates?: readonly { readonly agent: string; readonly markers: readonly string[] }[];
   /** An owner's decision or undo that came through somewhere other than the CLI, e.g. `owner-page`. Absent for the CLI. */
   readonly channel?: string;
+  /**
+   * The credential the request was authenticated with, where the Host's front authenticates one: `owner session`, or
+   * `agent token "<label>" (<id>)`. Absent where nobody is authenticated (the local edition).
+   */
+  readonly credential?: string;
+  /**
+   * A decision: the agent that made the change decided on, as the change's `needs_approval` entry names it. `agent` on
+   * a decision is the subject who decided.
+   */
+  readonly author?: string;
 }
 
 /** One line of `.pneuma-framework/history.jsonl`: the change record's entry plus this Host's fields. */
