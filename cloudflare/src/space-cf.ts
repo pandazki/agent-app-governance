@@ -26,7 +26,7 @@ import { measured, timed } from "../../host/src/steps";
 // ---------------------------------------------------------------------------
 
 export interface CfSpaceOptions {
-  /** The plane's origin, e.g. https://appgov.vibecoding.icu. */
+  /** The plane's origin, e.g. https://space.example.com. */
   readonly origin: string;
   /** A token of the plane with the scopes read, publish, invoke, manage and remove. */
   readonly token: string;
