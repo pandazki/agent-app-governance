@@ -1,6 +1,6 @@
 # The served (agent-driven) Host. Build context is this directory (local/). pneuma-framework arrives as the
 # additional build context "framework": its source at the commit compose.yaml pins, or a local checkout
-# (PNEUMA_FRAMEWORK_CONTEXT). PneumaSpace arrives as three more: "space" (gateway/src and shared),
+# (APPGOV_FRAMEWORK_CONTEXT). PneumaSpace arrives as three more: "space" (gateway/src and shared),
 # "space-cli" and "space-templates" (see compose.yaml for why they are separate).
 #
 # Node 24 runs PneumaSpace's CLI (appctl) and the apps' own `npm ci && npm test`.
@@ -61,10 +61,10 @@ RUN mkdir -p node_modules/@pneuma-framework \
 
 # The Host binds to loopback by default. In here it has to take connections arriving through the
 # published port; compose.yaml publishes that port on the machine's loopback only.
-ENV PNEUMA_SPACE_CLI=/opt/pneuma-space/cli/appctl.ts \
-    PNEUMA_APPS_DIR=/apps \
-    PNEUMA_HOST_PORT=8090 \
-    PNEUMA_HOST_BIND=0.0.0.0
+ENV APPGOV_SPACE_CLI=/opt/pneuma-space/cli/appctl.ts \
+    APPGOV_APPS_DIR=/apps \
+    APPGOV_HOST_PORT=8090 \
+    APPGOV_HOST_BIND=0.0.0.0
 EXPOSE 8090
 WORKDIR /framework/agent-app-governance
 ENTRYPOINT ["/usr/local/bin/host-entrypoint.sh"]

@@ -46,7 +46,7 @@ export function useNow(): number {
 
 // --- owner ------------------------------------------------------------------
 
-const OWNER_KEY = "pneuma-owner";
+const OWNER_KEY = "appgov-owner";
 
 export const ownerToken = {
   get(): string | null {
@@ -79,7 +79,7 @@ export function useOwnerState(off: boolean): { state: OwnerState; lose: () => vo
     const token = ownerToken.get();
     if (!token) return setState("no");
     let live = true;
-    fetch("/owner/session", { method: "POST", headers: { "content-type": "application/json", "x-pneuma-owner": token }, body: "{}" })
+    fetch("/owner/session", { method: "POST", headers: { "content-type": "application/json", "x-appgov-owner": token }, body: "{}" })
       .then((res) => {
         if (!live) return;
         if (res.ok) setState("yes");
@@ -118,7 +118,7 @@ export async function act(url: string, body: Record<string, unknown>): Promise<A
   const token = ownerToken.get();
   if (!token) return { ok: false, status: 0, data: {}, lost: true };
   try {
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-pneuma-owner": token }, body: JSON.stringify(body) });
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-appgov-owner": token }, body: JSON.stringify(body) });
     const data = ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
     const lost = data.reason === "owner_link_required" || data.reason === "owner_page_off";
     return { ok: res.ok, status: res.status, data, lost };

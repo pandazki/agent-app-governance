@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The artifact's own CLI. No dependencies; any Node >= 18 runs it. A copy lives in
-// every app at .pneuma/pneuma.mjs, so whichever coding agent opens the directory
+// every app at .appgov/appgov.mjs, so whichever coding agent opens the directory
 // can drive the governed loop without installing anything.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -12,10 +12,10 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_HOST = "http://127.0.0.1:8090";
 // The directory under each app directory, and under the apps directory, that the Host keeps for itself.
 // The Host names it in src/artifact.ts (STATE_DIR); this copy runs without that code, and a test checks the two agree.
-const STATE_DIR = ".pneuma";
+const STATE_DIR = ".appgov";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
-const USAGE = `usage: node .pneuma/pneuma.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json]
+const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json]
 
   status [<name>]        active version, address, uncommitted files, changes waiting for the owner,
                          and what submit does in the mode this Host runs in
@@ -36,9 +36,9 @@ const USAGE = `usage: node .pneuma/pneuma.mjs <command> [--app <name>] [--agent 
 
 In an app's directory, commands act on that app. Elsewhere, name it: status <name>, or --app <name>.
 
-The Host's address: --host <url>, else PNEUMA_HOST, else the address the Host recorded in
-.pneuma/host.json (here or in a directory above), else ${DEFAULT_HOST}.
-PNEUMA_AGENT names the agent for the history; PNEUMA_OWNER is the owner subject (default user:me).`;
+The Host's address: --host <url>, else APPGOV_HOST, else the address the Host recorded in
+${STATE_DIR}/host.json (here or in a directory above), else ${DEFAULT_HOST}.
+APPGOV_AGENT names the agent for the history; APPGOV_OWNER is the owner subject (default user:me).`;
 
 // The flags that take a value, and what to say when one is the last word with nothing after it. Without a value
 // such a flag would be dropped silently: `undo --to` would go back one step, `submit --one-way` would submit
@@ -80,7 +80,7 @@ function findApp(start) {
 const readableTime = (iso) => (typeof iso === "string" && iso.length >= 16 ? `${iso.slice(0, 16).replace("T", " ")} UTC` : "an unknown date");
 
 /**
- * The address a Host recorded for itself: .pneuma/host.json in the current directory or above, else
+ * The address a Host recorded for itself: .appgov/host.json in the current directory or above, else
  * next to this copy of the CLI, else in the apps directory next to bin/ (local/apps).
  */
 function findRecordedHost(start) {
@@ -114,13 +114,13 @@ function resolveHost(flag) {
   const clean = (url) => String(url).trim().replace(/\/+$/, "");
   const recorded = findRecordedHost(process.cwd());
   if (flag) return { url: clean(flag), source: "That address came from the --host flag.", recorded };
-  if (process.env.PNEUMA_HOST) return { url: clean(process.env.PNEUMA_HOST), source: "That address came from PNEUMA_HOST.", recorded };
+  if (process.env.APPGOV_HOST) return { url: clean(process.env.APPGOV_HOST), source: "That address came from APPGOV_HOST.", recorded };
   if (recorded) {
     return { url: clean(recorded.url), source: `That address was recorded by the Host on ${readableTime(recorded.recorded_at)} in ${recorded.file}.`, recorded };
   }
   return {
     url: DEFAULT_HOST,
-    source: "That address is the built-in default: there is no --host flag, no PNEUMA_HOST, and no .pneuma/host.json recorded by a Host here or above.",
+    source: `That address is the built-in default: there is no --host flag, no APPGOV_HOST, and no ${STATE_DIR}/host.json recorded by a Host here or above.`,
   };
 }
 
@@ -134,32 +134,32 @@ const AGENT_MARKERS = [
 ];
 
 /**
- * Who to name in the history, and where the name came from: the --agent flag, PNEUMA_AGENT, or the one
+ * Who to name in the history, and where the name came from: the --agent flag, APPGOV_AGENT, or the one
  * agent whose markers are set. With markers of more than one agent, nobody is guessed: the agent is
  * recorded as "unknown" with the candidates beside it, and the caller warns.
  */
 function identifyAgent() {
   if (flags.agent?.trim()) return { name: flags.agent.trim(), source: "--agent" };
-  if (process.env.PNEUMA_AGENT?.trim()) return { name: process.env.PNEUMA_AGENT.trim(), source: "PNEUMA_AGENT" };
+  if (process.env.APPGOV_AGENT?.trim()) return { name: process.env.APPGOV_AGENT.trim(), source: "APPGOV_AGENT" };
   const found = AGENT_MARKERS.map(({ agent, markers }) => ({ agent, markers: markers(process.env) })).filter((candidate) => candidate.markers.length);
   if (found.length === 1) return { name: found[0].agent, source: "detected", markers: found[0].markers };
   if (found.length > 1) return { name: "unknown", source: "ambiguous", candidates: found };
   return { name: "unknown", source: "none" };
 }
 
-/** "codex (from PNEUMA_AGENT)": the recorded agent and where its name came from, in words. */
+/** "codex (from APPGOV_AGENT)": the recorded agent and where its name came from, in words. */
 function describeAgent(agent) {
   switch (agent?.source) {
     case "--agent":
       return `${agent.name} (from the --agent flag)`;
-    case "PNEUMA_AGENT":
-      return `${agent.name} (from PNEUMA_AGENT)`;
+    case "APPGOV_AGENT":
+      return `${agent.name} (from APPGOV_AGENT)`;
     case "detected":
       return `${agent.name} (detected from ${agent.markers.join(", ")})`;
     case "ambiguous":
       return `unknown (markers of more than one agent are set: ${agent.candidates.map((c) => `${c.agent} from ${c.markers.join(", ")}`).join("; ")})`;
     case "none":
-      return "unknown (no --agent, no PNEUMA_AGENT, and no agent's markers in the environment)";
+      return "unknown (no --agent, no APPGOV_AGENT, and no agent's markers in the environment)";
     default:
       return agent?.name ?? "unknown";
   }
@@ -168,7 +168,7 @@ function describeAgent(agent) {
 // `recorded` says what the entry keeps: submit sends the candidates, undo sends only a name.
 const AMBIGUOUS_AGENT = (agent, recorded) =>
   `warning: markers of more than one agent are set (${agent.candidates.map((c) => `${c.agent}: ${c.markers.join(", ")}`).join("; ")}), ` +
-  `so ${recorded}. Say which agent you are with --agent <name> or PNEUMA_AGENT=<name>.`;
+  `so ${recorded}. Say which agent you are with --agent <name> or APPGOV_AGENT=<name>.`;
 
 /** The agent fields of a request body: the name, where it came from, and what detection saw. */
 function agentFields(agent) {
@@ -200,7 +200,7 @@ function request(method, url, payload) {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () =>
-          res.complete ? settle({ status: res.statusCode, level: res.headers["pneuma-host-api"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted()),
+          res.complete ? settle({ status: res.statusCode, level: res.headers["appgov-api"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted()),
         );
         res.on("error", lost);
         res.on("close", () => res.complete || lost(aborted()));
@@ -215,11 +215,11 @@ function request(method, url, payload) {
 // Answers the Host gives as a refusal that the caller acts on, with what to do next.
 const REFUSAL_HINTS = {
   crosses_one_way_change:
-    'Stop and show this to the user. Going back past a one-way change is the owner\'s decision. In a terminal, they run: node .pneuma/pneuma.mjs undo --accept-one-way "<why>" (with the same --to, if one was given).',
+    `Stop and show this to the user. Going back past a one-way change is the owner's decision. In a terminal, they run: node ${STATE_DIR}/appgov.mjs undo --accept-one-way "<why>" (with the same --to, if one was given).`,
   plan_changed: 'Nothing changed. Run the same undo again to see what going back does now, then confirm that.',
   // The capability's check refused the snapshot before the older code went out. Unlike data_restore_failed, nothing happened.
   data_snapshot_refused:
-    "Nothing changed: no code was released and the stored data was not touched. Stop and show this to the user. Do not edit .pneuma/ to name another snapshot: the Host checks every snapshot it is given.",
+    `Nothing changed: no code was released and the stored data was not touched. Stop and show this to the user. Do not edit ${STATE_DIR}/ to name another snapshot: the Host checks every snapshot it is given.`,
 };
 
 // What the owner types "accept" to, after the refusal has said which case applies.
@@ -243,7 +243,7 @@ async function call(method, path, payload) {
   return data;
 }
 
-// The level of the Host's API this CLI is written for. The Host sends its own in the `pneuma-host-api` header of
+// The level of the Host's API this CLI is written for. The Host sends its own in the `appgov-api` header of
 // every answer (src/server.ts). Raise both together when this CLI starts to rely on something a Host at the level
 // before does not send; a Host from before levels sends none.
 const HOST_API_LEVEL = 2;
@@ -275,7 +275,7 @@ async function send(method, path, payload) {
     // Not "the stack is down": the Host may well be running, on another address than the one tried.
     fail(
       `cannot reach the Host at ${HOST} (${code}). ${HOST_SOURCE} The Host may be running on another address, or not running. ` +
-        "Ask the user for its address, then pass --host <url> or set PNEUMA_HOST.",
+        "Ask the user for its address, then pass --host <url> or set APPGOV_HOST.",
       3,
     );
   }
@@ -293,22 +293,22 @@ async function send(method, path, payload) {
 }
 
 function fail(message, code = 1) {
-  console.error(`pneuma: ${message}`);
+  console.error(`appgov: ${message}`);
   process.exit(code);
 }
 
 // What the agent should do next, for the reasons where the raw detail does not say it.
 const REJECTION_HINTS = {
   protected_file_changed:
-    "These paths are protected (see AGENTS.md). Restore them from .pneuma/versions/<active version>/ and submit again; put your own styles and scripts under public/app/.",
+    `These paths are protected (see AGENTS.md). Restore them from ${STATE_DIR}/versions/<active version>/ and submit again; put your own styles and scripts under public/app/.`,
   outside_writable_roots:
-    "A change may only touch the writable roots listed in AGENTS.md and pneuma.scaffold.json. Move these files under src/ or public/app/, or remove them, and submit again.",
+    "A change may only touch the writable roots listed in AGENTS.md and appgov.scaffold.json. Move these files under src/ or public/app/, or remove them, and submit again.",
   invalid_manifest: "Fix pneuma-space.json so that it parses, and submit again.",
   preview_refused: "Do not change the code for this: nothing was found wrong with it. Show this to the user.",
   no_change: "The working tree is identical to the active version, so there is nothing to release.",
   base_changed: "Another change was released while this one was being checked. Run status, then submit again.",
   draft_changed_after_check:
-    "The change's files were altered after they were checked (for example by a test that writes outside its own directory). Make sure nothing writes into .pneuma/, then run status and submit again.",
+    `The change's files were altered after they were checked (for example by a test that writes outside its own directory). Make sure nothing writes into ${STATE_DIR}/, then run status and submit again.`,
   data_snapshot_failed:
     "The Host could not save the stored data before this one-way change, so nothing went live. Tell the user; submit again once saving the data works.",
 };
@@ -324,7 +324,7 @@ const NOTHING_CHECKED = "Nothing checked or approved this change: the Host recor
 function previewLine(preview, changeId) {
   if (preview.state === "standing") return `preview: ${preview.address}${preview.expires_at ? ` (it ends itself at ${readableTime(preview.expires_at)})` : ""}`;
   if (preview.state === "unknown") return `preview: unknown; ${preview.note}. Nothing was changed; ask again in a minute.`;
-  return `preview: none standing; ${preview.note}. Publish it again with: node .pneuma/pneuma.mjs preview ${changeId}`;
+  return `preview: none standing; ${preview.note}. Publish it again with: node ${STATE_DIR}/appgov.mjs preview ${changeId}`;
 }
 
 function printChange(result, appName) {
@@ -355,7 +355,7 @@ function printChange(result, appName) {
     if (result.test_warning) console.log(result.test_warning);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide with" : "They decide with";
-    console.log(`Show this to the owner. ${look}: node .pneuma/pneuma.mjs approve ${result.change_id}   (or deny)`);
+    console.log(`Show this to the owner. ${look}: node ${STATE_DIR}/appgov.mjs approve ${result.change_id}   (or deny)`);
     // The other way, for the owner only: the Host's page, in a browser that opened the owner link the Host printed at start.
     if (appName) console.log(`Or on the Host's page, opened from the owner link the Host printed when it started: ${HOST}/app/${appName}/change/${result.change_id}`);
     return 2;
@@ -383,7 +383,7 @@ function sameHost(a, b) {
 }
 
 // Where the apps live, by the record nearest to here; only when that record is of the Host in use, which
-// --host or PNEUMA_HOST may have pointed elsewhere. A record can also be stale (the apps directory moved), so
+// --host or APPGOV_HOST may have pointed elsewhere. A record can also be stale (the apps directory moved), so
 // create and guide check the directory against what the Host says before they name it.
 const APPS_DIR = RECORDED && sameHost(RECORDED.url, HOST) ? appsDirOf(RECORDED) : null;
 const out = (data, human) => (flags.json ? console.log(JSON.stringify(data, null, 2)) : human(data));
@@ -403,7 +403,7 @@ const items = (value) => (Array.isArray(value) ? value : []);
 /** Every app in a few lines each: version and address, then only what deserves a look. */
 function printApps({ governance, apps }) {
   if (!apps.length) {
-    console.log("no apps yet. Create one with: node .pneuma/pneuma.mjs create <name>");
+    console.log(`no apps yet. Create one with: node ${STATE_DIR}/appgov.mjs create <name>`);
     return;
   }
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));
@@ -435,8 +435,8 @@ if (command === "list") {
   process.exit(0);
 }
 
-const GUIDE_BEGIN = "<!-- pneuma-apps:begin (written by pneuma.mjs guide; guide --write replaces this block) -->";
-const GUIDE_END = "<!-- pneuma-apps:end -->";
+const GUIDE_BEGIN = "<!-- appgov-apps:begin (written by appgov.mjs guide; guide --write replaces this block) -->";
+const GUIDE_END = "<!-- appgov-apps:end -->";
 
 /**
  * Where the marked block is in `text`: the first end marker after a begin marker, and the begin marker nearest
@@ -451,7 +451,7 @@ function markedBlock(text, beginMarker, endMarker) {
 
 /** A self-contained block for an agent's user-level instructions, so any session can answer "what apps do I have?". */
 function guideBlock(appsDir) {
-  const own = join(appsDir, STATE_DIR, "pneuma.mjs");
+  const own = join(appsDir, STATE_DIR, "appgov.mjs");
   const cli = existsSync(own) ? own : fileURLToPath(import.meta.url);
   // Every path in single quotes, as a POSIX shell takes it literally, so a command copied from the block works
   // in a directory whose name has a space or any other character the shell would read.
@@ -459,9 +459,9 @@ function guideBlock(appsDir) {
   const run = (args) => `\`node ${quoted(cli)} ${args}\``;
   return [
     GUIDE_BEGIN,
-    "## My apps (pneuma Host)",
+    "## My apps (appgov Host)",
     "",
-    `Small apps on this machine are kept and published by a pneuma Host at ${HOST}. The app directories are in ${quoted(appsDir)}, one directory per app.`,
+    `Small apps on this machine are kept and published by an appgov Host at ${HOST}. The app directories are in ${quoted(appsDir)}, one directory per app.`,
     "",
     `- What apps do I have: ${run("list")}. It shows each app's version, address, last change, and any change waiting for me.`,
     `- One app in full: ${run("status <name>")} and ${run("history <name>")}.`,
@@ -474,7 +474,7 @@ function guideBlock(appsDir) {
 
 if (command === "guide") {
   if (!APPS_DIR) {
-    fail("guide needs to know where the apps live: run it in the apps directory, in an app's directory, or as bin/pneuma.mjs next to local/apps/ once the Host has started");
+    fail("guide needs to know where the apps live: run it in the apps directory, in an app's directory, or as bin/appgov.mjs next to local/apps/ once the Host has started");
   }
   // The block names this directory as the Host's, so every app the Host lists must be in it.
   const { apps } = await call("GET", "/apps");
@@ -504,7 +504,7 @@ if (command === "guide") {
   } catch (err) {
     fail(`could not write ${file}: ${err.message}`);
   }
-  console.log(`${replaced ? "replaced the pneuma block in" : existing ? "added the pneuma block to" : "wrote the pneuma block to"} ${file}`);
+  console.log(`${replaced ? "replaced the appgov block in" : existing ? "added the appgov block to" : "wrote the appgov block to"} ${file}`);
   process.exit(0);
 }
 
@@ -519,7 +519,7 @@ if (command === "create") {
       console.log(
         APPS_DIR && existsSync(join(APPS_DIR, args[0], STATE_DIR, "app.json"))
           ? `The app directory is ${join(APPS_DIR, args[0])}. Open it with your coding agent.`
-          : `The app directory is ${args[0]}/ in the Host's apps directory (apps/ next to the compose file, unless PNEUMA_APPS_DIR moved it). Open it with your coding agent.`,
+          : `The app directory is ${args[0]}/ in the Host's apps directory (apps/ next to the compose file, unless APPGOV_APPS_DIR moved it). Open it with your coding agent.`,
       );
     }
   });
@@ -529,7 +529,7 @@ if (command === "create") {
 // status and history take the app's name as a word too, so they work from the directory that holds the apps.
 const named = (command === "status" || command === "history") && args[0] ? args[0] : undefined;
 const app = flags.app ?? named ?? findApp(process.cwd());
-if (!app) fail("not inside an app directory (no .pneuma/app.json found here or above). Name the app with --app <name> (status and history also take it as a word); list shows every app.");
+if (!app) fail(`not inside an app directory (no ${STATE_DIR}/app.json found here or above). Name the app with --app <name> (status and history also take it as a word); list shows every app.`);
 const base = `/apps/${app}`;
 
 switch (command) {
@@ -590,7 +590,7 @@ switch (command) {
     if (flags.oneWay !== undefined && !String(flags.oneWay).trim()) fail('--one-way takes "<what putting files back would not undo>"');
     const agent = identifyAgent();
     // On stderr, so that --json output stays one JSON document.
-    if (agent.source === "ambiguous") console.error(`pneuma: ${AMBIGUOUS_AGENT(agent, 'this is recorded as agent "unknown", with those candidates kept in the entry')}`);
+    if (agent.source === "ambiguous") console.error(`appgov: ${AMBIGUOUS_AGENT(agent, 'this is recorded as agent "unknown", with those candidates kept in the entry')}`);
     const result = await call("POST", `${base}/changes`, {
       intent: args.join(" "),
       ...agentFields(agent),
@@ -611,7 +611,7 @@ switch (command) {
     // terminal, like approve: a speed bump, not a security boundary.
     if (flags.acceptOneWay && !process.stdin.isTTY) fail("--accept-one-way is the owner's decision and must be run by a person in a terminal");
     const actor = identifyAgent();
-    if (actor.source === "ambiguous") console.error(`pneuma: ${AMBIGUOUS_AGENT(actor, 'this undo is recorded as done by "unknown"')}`);
+    if (actor.source === "ambiguous") console.error(`appgov: ${AMBIGUOUS_AGENT(actor, 'this undo is recorded as done by "unknown"')}`);
     const payload = { reason: args.join(" ") || "undo", actor: actor.name, ...(flags.to ? { to: flags.to } : {}) };
     let { status, data } = await send("POST", `${base}/undo`, payload);
     if (flags.acceptOneWay && status === 409 && data.reason === "crosses_one_way_change") {
@@ -621,7 +621,7 @@ switch (command) {
       rl.close();
       if (answer.trim() !== "accept") fail("not confirmed; nothing changed");
       // The confirmation covers the plan just shown: the Host refuses it once the app has moved on from where that plan started.
-      ({ status, data } = await send("POST", `${base}/undo`, { ...payload, accept_one_way: true, subject: process.env.PNEUMA_OWNER ?? "user:me", ...(data.from ? { from: data.from } : {}) }));
+      ({ status, data } = await send("POST", `${base}/undo`, { ...payload, accept_one_way: true, subject: process.env.APPGOV_OWNER ?? "user:me", ...(data.from ? { from: data.from } : {}) }));
     }
     if (status < 200 || status >= 300) fail(refusalText(data, `POST ${base}/undo answered ${status}`), refusalCode(data.reason));
     out(data, (d) => {
@@ -656,7 +656,7 @@ switch (command) {
     rl.close();
     if (answer.trim() !== command) fail("not confirmed; nothing changed");
     const result = await call("POST", `${base}/changes/${args[0]}/${command}`, {
-      subject: process.env.PNEUMA_OWNER ?? "user:me",
+      subject: process.env.APPGOV_OWNER ?? "user:me",
       reason: args.slice(1).join(" ") || undefined,
     });
     let code = 0;

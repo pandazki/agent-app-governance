@@ -2,7 +2,7 @@
 // The frame of Beautiful UI's own site (MIT, © 2026 Shane Levine; see ./LICENSE): the page column, the dashed
 // section rules with their mono numbers, the demo surface the components sit on, and the light/dark toggle.
 // These are not in the registry; they are ported from the markup beautifului.dev renders (class for class), with
-// the sidebar left out. Adapted: the toggle stores its choice under "pneuma-theme" and follows the system until
+// the sidebar left out. Adapted: the toggle stores its choice under "appgov-theme" and follows the system until
 // the reader picks one; the site's default is dark.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -77,7 +77,7 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
     const follow = () => {
       let chosen: string | null = null;
       try {
-        chosen = localStorage.getItem("pneuma-theme");
+        chosen = localStorage.getItem("appgov-theme");
       } catch {}
       if (chosen) return;
       const next = media.matches ? "dark" : "light";
@@ -89,7 +89,7 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
   }, []);
   const pick = (next: Theme) => {
     try {
-      localStorage.setItem("pneuma-theme", next);
+      localStorage.setItem("appgov-theme", next);
     } catch {}
     applyTheme(next);
     setTheme(next);

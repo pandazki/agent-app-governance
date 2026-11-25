@@ -93,9 +93,9 @@ export interface HostDataSnapshot extends DataSnapshotCapability {
 export interface AppHostOptions {
   readonly appsDir: string;
   readonly space: SpaceRuntime;
-  /** Directory holding AGENTS.pneuma.md, CLAUDE.md and pneuma.scaffold.json. */
+  /** Directory holding AGENTS.appgov.md, CLAUDE.md and appgov.scaffold.json. */
   readonly overlayDir: string;
-  /** Path of the artifact CLI (bin/pneuma.mjs), copied into every app. */
+  /** Path of the artifact CLI (bin/appgov.mjs), copied into every app. */
   readonly cliSource: string;
   /** Owner subject, e.g. user:me. Only this subject satisfies the owner role. */
   readonly owner: string;
@@ -106,7 +106,7 @@ export interface AppHostOptions {
   readonly preview?: boolean;
   /** Seconds a preview stands before it ends itself; a waiting change keeps it until then. Default 3600, PneumaSpace's default maximum. */
   readonly previewTtlSeconds?: number;
-  /** This Host as the manager of what it publishes on PneumaSpace, and where a person acts through it. Default `pneuma-host`, no url. */
+  /** This Host as the manager of what it publishes on PneumaSpace, and where a person acts through it. Default `appgov`, no url. */
   readonly manager?: { readonly name: string; readonly url?: string };
   /**
    * Runs the scaffold's verify command in a draft. Default: `sh -c <command>`, with Node's test runner asked
@@ -122,8 +122,8 @@ export interface AppHostOptions {
   readonly dataSnapshot?: HostDataSnapshot;
   /**
    * This Host's own address as the person's machine reaches it, e.g. http://127.0.0.1:8090. When set,
-   * the Host records it in `.pneuma/host.json` of the apps directory and of every app (at start, and
-   * when it creates or opens an app), so the CLI copies there find it without PNEUMA_HOST.
+   * the Host records it in `.appgov/host.json` of the apps directory and of every app (at start, and
+   * when it creates or opens an app), so the CLI copies there find it without APPGOV_HOST.
    */
   readonly hostUrl?: string;
   /** PneumaSpace's console as the person's machine reaches it, e.g. http://127.0.0.1:8081/. The owner page links to it. */
@@ -137,16 +137,16 @@ export interface AppHostOptions {
  */
 export interface AgentProvenance {
   /**
-   * `--agent` or `PNEUMA_AGENT`: named by the caller. `detected`: the one agent whose markers were in the
+   * `--agent` or `APPGOV_AGENT`: named by the caller. `detected`: the one agent whose markers were in the
    * environment (`markers`). `ambiguous`: markers of more than one agent (`candidates`); `agent` is then
    * `unknown`, never one of them. `none`: nothing named or detected.
    */
-  readonly source: "--agent" | "PNEUMA_AGENT" | "detected" | "ambiguous" | "none";
+  readonly source: "--agent" | "APPGOV_AGENT" | "detected" | "ambiguous" | "none";
   readonly markers?: readonly string[];
   readonly candidates?: readonly { readonly agent: string; readonly markers: readonly string[] }[];
 }
 
-export const AGENT_SOURCES: readonly AgentProvenance["source"][] = ["--agent", "PNEUMA_AGENT", "detected", "ambiguous", "none"];
+export const AGENT_SOURCES: readonly AgentProvenance["source"][] = ["--agent", "APPGOV_AGENT", "detected", "ambiguous", "none"];
 
 /** The entry fields that say where the agent's name came from. Empty when the caller said nothing. */
 function provenanceFields(provenance: AgentProvenance | undefined): Pick<HostEntryFields, "agent_source" | "agent_markers" | "agent_candidates"> {
@@ -163,7 +163,7 @@ const isTextList = (value: unknown): value is string[] => Array.isArray(value) &
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
- * What keeps `value`, read from `.pneuma/pending/<id>.json`, from being a waiting change in the shape this Host
+ * What keeps `value`, read from `.appgov/pending/<id>.json`, from being a waiting change in the shape this Host
  * writes; undefined when nothing does. The agent can write that directory, so every field the owner reads or
  * the decision uses is checked before anything relies on it.
  */
@@ -202,9 +202,9 @@ function approvers(satisfiedBy: readonly string[], subject: string, policy: Buil
   return satisfiedBy.includes(subject) || !holdsOwnerRole(policy, subject) ? [...satisfiedBy] : [...satisfiedBy, subject];
 }
 
-/** The line `status` shows for a file in `.pneuma/pending/` it leaves out. */
+/** The line `status` shows for a file in `.appgov/pending/` it leaves out. */
 function malformedPendingLine(file: string, problem: string): string {
-  return `.pneuma/pending/${file} is not a waiting change in the shape this Host writes (${problem}), so it is not listed and cannot be approved or denied. Look at it, then delete it.`;
+  return `${STATE_DIR}/pending/${file} is not a waiting change in the shape this Host writes (${problem}), so it is not listed and cannot be approved or denied. Look at it, then delete it.`;
 }
 
 export interface SubmitInput {
@@ -343,7 +343,7 @@ export interface AppStatus {
   /** With previews on, each with its preview as PneumaSpace answers for it now. */
   readonly pending: readonly (PendingChange & { readonly preview?: PreviewState })[];
   /**
-   * One plain line for each file in `.pneuma/pending/` that is not a waiting change in the shape this Host
+   * One plain line for each file in `.appgov/pending/` that is not a waiting change in the shape this Host
    * writes, naming the file. Such a file is left out of `pending` and cannot be approved or denied, and the
    * others can. Absent when there is none.
    */
@@ -379,7 +379,7 @@ export type AppSummary =
         readonly intent: string;
       } | null;
       readonly pending: readonly PendingSummary[];
-      /** As in `status`: a line for each file in `.pneuma/pending/` left out of `pending`. Absent when there is none. */
+      /** As in `status`: a line for each file in `.appgov/pending/` left out of `pending`. Absent when there is none. */
       readonly malformed_pending?: readonly string[];
       readonly uncommitted: readonly string[];
     }
@@ -586,13 +586,13 @@ export class AppHost {
     return { paths, info: readAppInfo(paths), record: openRecord(paths) };
   }
 
-  /** Write this Host's address into `<dir>/.pneuma/host.json` when it is not there yet. A failure is logged, never thrown: the CLI then falls back to PNEUMA_HOST or the default. */
+  /** Write this Host's address into `<dir>/.appgov/host.json` when it is not there yet. A failure is logged, never thrown: the CLI then falls back to APPGOV_HOST or the default. */
   private recordAddress(dir: string, scope: "app" | "apps", label: string): void {
     if (!this.opts.hostUrl) return;
     try {
-      if (recordHostAddress(dir, this.opts.hostUrl, scope)) this.log(`${label}: recorded this Host's address (${this.opts.hostUrl}) in .pneuma/host.json`);
+      if (recordHostAddress(dir, this.opts.hostUrl, scope)) this.log(`${label}: recorded this Host's address (${this.opts.hostUrl}) in ${STATE_DIR}/host.json`);
     } catch (err) {
-      this.log(`${label}: could not record this Host's address in .pneuma/host.json (${err instanceof Error ? err.message : String(err)})`);
+      this.log(`${label}: could not record this Host's address in ${STATE_DIR}/host.json (${err instanceof Error ? err.message : String(err)})`);
     }
   }
 
@@ -811,7 +811,7 @@ export class AppHost {
     // writes must not end up in the tree that was diffed, classified and is about to be released.
     // The copy lives outside the app, so no relative path from it leads to the draft; a write that
     // reaches the draft anyway is caught by the signature checks (the sealed draft, and before release).
-    const checkRoot = mkdtempSync(join(tmpdir(), "pneuma-check-"));
+    const checkRoot = mkdtempSync(join(tmpdir(), "appgov-check-"));
     let tests: CheckRun;
     let coverage: TestCoverage;
     try {
@@ -850,7 +850,7 @@ export class AppHost {
     const waits = "Nothing was approved or released, and the change still waits.";
     // Not answered is not gone: the preview may stand, and publishing it again would not help.
     if (preview.state === "unknown") throw new HostError(502, `${preview.note}, so whether anyone can look at what approving would release is unknown. ${waits} Ask again in a minute.`, "preview_unknown");
-    throw new HostError(409, `${preview.note}, so nobody can look at what approving would release. ${waits} Publish the preview again with \`node .pneuma/pneuma.mjs preview ${changeId}\`, look at it, then approve.`, "preview_gone");
+    throw new HostError(409, `${preview.note}, so nobody can look at what approving would release. ${waits} Publish the preview again with \`node ${STATE_DIR}/appgov.mjs preview ${changeId}\`, look at it, then approve.`, "preview_gone");
   }
 
   /**
@@ -1054,7 +1054,7 @@ export class AppHost {
 
   /** A private copy of a tree outside the app, where no process the agent started can reach it by a relative path. */
   private privateCopy(source: string): string {
-    const root = mkdtempSync(join(tmpdir(), "pneuma-release-"));
+    const root = mkdtempSync(join(tmpdir(), "appgov-release-"));
     snapshot(source, root);
     return root;
   }
@@ -1388,7 +1388,7 @@ export class AppHost {
     // version that still serves, so the recorded but unreleased content is diffed, guarded and classified
     // before it goes live with an approval.
     const liveRoot = record.versionDir(this.liveBase(paths, record, baseVersion));
-    // The Host's own guardrails, not the app's copy of them: record mode does not protect pneuma.scaffold.json,
+    // The Host's own guardrails, not the app's copy of them: record mode does not protect appgov.scaffold.json,
     // so a version recorded there may carry a loosened one.
     const scaffold = readScaffold(this.opts.overlayDir);
     const control: ControlPlane = input.runAgent ? "host-driven" : "agent-driven";
@@ -1860,7 +1860,7 @@ export class AppHost {
           throw new HostError(
             409,
             `undo goes back along the versions ${current} was built on (${line.join(", ")}), and ${options.to} is not one of them. ` +
-              `To bring ${options.to} back, submit its files again (they are in .pneuma/versions/${options.to}/)`,
+              `To bring ${options.to} back, submit its files again (they are in ${STATE_DIR}/versions/${options.to}/)`,
           );
         }
         target = options.to;
@@ -2117,7 +2117,7 @@ export class AppHost {
       const { paths, info, record } = this.open(name);
       const file = join(paths.pending, `${changeId}.json`);
       if (!existsSync(file)) throw new HostError(404, `no change ${changeId} is waiting`);
-      if (this.opts.preview === false) throw new HostError(409, "this Host runs without previews (PNEUMA_PREVIEW=off), so there is no preview to publish", "previews_off");
+      if (this.opts.preview === false) throw new HostError(409, "this Host runs without previews (APPGOV_PREVIEW=off), so there is no preview to publish", "previews_off");
       const pending = this.readPending(paths, record, file);
       if ("problem" in pending) throw new HostError(409, malformedPendingLine(`${changeId}.json`, pending.problem), "malformed_pending");
       this.refuseUnfinishedUndo(paths, record);
@@ -2270,7 +2270,7 @@ export class AppHost {
 
   /**
    * What the owner page shows: the summaries, and for every app what `status` and `history` return. It
-   * changes nothing in any record. Opening an app may refresh its CLI copy and address record under `.pneuma/`,
+   * changes nothing in any record. Opening an app may refresh its CLI copy and address record under `.appgov/`,
    * as every command does.
    */
   async overview(): Promise<Overview> {

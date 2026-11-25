@@ -40,7 +40,7 @@ beforeEach(() => {
     appsDir: join(work, "apps"),
     space,
     overlayDir: join(EXAMPLE, "overlay"),
-    cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+    cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
     owner: "user:me",
     policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
     runVerify: (root) => templateTests(root),
@@ -159,7 +159,7 @@ describe("the screenshot keeper", () => {
       appsDir: join(work, "apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: (root) => templateTests(root),
@@ -219,7 +219,7 @@ describe("the screenshot keeper", () => {
     await pictures.scan();
     const first = pictures.latest("todo")!;
     rmSync(join(work, "apps", "todo"), { recursive: true, force: true });
-    await space.takeDown("todo", "pneuma-host");
+    await space.takeDown("todo", "appgov");
     await host.create("todo");
     await pictures.scan();
     const second = pictures.latest("todo")!;
@@ -243,8 +243,8 @@ describe("the screenshot keeper", () => {
 });
 
 // The same capture path the compose service is reached by, against a Chrome on this machine. Skipped where
-// there is none (CI); set PNEUMA_TEST_CHROME to a Chrome or Chromium binary to run it anywhere.
-const CHROME = process.env.PNEUMA_TEST_CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+// there is none (CI); set APPGOV_TEST_CHROME to a Chrome or Chromium binary to run it anywhere.
+const CHROME = process.env.APPGOV_TEST_CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 describe.skipIf(!existsSync(CHROME))("capture over the DevTools protocol, against a local Chrome", () => {
   test("a page is pictured; a sign-in redirect, a 404 and a missing browser are told apart", async () => {
     const poked: string[] = [];

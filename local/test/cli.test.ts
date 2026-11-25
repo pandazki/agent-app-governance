@@ -21,7 +21,7 @@ let host: AppHost;
 let space: FakeSpace;
 
 /** What a Host at the level this CLI is written for sends on every answer. */
-const LEVEL = { "pneuma-host-api": String(HOST_API_LEVEL) };
+const LEVEL = { "appgov-api": String(HOST_API_LEVEL) };
 
 /** A stand-in Host: it answers the CLI's first question, GET /healthz, as this Host does, and hands every other request to `handle`. */
 function standInHost(handle: (req: IncomingMessage, res: ServerResponse) => void) {
@@ -33,7 +33,7 @@ function standInHost(handle: (req: IncomingMessage, res: ServerResponse) => void
 }
 
 const cli = (cwd: string, ...args: string[]) =>
-  runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: hostUrl, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
+  runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd, env: { APPGOV_HOST: hostUrl, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
 
 beforeAll(async () => {
   work = mkdtempSync(join(tmpdir(), "aag-cli-"));
@@ -42,7 +42,7 @@ beforeAll(async () => {
     appsDir: join(work, "apps"),
     space,
     overlayDir: join(EXAMPLE, "overlay"),
-    cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+    cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
     owner: "user:me",
     policy: loadRiskPolicy(join(import.meta.dir, "..", "policy", "personal.json")),
     runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -59,7 +59,7 @@ afterAll(() => {
 describe("the CLI and the Host name the same state directory", () => {
   test("the CLI's STATE_DIR is the Host's", () => {
     // The CLI runs from a copy inside each app with no imports from src/, so it names the directory itself.
-    const named = /^const STATE_DIR = "([^"]+)";$/m.exec(readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8"))?.[1];
+    const named = /^const STATE_DIR = "([^"]+)";$/m.exec(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"))?.[1];
     expect(named).toBe(STATE_DIR);
   });
 });
@@ -71,8 +71,8 @@ describe("the artifact CLI against a served Host", () => {
     expect(created.output).toContain("published v1 at http://space.test/apps/notes/");
 
     const appDir = join(work, "apps", "notes");
-    const own = (...args: string[]) => runCommand(["node", ".pneuma/pneuma.mjs", ...args], { cwd: appDir, env: { PNEUMA_HOST: hostUrl, PNEUMA_AGENT: "codex" } });
-    expect(existsSync(join(appDir, ".pneuma", "pneuma.mjs"))).toBe(true);
+    const own = (...args: string[]) => runCommand(["node", ".appgov/appgov.mjs", ...args], { cwd: appDir, env: { APPGOV_HOST: hostUrl, APPGOV_AGENT: "codex" } });
+    expect(existsSync(join(appDir, ".appgov", "appgov.mjs"))).toBe(true);
 
     writeFileSync(join(appDir, "src", "server.ts"), "export const changed = true;\n");
     expect((await own("status")).output).toContain("uncommitted: src/server.ts");
@@ -107,7 +107,7 @@ describe("the artifact CLI against a served Host", () => {
   test("the owner is shown the preview of a waiting change; once it has ended, status says so and preview publishes it again", async () => {
     await cli(work, "create", "shown");
     const appDir = join(work, "apps", "shown");
-    expect((await cli(appDir, "status")).output).toContain("on PneumaSpace: managed on PneumaSpace by this Host (pneuma-host)");
+    expect((await cli(appDir, "status")).output).toContain("on PneumaSpace: managed on PneumaSpace by this Host (appgov)");
     writeFileSync(join(appDir, "src", "server.ts"), "export const sql = 'DROP TABLE todos';\n");
     const submitted = await cli(appDir, "submit", "clear everything");
     const changeId = /needs_approval (\S+):/.exec(submitted.output)![1]!;
@@ -122,7 +122,7 @@ describe("the artifact CLI against a served Host", () => {
     try {
       const status = await cli(appDir, "status");
       expect(status.output).toContain(`  preview: none standing; the preview shown-pv${changeId.slice(-4)} is no longer on PneumaSpace: it ended itself (previews stand for 3600 s), or it was discarded.`);
-      expect(status.output).toContain(`Publish it again with: node .pneuma/pneuma.mjs preview ${changeId}`);
+      expect(status.output).toContain(`Publish it again with: node .appgov/appgov.mjs preview ${changeId}`);
       const again = await cli(appDir, "preview", changeId);
       expect(again.code).toBe(0);
       expect(again.output).toContain(`published the preview of ${changeId} again.`);
@@ -153,13 +153,13 @@ describe("the artifact CLI against a served Host", () => {
     });
     await new Promise<void>((resolve) => standIn.listen(0, "127.0.0.1", resolve));
     try {
-      const run = await runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), "submit", "make it public", "--app", "open"], {
+      const run = await runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), "submit", "make it public", "--app", "open"], {
         cwd: work,
-        env: { PNEUMA_HOST: `http://127.0.0.1:${(standIn.address() as AddressInfo).port}`, PNEUMA_AGENT: "codex" },
+        env: { APPGOV_HOST: `http://127.0.0.1:${(standIn.address() as AddressInfo).port}`, APPGOV_AGENT: "codex" },
         timeoutMs: 20_000,
       });
       expect(run.code).toBe(2);
-      expect(run.output).toContain("Show this to the owner. They decide with: node .pneuma/pneuma.mjs approve c-1   (or deny)");
+      expect(run.output).toContain("Show this to the owner. They decide with: node .appgov/appgov.mjs approve c-1   (or deny)");
       // The terminal stays the first way; the owner page is the other.
       expect(run.output).toContain(`Or on the Host's page, opened from the owner link the Host printed when it started: http://127.0.0.1:${(standIn.address() as AddressInfo).port}/app/open/change/c-1`);
       expect(run.output).not.toContain("preview");
@@ -170,14 +170,14 @@ describe("the artifact CLI against a served Host", () => {
 
   test("errors are plain: unknown app, unreachable host", async () => {
     expect((await cli(work, "status", "--app", "ghost")).output).toContain("no app named ghost");
-    const down = await runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), "list"], { env: { PNEUMA_HOST: "http://127.0.0.1:1" } });
+    const down = await runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), "list"], { env: { APPGOV_HOST: "http://127.0.0.1:1" } });
     expect(down.code).toBe(3);
     expect(down.output).toContain("cannot reach the Host");
   });
 
   test("a flag that takes a value, given as the last word, fails before anything is sent instead of being dropped", async () => {
     // Nothing listens at this address: a command that got as far as sending would exit 3, "cannot reach the Host".
-    const run = (...args: string[]) => bare(work, join(EXAMPLE, "bin", "pneuma.mjs"), args, { PNEUMA_HOST: "http://127.0.0.1:1", PNEUMA_AGENT: "codex" });
+    const run = (...args: string[]) => bare(work, join(EXAMPLE, "bin", "appgov.mjs"), args, { APPGOV_HOST: "http://127.0.0.1:1", APPGOV_AGENT: "codex" });
     const cases: [string[], string][] = [
       [["guide", "--write"], "guide --write takes the file to put the block in"],
       [["submit", "drops a column", "--app", "notes", "--one-way"], '--one-way takes "<what putting files back would not undo>"'],
@@ -188,7 +188,7 @@ describe("the artifact CLI against a served Host", () => {
     ];
     for (const [args, message] of cases) {
       const result = await run(...args);
-      expect({ args, code: result.code, stdout: result.stdout, stderr: result.stderr }).toEqual({ args, code: 1, stdout: "", stderr: `pneuma: ${message}\n` });
+      expect({ args, code: result.code, stdout: result.stdout, stderr: result.stderr }).toEqual({ args, code: 1, stdout: "", stderr: `appgov: ${message}\n` });
     }
   });
 });
@@ -239,11 +239,11 @@ describe("undo and record mode through the artifact CLI", () => {
 
     const refused = await cli(appDir, "undo", "back");
     expect(refused.code).toBe(2);
-    expect(refused.output).toContain("pneuma: Going back to v1 would undo a change that putting files back cannot undo:");
+    expect(refused.output).toContain("appgov: Going back to v1 would undo a change that putting files back cannot undo:");
     expect(refused.output).toContain("  - v2: src/server.ts now runs");
     expect(refused.output).toContain("This Host cannot put stored data back.");
     expect(refused.output).toContain("the older version may fail on today's data");
-    expect(refused.output).toContain("node .pneuma/pneuma.mjs undo --accept-one-way");
+    expect(refused.output).toContain("node .appgov/appgov.mjs undo --accept-one-way");
 
     const noTerminal = await cli(appDir, "undo", "--accept-one-way", "back");
     expect(noTerminal.code).toBe(1);
@@ -269,7 +269,7 @@ describe("undo and record mode through the artifact CLI", () => {
       appsDir: join(work, "snapshot-apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(import.meta.dir, "..", "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -285,7 +285,7 @@ describe("undo and record mode through the artifact CLI", () => {
     await new Promise<void>((resolve) => snapshotServer.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(snapshotServer.address() as AddressInfo).port}`;
     const run = (cwd: string, ...args: string[]) =>
-      runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
+      runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd, env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
     try {
       await run(work, "create", "kept");
       const appDir = join(work, "snapshot-apps", "kept");
@@ -298,7 +298,7 @@ describe("undo and record mode through the artifact CLI", () => {
       expect(refused.code).toBe(2);
       expect(refused.output).toContain("This Host can put stored data back (fake-snapshot). The stored data would return to the snapshot snap-1, taken before v2 at ");
       expect(refused.output).toContain("Everything stored since then would be set aside and would not be in the app. The data in use now is kept in the attic.");
-      expect(refused.output).toContain("node .pneuma/pneuma.mjs undo --accept-one-way");
+      expect(refused.output).toContain("node .appgov/appgov.mjs undo --accept-one-way");
       expect(restored).toEqual([]);
 
       const plain = await post(`${url}/apps/kept/undo`, { reason: "back" });
@@ -326,7 +326,7 @@ describe("undo and record mode through the artifact CLI", () => {
       appsDir: join(work, "forged-apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(import.meta.dir, "..", "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -343,7 +343,7 @@ describe("undo and record mode through the artifact CLI", () => {
     await new Promise<void>((resolve) => listening.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(listening.address() as AddressInfo).port}`;
     const run = (cwd: string, ...args: string[]) =>
-      runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
+      runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd, env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
     let answer: { status: number; body: Record<string, unknown> };
     try {
       await run(work, "create", "forged");
@@ -351,7 +351,7 @@ describe("undo and record mode through the artifact CLI", () => {
       writeFileSync(join(appDir, "src", "server.ts"), "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
       const changeId = /needs_approval (\S+):/.exec((await run(appDir, "submit", "drop the note column")).output)![1]!;
       await withData.resolve("forged", changeId, "approved", "user:me");
-      const history = join(appDir, ".pneuma", "history.jsonl");
+      const history = join(appDir, ".appgov", "history.jsonl");
       writeFileSync(history, readFileSync(history, "utf8").replaceAll('"ref":"snap-1"', '"ref":"snap_billing_v1"'));
       published.length = 0;
 
@@ -373,13 +373,13 @@ describe("undo and record mode through the artifact CLI", () => {
     await new Promise<void>((resolve) => standIn.listen(0, "127.0.0.1", resolve));
     try {
       const standInUrl = `http://127.0.0.1:${(standIn.address() as AddressInfo).port}`;
-      const refused = await runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), "undo", "back", "--app", "forged"], {
+      const refused = await runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), "undo", "back", "--app", "forged"], {
         cwd: work,
-        env: { PNEUMA_HOST: standInUrl, PNEUMA_AGENT: "codex" },
+        env: { APPGOV_HOST: standInUrl, APPGOV_AGENT: "codex" },
         timeoutMs: 20_000,
       });
       expect(refused.code).toBe(3);
-      expect(refused.output).toContain(`pneuma: ${answer.body.error}`);
+      expect(refused.output).toContain(`appgov: ${answer.body.error}`);
       expect(refused.output).toContain("Nothing changed: no code was released and the stored data was not touched.");
       expect(refused.output).not.toContain("could not be put back");
     } finally {
@@ -402,7 +402,7 @@ describe("undo and record mode through the artifact CLI", () => {
       appsDir: join(work, "record-apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       governance: "record",
       policy: loadRiskPolicy(join(import.meta.dir, "..", "policy", "personal.json")),
@@ -412,7 +412,7 @@ describe("undo and record mode through the artifact CLI", () => {
     await new Promise<void>((resolve) => recordServer.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(recordServer.address() as AddressInfo).port}`;
     const run = (cwd: string, ...args: string[]) =>
-      runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: url, PNEUMA_AGENT: "claude-code" }, timeoutMs: 20_000 });
+      runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd, env: { APPGOV_HOST: url, APPGOV_AGENT: "claude-code" }, timeoutMs: 20_000 });
     try {
       const created = await run(work, "create", "free");
       expect(created.code).toBe(0);
@@ -450,7 +450,7 @@ describe("what the CLI tells the agent to do after a release that did not go liv
       appsDir,
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(import.meta.dir, "..", "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -460,7 +460,7 @@ describe("what the CLI tells the agent to do after a release that did not go liv
     await new Promise<void>((resolve) => listening.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(listening.address() as AddressInfo).port}`;
     const run = (cwd: string, ...args: string[]) =>
-      runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd, env: { PNEUMA_HOST: url, PNEUMA_AGENT: "claude-code" }, timeoutMs: 20_000 });
+      runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd, env: { APPGOV_HOST: url, APPGOV_AGENT: "claude-code" }, timeoutMs: 20_000 });
     return { space, host: served, appsDir, run, close: () => listening.close() };
   }
   const failingSnapshots = () => {
@@ -591,7 +591,7 @@ describe("the artifact CLI's connection to the Host", () => {
   };
   const json = (res: ServerResponse, status: number, value: unknown) => res.writeHead(status, { "content-type": "application/json", ...LEVEL }).end(JSON.stringify(value));
   const cliAt = (url: string, ...args: string[]) =>
-    runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { env: { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
+    runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
   // A submit's answer from a Host at this CLI's level.
   const published = {
     status: "published",
@@ -601,7 +601,7 @@ describe("the artifact CLI's connection to the Host", () => {
     risks: ["low"],
     approved_by: ["policy:auto"],
     guarantees: ["verified", "previewed", "approved", "sealed"],
-    agent: { name: "codex", source: "PNEUMA_AGENT" },
+    agent: { name: "codex", source: "APPGOV_AGENT" },
   };
 
   test("waits for as long as the Host takes to answer, and does not use fetch", async () => {
@@ -612,12 +612,12 @@ describe("the artifact CLI's connection to the Host", () => {
     });
     // fetch (undici) gives up waiting for headers after 300 s; poisoning it keeps it from coming back.
     const noFetch = join(work, "no-fetch.cjs");
-    writeFileSync(noFetch, "globalThis.fetch = () => { throw new Error('pneuma.mjs must not use fetch'); };\n");
+    writeFileSync(noFetch, "globalThis.fetch = () => { throw new Error('appgov.mjs must not use fetch'); };\n");
     try {
       const url = await listen(server);
       const started = Date.now();
-      const result = await runCommand(["node", "--require", noFetch, join(EXAMPLE, "bin", "pneuma.mjs"), "submit", "--app", "slow", "add", "a", "chart"], {
-        env: { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" },
+      const result = await runCommand(["node", "--require", noFetch, join(EXAMPLE, "bin", "appgov.mjs"), "submit", "--app", "slow", "add", "a", "chart"], {
+        env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" },
         timeoutMs: 20_000,
       });
       expect(Date.now() - started).toBeGreaterThanOrEqual(2_500);
@@ -627,7 +627,7 @@ describe("the artifact CLI's connection to the Host", () => {
         method: "POST",
         url: "/apps/slow/changes",
         type: "application/json",
-        body: { intent: "add a chart", agent: "codex", agent_source: "PNEUMA_AGENT" },
+        body: { intent: "add a chart", agent: "codex", agent_source: "APPGOV_AGENT" },
       });
     } finally {
       await stop(server);
@@ -658,7 +658,7 @@ describe("the artifact CLI's connection to the Host", () => {
       socket.once("data", (chunk) =>
         socket.end(
           String(chunk).startsWith("GET /healthz ")
-            ? `HTTP/1.1 200 OK\r\ncontent-type: application/json\r\npneuma-host-api: ${HOST_API_LEVEL}\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{"ok":true}`
+            ? `HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nappgov-api: ${HOST_API_LEVEL}\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{"ok":true}`
             : 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 400\r\n\r\n{"status":"publ',
         ),
       ),
@@ -679,7 +679,7 @@ describe("the artifact CLI's connection to the Host", () => {
     await stop(server);
     const result = await cliAt(url, "submit", "--app", "slow", "add", "a", "chart");
     expect(result.code).toBe(3);
-    expect(result.output).toContain(`cannot reach the Host at ${url} (ECONNREFUSED). That address came from PNEUMA_HOST.`);
+    expect(result.output).toContain(`cannot reach the Host at ${url} (ECONNREFUSED). That address came from APPGOV_HOST.`);
     expect(result.output).toContain("The Host may be running on another address, or not running.");
     expect(result.output).not.toContain("docker compose up");
     expect(result.output).not.toContain("may still be released");
@@ -687,7 +687,7 @@ describe("the artifact CLI's connection to the Host", () => {
 
   test("a Host older than this CLI, or from before API levels: every command says to rebuild it in one line, and nothing is changed", async () => {
     // The CLI and the Host name the same level.
-    expect(Number(/^const HOST_API_LEVEL = (\d+);$/m.exec(readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8"))![1])).toBe(HOST_API_LEVEL);
+    expect(Number(/^const HOST_API_LEVEL = (\d+);$/m.exec(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"))![1])).toBe(HOST_API_LEVEL);
     const appDir = mkdtempSync(join(work, "older-host-"));
     for (const level of [undefined, String(HOST_API_LEVEL - 1)]) {
       const seen: string[] = [];
@@ -696,14 +696,14 @@ describe("the artifact CLI's connection to the Host", () => {
         await readBody(req);
         seen.push(`${req.method} ${req.url}`);
         const body = req.url === "/apps" ? { apps: ["older", "todo"] } : req.url === "/healthz" ? { ok: true } : { app_id: "older", pending: [] };
-        res.writeHead(200, { "content-type": "application/json", ...(level === undefined ? {} : { "pneuma-host-api": level }) }).end(JSON.stringify(body));
+        res.writeHead(200, { "content-type": "application/json", ...(level === undefined ? {} : { "appgov-api": level }) }).end(JSON.stringify(body));
       });
       try {
         const url = await listen(server);
-        const run = (...args: string[]) => runCommand(["node", join(EXAMPLE, "bin", "pneuma.mjs"), ...args], { cwd: appDir, env: { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" }, timeoutMs: 20_000 });
+        const run = (...args: string[]) => runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd: appDir, env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
         for (const args of [["list"], ["status", "older"], ["history", "older"], ["submit", "x", "--app", "older"], ["undo", "back", "--app", "older"], ["discard", "--app", "older"], ["create", "new"]]) {
           const result = await run(...args);
-          expect({ args, code: result.code, output: result.output }).toEqual({ args, code: 3, output: `pneuma: the Host at ${url} is older than this CLI; rebuild it: docker compose up -d --build` });
+          expect({ args, code: result.code, output: result.output }).toEqual({ args, code: 3, output: `appgov: the Host at ${url} is older than this CLI; rebuild it: docker compose up -d --build` });
         }
         expect(seen.filter((request) => !request.startsWith("GET "))).toEqual([]);
       } finally {
@@ -722,10 +722,10 @@ describe("the artifact CLI's connection to the Host", () => {
       const url = await listen(server);
       const refused = await cliAt(url, "submit", "--app", "slow", "add", "a", "chart");
       expect(refused.code).toBe(3);
-      expect(refused.output).toBe("pneuma: another change to slow is still being checked");
+      expect(refused.output).toBe("appgov: another change to slow is still being checked");
       const broken = await cliAt(url, "list");
       expect(broken.code).toBe(3);
-      expect(broken.output).toBe("pneuma: GET /apps answered 502");
+      expect(broken.output).toBe("appgov: GET /apps answered 502");
     } finally {
       await stop(server);
     }
@@ -733,7 +733,7 @@ describe("the artifact CLI's connection to the Host", () => {
 });
 
 /**
- * Runs a CLI with exactly the environment given, plus PATH: no PNEUMA_HOST or agent markers leak in from
+ * Runs a CLI with exactly the environment given, plus PATH: no APPGOV_HOST or agent markers leak in from
  * the shell that runs the tests.
  */
 function bare(cwd: string, script: string, args: string[], env: Record<string, string> = {}): Promise<{ code: number; output: string; stdout: string; stderr: string }> {
@@ -766,7 +766,7 @@ describe("the Host's address, as the Host recorded it", () => {
   let url: string;
   let closedUrl: string;
   const appDir = () => join(addrWork, "apps", "moved");
-  const own = (args: string[], env: Record<string, string> = {}) => bare(appDir(), ".pneuma/pneuma.mjs", args, { PNEUMA_AGENT: "codex", ...env });
+  const own = (args: string[], env: Record<string, string> = {}) => bare(appDir(), ".appgov/appgov.mjs", args, { APPGOV_AGENT: "codex", ...env });
 
   beforeAll(async () => {
     addrWork = mkdtempSync(join(tmpdir(), "aag-address-"));
@@ -786,7 +786,7 @@ describe("the Host's address, as the Host recorded it", () => {
         appsDir: join(addrWork, "apps"),
         space: new FakeSpace(),
         overlayDir: join(EXAMPLE, "overlay"),
-        cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+        cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
         owner: "user:me",
         policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
         runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -800,10 +800,10 @@ describe("the Host's address, as the Host recorded it", () => {
     rmSync(addrWork, { recursive: true, force: true });
   });
 
-  test("on a port other than 8090, status and submit work from the app directory with no PNEUMA_HOST", async () => {
-    const created = await bare(addrWork, join(EXAMPLE, "bin", "pneuma.mjs"), ["create", "moved", "--host", url]);
+  test("on a port other than 8090, status and submit work from the app directory with no APPGOV_HOST", async () => {
+    const created = await bare(addrWork, join(EXAMPLE, "bin", "appgov.mjs"), ["create", "moved", "--host", url]);
     expect(created.code).toBe(0);
-    const recorded = JSON.parse(readFileSync(join(appDir(), ".pneuma", "host.json"), "utf8"));
+    const recorded = JSON.parse(readFileSync(join(appDir(), ".appgov", "host.json"), "utf8"));
     expect(recorded).toMatchObject({ schema_version: 1, url, scope: "app" });
 
     const status = await own(["status"]);
@@ -819,7 +819,7 @@ describe("the Host's address, as the Host recorded it", () => {
   test("the copy run by its path from another directory finds the address recorded beside it", async () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "aag-elsewhere-"));
     try {
-      const status = await bare(elsewhere, join(appDir(), ".pneuma", "pneuma.mjs"), ["status", "--app", "moved"]);
+      const status = await bare(elsewhere, join(appDir(), ".appgov", "appgov.mjs"), ["status", "--app", "moved"]);
       expect(status.code).toBe(0);
       expect(status.output).toContain("moved: v2");
     } finally {
@@ -827,26 +827,26 @@ describe("the Host's address, as the Host recorded it", () => {
     }
   });
 
-  test("--host comes before PNEUMA_HOST, which comes before the recorded address", async () => {
-    expect((await own(["status", "--host", url], { PNEUMA_HOST: closedUrl })).code).toBe(0);
-    const env = await own(["status"], { PNEUMA_HOST: closedUrl });
+  test("--host comes before APPGOV_HOST, which comes before the recorded address", async () => {
+    expect((await own(["status", "--host", url], { APPGOV_HOST: closedUrl })).code).toBe(0);
+    const env = await own(["status"], { APPGOV_HOST: closedUrl });
     expect(env.code).toBe(3);
-    expect(env.output).toContain(`cannot reach the Host at ${closedUrl} (ECONNREFUSED). That address came from PNEUMA_HOST.`);
+    expect(env.output).toContain(`cannot reach the Host at ${closedUrl} (ECONNREFUSED). That address came from APPGOV_HOST.`);
     const flag = await own(["status", "--host", closedUrl]);
     expect(flag.output).toContain(`cannot reach the Host at ${closedUrl} (ECONNREFUSED). That address came from the --host flag.`);
   });
 
   test("a recorded address nobody answers on: the message names it, where it came from, and does not say the stack is down", async () => {
-    const file = join(appDir(), ".pneuma", "host.json");
+    const file = join(appDir(), ".appgov", "host.json");
     const before = readFileSync(file, "utf8");
     writeFileSync(file, JSON.stringify({ ...JSON.parse(before), url: closedUrl }));
     try {
       const status = await own(["status"]);
       expect(status.code).toBe(3);
-      expect(status.output).toContain(`pneuma: cannot reach the Host at ${closedUrl} (ECONNREFUSED). That address was recorded by the Host on 20`);
+      expect(status.output).toContain(`appgov: cannot reach the Host at ${closedUrl} (ECONNREFUSED). That address was recorded by the Host on 20`);
       // The CLI names the file by the path it found it at; the temp directory may sit behind a symlink (macOS /var).
       expect(status.output).toContain(` UTC in ${realpathSync(file)}.`);
-      expect(status.output).toContain("The Host may be running on another address, or not running. Ask the user for its address, then pass --host <url> or set PNEUMA_HOST.");
+      expect(status.output).toContain("The Host may be running on another address, or not running. Ask the user for its address, then pass --host <url> or set APPGOV_HOST.");
       expect(status.output).not.toContain("docker compose");
       expect(status.output).not.toContain("down");
     } finally {
@@ -856,20 +856,20 @@ describe("the Host's address, as the Host recorded it", () => {
 
   test("the app's AGENTS.md says where the address comes from, and no longer that the stack is down", () => {
     const agents = readFileSync(join(appDir(), "AGENTS.md"), "utf8");
-    expect(agents).toContain("The CLI finds the host at the address the host recorded in `.pneuma/host.json`");
+    expect(agents).toContain("The CLI finds the host at the address the host recorded in `.appgov/host.json`");
     expect(agents).toContain("The host may be running on another address, or not running");
     expect(agents).not.toContain("the stack is down");
   });
 });
 
 describe("the agent a submit records, and where its name came from", () => {
-  const CLI = join(EXAMPLE, "bin", "pneuma.mjs");
+  const CLI = join(EXAMPLE, "bin", "appgov.mjs");
   const BOTH = { CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", CODEX_THREAD_ID: "019a2b3c-thread" };
   let appDir: string;
   let n = 0;
   const submit = async (env: Record<string, string>, ...extra: string[]) => {
     writeFileSync(join(appDir, "src", "server.ts"), `export const n = ${++n};\n`);
-    return bare(appDir, CLI, ["submit", `change ${n}`, ...extra], { PNEUMA_HOST: hostUrl, ...env });
+    return bare(appDir, CLI, ["submit", `change ${n}`, ...extra], { APPGOV_HOST: hostUrl, ...env });
   };
   const lastEntry = () => host.history("agents").at(-1)!;
 
@@ -882,8 +882,8 @@ describe("the agent a submit records, and where its name came from", () => {
     const result = await submit(BOTH);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("published v");
-    expect(result.stderr).toContain("pneuma: warning: markers of more than one agent are set (claude-code: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex: CODEX_THREAD_ID)");
-    expect(result.stderr).toContain("Say which agent you are with --agent <name> or PNEUMA_AGENT=<name>.");
+    expect(result.stderr).toContain("appgov: warning: markers of more than one agent are set (claude-code: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex: CODEX_THREAD_ID)");
+    expect(result.stderr).toContain("Say which agent you are with --agent <name> or APPGOV_AGENT=<name>.");
     expect(result.stdout).toContain("recorded agent: unknown (markers of more than one agent are set: claude-code from CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex from CODEX_THREAD_ID)");
     expect(lastEntry()).toMatchObject({
       agent: "unknown",
@@ -893,7 +893,7 @@ describe("the agent a submit records, and where its name came from", () => {
         { agent: "codex", markers: ["CODEX_THREAD_ID"] },
       ],
     });
-    const history = await bare(appDir, CLI, ["history"], { PNEUMA_HOST: hostUrl });
+    const history = await bare(appDir, CLI, ["history"], { APPGOV_HOST: hostUrl });
     expect(history.output).toContain(`by unknown [agent-driven]: change ${n}`);
     expect(history.output).toContain("    agent unknown: markers of more than one agent were set (claude-code: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex: CODEX_THREAD_ID)");
   });
@@ -905,19 +905,19 @@ describe("the agent a submit records, and where its name came from", () => {
     expect(result.stderr).toContain("warning: markers of more than one agent are set");
   });
 
-  test("PNEUMA_AGENT and --agent name the agent over any markers, and the output says which did", async () => {
-    const env = await submit({ ...BOTH, PNEUMA_AGENT: "codex" });
-    expect(env.stdout).toContain("recorded agent: codex (from PNEUMA_AGENT)");
+  test("APPGOV_AGENT and --agent name the agent over any markers, and the output says which did", async () => {
+    const env = await submit({ ...BOTH, APPGOV_AGENT: "codex" });
+    expect(env.stdout).toContain("recorded agent: codex (from APPGOV_AGENT)");
     expect(env.stderr).toBe("");
-    expect(lastEntry()).toMatchObject({ agent: "codex", agent_source: "PNEUMA_AGENT" });
+    expect(lastEntry()).toMatchObject({ agent: "codex", agent_source: "APPGOV_AGENT" });
     expect(lastEntry().agent_candidates).toBeUndefined();
 
-    const flag = await submit({ ...BOTH, PNEUMA_AGENT: "codex" }, "--agent", "claude-code");
+    const flag = await submit({ ...BOTH, APPGOV_AGENT: "codex" }, "--agent", "claude-code");
     expect(flag.stdout).toContain("recorded agent: claude-code (from the --agent flag)");
     expect(lastEntry()).toMatchObject({ agent: "claude-code", agent_source: "--agent" });
 
-    const json = JSON.parse((await submit({ PNEUMA_AGENT: "codex" }, "--json")).stdout);
-    expect(json.agent).toEqual({ name: "codex", source: "PNEUMA_AGENT" });
+    const json = JSON.parse((await submit({ APPGOV_AGENT: "codex" }, "--json")).stdout);
+    expect(json.agent).toEqual({ name: "codex", source: "APPGOV_AGENT" });
   });
 
   test("one agent's markers: detected, naming the marker; none: unknown, saying nothing named or detected it", async () => {
@@ -926,7 +926,7 @@ describe("the agent a submit records, and where its name came from", () => {
     expect(lastEntry()).toMatchObject({ agent: "claude-code", agent_source: "detected", agent_markers: ["CLAUDECODE"] });
 
     const none = await submit({});
-    expect(none.stdout).toContain("recorded agent: unknown (no --agent, no PNEUMA_AGENT, and no agent's markers in the environment)");
+    expect(none.stdout).toContain("recorded agent: unknown (no --agent, no APPGOV_AGENT, and no agent's markers in the environment)");
     expect(lastEntry()).toMatchObject({ agent: "unknown", agent_source: "none" });
   });
 
@@ -946,14 +946,14 @@ describe("the agent a submit records, and where its name came from", () => {
     expect(lastEntry()).toMatchObject({ agent: "codex", agent_source: "detected", agent_markers: ["CODEX_THREAD_ID", "CODEX_TOOL_CALL_ID"] });
 
     // Inherited ones alone name nobody.
-    expect((await submit(inherited)).stdout).toContain("recorded agent: unknown (no --agent, no PNEUMA_AGENT, and no agent's markers in the environment)");
+    expect((await submit(inherited)).stdout).toContain("recorded agent: unknown (no --agent, no APPGOV_AGENT, and no agent's markers in the environment)");
   });
 
   test("undo with markers of two agents warns too, and says only what its entry keeps: the name unknown", async () => {
-    await submit({ PNEUMA_AGENT: "codex" });
-    const result = await bare(appDir, CLI, ["undo", "back one"], { PNEUMA_HOST: hostUrl, ...BOTH });
+    await submit({ APPGOV_AGENT: "codex" });
+    const result = await bare(appDir, CLI, ["undo", "back one"], { APPGOV_HOST: hostUrl, ...BOTH });
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain('pneuma: warning: markers of more than one agent are set (claude-code: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex: CODEX_THREAD_ID), so this undo is recorded as done by "unknown".');
+    expect(result.stderr).toContain('appgov: warning: markers of more than one agent are set (claude-code: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT; codex: CODEX_THREAD_ID), so this undo is recorded as done by "unknown".');
     expect(result.stderr).not.toContain("candidates kept");
     expect(lastEntry()).toMatchObject({ kind: "restore", agent: "unknown" });
   });
@@ -976,7 +976,7 @@ describe("the test check, as submit and history show it", () => {
       appsDir: join(work, "counted-apps"),
       space: new FakeSpace(),
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: (root) => templateTests(root),
@@ -984,7 +984,7 @@ describe("the test check, as submit and history show it", () => {
     const countedServer = createHostServer(counted);
     await new Promise<void>((resolve) => countedServer.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(countedServer.address() as AddressInfo).port}`;
-    const run = (cwd: string, ...args: string[]) => bare(cwd, join(EXAMPLE, "bin", "pneuma.mjs"), args, { PNEUMA_HOST: url, PNEUMA_AGENT: "codex" });
+    const run = (cwd: string, ...args: string[]) => bare(cwd, join(EXAMPLE, "bin", "appgov.mjs"), args, { APPGOV_HOST: url, APPGOV_AGENT: "codex" });
     try {
       expect((await run(work, "create", "timer")).code).toBe(0);
       const appDir = join(work, "counted-apps", "timer");
@@ -1017,7 +1017,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   let url: string;
   const appsDir = () => join(rootWork, "apps");
   // The copy the Host keeps in the apps directory, run there with nothing exported.
-  const here = (args: string[], env: Record<string, string> = {}) => bare(appsDir(), ".pneuma/pneuma.mjs", args, { PNEUMA_AGENT: "codex", ...env });
+  const here = (args: string[], env: Record<string, string> = {}) => bare(appsDir(), ".appgov/appgov.mjs", args, { APPGOV_AGENT: "codex", ...env });
 
   beforeAll(async () => {
     rootWork = mkdtempSync(join(tmpdir(), "aag-root-"));
@@ -1030,7 +1030,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
       appsDir: join(rootWork, "apps"),
       space: new FakeSpace(),
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -1054,7 +1054,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect(created.stdout).toContain(`The app directory is ${join(realpathSync(appsDir()), "alpha")}.`);
     await here(["create", "beta"]);
     writeFileSync(join(appsDir(), "beta", "src", "server.ts"), "export const sql = 'DROP TABLE todos';\n");
-    const waiting = await bare(join(appsDir(), "beta"), ".pneuma/pneuma.mjs", ["submit", "start over"], { PNEUMA_AGENT: "codex" });
+    const waiting = await bare(join(appsDir(), "beta"), ".appgov/appgov.mjs", ["submit", "start over"], { APPGOV_AGENT: "codex" });
     expect(waiting.code).toBe(2);
     writeFileSync(join(appsDir(), "alpha", "src", "server.ts"), "export const draft = true;\n");
 
@@ -1101,15 +1101,15 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     const guide = await here(["guide"]);
     expect(guide.code).toBe(0);
     const root = realpathSync(appsDir());
-    const cli = join(root, ".pneuma", "pneuma.mjs");
-    expect(guide.stdout).toContain("<!-- pneuma-apps:begin");
-    expect(guide.stdout).toContain(`kept and published by a pneuma Host at ${url}. The app directories are in '${root}'`);
+    const cli = join(root, ".appgov", "appgov.mjs");
+    expect(guide.stdout).toContain("<!-- appgov-apps:begin");
+    expect(guide.stdout).toContain(`kept and published by an appgov Host at ${url}. The app directories are in '${root}'`);
     expect(guide.stdout).toContain(`\`node '${cli}' list\``);
     expect(guide.stdout).toContain(`\`node '${cli}' status <name>\``);
     expect(guide.stdout).toContain(`\`node '${cli}' create <name>\``);
     expect(guide.stdout).toContain("A change goes live only through that app's own submit.");
     // From an app's directory the block is the same: the apps live in its parent.
-    expect((await bare(join(appsDir(), "alpha"), ".pneuma/pneuma.mjs", ["guide"])).stdout).toBe(guide.stdout);
+    expect((await bare(join(appsDir(), "alpha"), ".appgov/appgov.mjs", ["guide"])).stdout).toBe(guide.stdout);
 
     const listCommand = /`(node .+? list)`/.exec(guide.stdout)![1]!;
     const elsewhere = mkdtempSync(join(tmpdir(), "aag-anywhere-"));
@@ -1133,7 +1133,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
       appsDir: spaced,
       space: new FakeSpace(),
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -1144,7 +1144,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     const elsewhere = mkdtempSync(join(tmpdir(), "aag-anywhere-"));
     try {
       spacedHost.announce();
-      const guide = await bare(spaced, ".pneuma/pneuma.mjs", ["guide"]);
+      const guide = await bare(spaced, ".appgov/appgov.mjs", ["guide"]);
       expect(guide.code).toBe(0);
       const commands = [...guide.stdout.matchAll(/`(node [^`]+)`/g)].map((match) => match[1]!);
       expect(commands).toHaveLength(4);
@@ -1168,27 +1168,27 @@ describe("from the directory that holds the apps, or from anywhere with the guid
       writeFileSync(file, "# My instructions\n\nBe brief.\n");
       const first = await here(["guide", "--write", file]);
       expect(first.code).toBe(0);
-      expect(first.stdout).toBe(`added the pneuma block to ${file}\n`);
+      expect(first.stdout).toBe(`added the appgov block to ${file}\n`);
       const once = readFileSync(file, "utf8");
-      expect(once).toStartWith("# My instructions\n\nBe brief.\n\n<!-- pneuma-apps:begin");
-      expect(once).toEndWith("<!-- pneuma-apps:end -->\n");
+      expect(once).toStartWith("# My instructions\n\nBe brief.\n\n<!-- appgov-apps:begin");
+      expect(once).toEndWith("<!-- appgov-apps:end -->\n");
 
       writeFileSync(file, `${once}\nA line I added later.\n`);
       const second = await here(["guide", "--write", file]);
-      expect(second.stdout).toBe(`replaced the pneuma block in ${file}\n`);
+      expect(second.stdout).toBe(`replaced the appgov block in ${file}\n`);
       const twice = readFileSync(file, "utf8");
-      expect(twice.split("pneuma-apps:begin").length).toBe(2);
-      expect(twice).toStartWith("# My instructions\n\nBe brief.\n\n<!-- pneuma-apps:begin");
-      expect(twice).toEndWith("<!-- pneuma-apps:end -->\n\nA line I added later.\n");
+      expect(twice.split("appgov-apps:begin").length).toBe(2);
+      expect(twice).toStartWith("# My instructions\n\nBe brief.\n\n<!-- appgov-apps:begin");
+      expect(twice).toEndWith("<!-- appgov-apps:end -->\n\nA line I added later.\n");
       expect(readdirSync(dir)).toEqual(["AGENTS.md"]);
 
       const fresh = join(dir, "new.md");
-      expect((await here(["guide", "--write", fresh])).stdout).toBe(`wrote the pneuma block to ${fresh}\n`);
+      expect((await here(["guide", "--write", fresh])).stdout).toBe(`wrote the appgov block to ${fresh}\n`);
       expect(readdirSync(dir).sort()).toEqual(["AGENTS.md", "new.md"]);
 
       // With no file named, it says so and fails; it does not print the block and succeed.
       const unnamed = await here(["guide", "--write"]);
-      expect(unnamed).toMatchObject({ code: 1, stdout: "", stderr: "pneuma: guide --write takes the file to put the block in\n" });
+      expect(unnamed).toMatchObject({ code: 1, stdout: "", stderr: "appgov: guide --write takes the file to put the block in\n" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1198,16 +1198,16 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     const dir = mkdtempSync(join(tmpdir(), "aag-guide-"));
     try {
       const file = join(dir, "AGENTS.md");
-      const BEGIN = "<!-- pneuma-apps:begin (written by pneuma.mjs guide; guide --write replaces this block) -->";
-      const END = "<!-- pneuma-apps:end -->";
+      const BEGIN = "<!-- appgov-apps:begin (written by appgov.mjs guide; guide --write replaces this block) -->";
+      const END = "<!-- appgov-apps:end -->";
       // A stray end marker, then a begin marker whose block was cut off by hand, each with the person's text after it.
       const mine = `# Mine\n${END}\nNotes after a stray end.\n${BEGIN}\nNotes after a stray begin.\n`;
       writeFileSync(file, mine);
       for (let run = 0; run < 3; run++) expect((await here(["guide", "--write", file])).code).toBe(0);
       const written = readFileSync(file, "utf8");
-      expect(written).toStartWith(`${mine}\n${BEGIN}\n## My apps (pneuma Host)`);
+      expect(written).toStartWith(`${mine}\n${BEGIN}\n## My apps (appgov Host)`);
       expect(written.split(BEGIN).length).toBe(3);
-      expect(written.split("## My apps (pneuma Host)").length).toBe(2);
+      expect(written.split("## My apps (appgov Host)").length).toBe(2);
       expect(written).toEndWith(`${END}\n`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1219,7 +1219,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
       appsDir: join(rootWork, "other-apps"),
       space: new FakeSpace(),
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -1231,7 +1231,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
       expect(created.code).toBe(0);
       expect(created.stdout).toContain("The app directory is gamma/ in the Host's apps directory");
       expect(created.stdout).not.toContain(realpathSync(appsDir()));
-      expect(existsSync(join(rootWork, "other-apps", "gamma", ".pneuma", "app.json"))).toBe(true);
+      expect(existsSync(join(rootWork, "other-apps", "gamma", ".appgov", "app.json"))).toBe(true);
     } finally {
       otherServer.close();
     }
@@ -1240,8 +1240,8 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   test("guide refuses when it cannot tell where the apps live", async () => {
     const dir = mkdtempSync(join(tmpdir(), "aag-noapps-"));
     try {
-      writeFileSync(join(dir, "pneuma.mjs"), readFileSync(join(EXAMPLE, "bin", "pneuma.mjs")));
-      const guide = await bare(dir, join(dir, "pneuma.mjs"), ["guide"], { PNEUMA_HOST: url });
+      writeFileSync(join(dir, "appgov.mjs"), readFileSync(join(EXAMPLE, "bin", "appgov.mjs")));
+      const guide = await bare(dir, join(dir, "appgov.mjs"), ["guide"], { APPGOV_HOST: url });
       expect(guide.code).toBe(1);
       expect(guide.output).toContain("guide needs to know where the apps live");
     } finally {
@@ -1250,17 +1250,17 @@ describe("from the directory that holds the apps, or from anywhere with the guid
   });
 
   test("the same Host by another loopback name is still this directory's Host", async () => {
-    const guide = await here(["guide"], { PNEUMA_HOST: url.replace("127.0.0.1", "localhost") });
+    const guide = await here(["guide"], { APPGOV_HOST: url.replace("127.0.0.1", "localhost") });
     expect(guide.code).toBe(0);
     expect(guide.stdout).toContain(`The app directories are in '${realpathSync(appsDir())}'`);
   });
 
   test("a record left in a directory the apps moved out of: guide refuses, and create does not name that directory", async () => {
-    // What a move of PNEUMA_APPS_DIR leaves behind: the old directory keeps the Host's address record and CLI copy.
+    // What a move of APPGOV_APPS_DIR leaves behind: the old directory keeps the Host's address record and CLI copy.
     const old = join(rootWork, "old-apps");
-    mkdirSync(join(old, ".pneuma"), { recursive: true });
-    for (const file of ["host.json", "pneuma.mjs"]) writeFileSync(join(old, ".pneuma", file), readFileSync(join(appsDir(), ".pneuma", file)));
-    const stale = (args: string[]) => bare(old, ".pneuma/pneuma.mjs", args, { PNEUMA_AGENT: "codex" });
+    mkdirSync(join(old, ".appgov"), { recursive: true });
+    for (const file of ["host.json", "appgov.mjs"]) writeFileSync(join(old, ".appgov", file), readFileSync(join(appsDir(), ".appgov", file)));
+    const stale = (args: string[]) => bare(old, ".appgov/appgov.mjs", args, { APPGOV_AGENT: "codex" });
 
     const guide = await stale(["guide"]);
     expect(guide.code).toBe(1);
@@ -1271,12 +1271,12 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect(created.code).toBe(0);
     expect(created.stdout).toContain("The app directory is delta/ in the Host's apps directory");
     expect(created.stdout).not.toContain(realpathSync(old));
-    expect(existsSync(join(appsDir(), "delta", ".pneuma", "app.json"))).toBe(true);
+    expect(existsSync(join(appsDir(), "delta", ".appgov", "app.json"))).toBe(true);
   });
 
   test("list stays readable when an app's files have fields missing, and names each app by its directory", async () => {
     expect((await here(["create", "odd"])).code).toBe(0);
-    const dir = join(appsDir(), "odd", ".pneuma");
+    const dir = join(appsDir(), "odd", ".appgov");
     // A history line and a waiting change written by hand, with the intent, the agent and the risks left out.
     appendFileSync(join(dir, "history.jsonl"), `${JSON.stringify({ kind: "change", outcome: "published", at: "2026-11-24T08:00:00.000Z" })}\n`);
     mkdirSync(join(dir, "pending"), { recursive: true });
@@ -1289,8 +1289,8 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect(list.code).toBe(0);
     // The waiting change has no intent, agent or risks to show the owner, so it is named, not listed.
     const malformed =
-      ".pneuma/pending/c-hand.json is not a waiting change in the shape this Host writes (intent is missing or not text), so it is not listed and cannot be approved or denied. Look at it, then delete it.";
-    expect(list.stdout).toMatch(/\nodd +v1 {2}http:\/\/space\.test\/apps\/odd\/\n {2}last change 2026-11-24 08:00 UTC by : "" \(change published\)\n {2}\.pneuma\/pending\/c-hand\.json /);
+      ".appgov/pending/c-hand.json is not a waiting change in the shape this Host writes (intent is missing or not text), so it is not listed and cannot be approved or denied. Look at it, then delete it.";
+    expect(list.stdout).toMatch(/\nodd +v1 {2}http:\/\/space\.test\/apps\/odd\/\n {2}last change 2026-11-24 08:00 UTC by : "" \(change published\)\n {2}\.appgov\/pending\/c-hand\.json /);
     expect(list.stdout).toContain(`\n  ${malformed}\n`);
     expect(list.stdout).not.toContain("renamed");
     const status = await here(["status", "odd"]);

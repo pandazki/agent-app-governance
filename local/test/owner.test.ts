@@ -33,7 +33,7 @@ async function start(ownerToken: string | null = TOKEN, make: (options: Construc
     appsDir: join(work, "apps"),
     space,
     overlayDir: join(EXAMPLE, "overlay"),
-    cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+    cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
     owner: "user:me",
     policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
     runVerify: (root) => templateTests(root),
@@ -84,7 +84,7 @@ const fromPage = (run: Running, extra: Record<string, string> = {}) => ({
   [OWNER_HEADER]: TOKEN,
   ...extra,
 });
-/** What `node .pneuma/pneuma.mjs` sends: JSON, no browser headers. */
+/** What `node .appgov/appgov.mjs` sends: JSON, no browser headers. */
 const fromCli = { "content-type": "application/json" };
 
 const edit = (run: Running, name: string, rel: string, content: string) => {
@@ -93,7 +93,7 @@ const edit = (run: Running, name: string, rel: string, content: string) => {
   writeFileSync(file, content);
 };
 const history = (run: Running, name: string) =>
-  readFileSync(join(run.work, "apps", name, ".pneuma", "history.jsonl"), "utf8")
+  readFileSync(join(run.work, "apps", name, ".appgov", "history.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -278,7 +278,7 @@ describe("a write from the page", () => {
     expect(standing.data).toMatchObject({ change_id: id, republished: false, preview: { state: "standing", app: previewApp } });
     expect(published()).toBe(before);
     // Discarded at PneumaSpace: approving is refused until it stands again, through the page as in a terminal.
-    await run.space.discard(previewApp, "pneuma-host");
+    await run.space.discard(previewApp, "appgov");
     const refused = await send(run, "POST", `/owner/apps/notes/changes/${id}/approve`, fromPage(run), "{}");
     expect(refused.status).toBe(409);
     expect(refused.data).toMatchObject({ reason: "preview_gone" });
@@ -319,7 +319,7 @@ describe("a decision on the page leaves the record the CLI leaves, and says it c
   test("show it to me again, then let it go live", async () => {
     const { page, cli } = await both(async (run, via) => {
       const id = await waiting(run);
-      await run.space.discard(`notes-pv${id.slice(-4)}`, "pneuma-host");
+      await run.space.discard(`notes-pv${id.slice(-4)}`, "appgov");
       const again =
         via === "page"
           ? await send(run, "POST", `/owner/apps/notes/changes/${id}/preview`, fromPage(run), "{}")

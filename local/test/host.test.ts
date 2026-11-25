@@ -28,7 +28,7 @@ function makeHost(appsDir: string, fake: FakeSpace, extra: Partial<AppHostOption
     appsDir,
     space: fake,
     overlayDir: join(EXAMPLE, "overlay"),
-    cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+    cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
     owner: OWNER,
     policy: POLICY,
     // Stands in for `npm ci && npm test`: a draft holding src/TEST_FAILS fails its tests.
@@ -43,9 +43,9 @@ const put = (root: string, rel: string, content: string) => {
   writeFileSync(join(root, rel), content);
 };
 const edit = (name: string, rel: string, content: string) => put(app(name), rel, content);
-/** Stands in for test code that finds the draft under .pneuma/drafts and writes into it. */
+/** Stands in for test code that finds the draft under .appgov/drafts and writes into it. */
 const writeIntoDrafts = (name: string, rel: string, content: string) => {
-  for (const id of readdirSync(app(name, ".pneuma", "drafts"))) put(app(name, ".pneuma", "drafts", id), rel, content);
+  for (const id of readdirSync(app(name, ".appgov", "drafts"))) put(app(name, ".appgov", "drafts", id), rel, content);
 };
 
 beforeEach(() => {
@@ -66,11 +66,11 @@ describe("create", () => {
     // The governed protocol has to be met before the platform guide's own "publish with appctl".
     expect(agents.indexOf("## Changing this app")).toBeLessThan(agents.indexOf("PneumaSpace app template (test fixture)"));
     expect(readFileSync(app("todo", "CLAUDE.md"), "utf8").trim()).toBe("@AGENTS.md");
-    for (const file of ["pneuma.scaffold.json", ".pneuma/app.json", ".pneuma/pneuma.mjs", ".pneuma/history.jsonl", ".pneuma/build-threads.json", ".pneuma/release-rollout.json", ".pneuma/versions/v1/src/server.ts"]) {
+    for (const file of ["appgov.scaffold.json", ".appgov/app.json", ".appgov/appgov.mjs", ".appgov/history.jsonl", ".appgov/build-threads.json", ".appgov/release-rollout.json", ".appgov/versions/v1/src/server.ts"]) {
       expect(existsSync(app("todo", file))).toBe(true);
     }
     // Host state never ships: the version is clean source.
-    expect(existsSync(app("todo", ".pneuma/versions/v1/.pneuma"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v1/.appgov"))).toBe(false);
 
     const [entry] = host.history("todo");
     expect(entry).toMatchObject({ kind: "create", outcome: "published", version: "v1" });
@@ -80,7 +80,7 @@ describe("create", () => {
   });
 
   test("the artifact's scaffold manifest is valid by the framework's own validator", () => {
-    const manifest = JSON.parse(readFileSync(join(EXAMPLE, "overlay", "pneuma.scaffold.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(EXAMPLE, "overlay", "appgov.scaffold.json"), "utf8"));
     const check = validateScaffoldProjectManifest(manifest);
     expect(check.issues.filter((issue) => issue.severity === "error")).toEqual([]);
   });
@@ -147,7 +147,7 @@ describe("agent-driven change", () => {
     edit("todo", "src/PUBLISH_FAILS", "x");
     expect(await noPreview.submit({ name: "todo", intent: "over quota", agent: "codex" })).toMatchObject({ status: "rejected", reason: "publish_failed" });
     expect((await noPreview.status("todo")).active_version).toBe("v1");
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
   });
 });
 
@@ -196,8 +196,8 @@ describe("changes a person has to decide", () => {
     edit("todo", "src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
     const result = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
     if (result.status !== "needs_approval") throw new Error(`expected needs_approval, got ${result.status}`);
-    // What an agent can leave in .pneuma/pending/: a change without created_at, a file that is not JSON, one under another name.
-    const dir = app("todo", ".pneuma", "pending");
+    // What an agent can leave in .appgov/pending/: a change without created_at, a file that is not JSON, one under another name.
+    const dir = app("todo", ".appgov", "pending");
     const valid = JSON.parse(readFileSync(join(dir, `${result.change_id}.json`), "utf8")) as Record<string, unknown>;
     writeFileSync(join(dir, "c-undated.json"), JSON.stringify({ ...valid, change_id: "c-undated", created_at: undefined }));
     writeFileSync(join(dir, "c-broken.json"), "{ not json");
@@ -207,9 +207,9 @@ describe("changes a person has to decide", () => {
     expect(status.pending.map((p) => p.change_id)).toEqual([result.change_id]);
     const tail = "so it is not listed and cannot be approved or denied. Look at it, then delete it.";
     expect(status.malformed_pending).toEqual([
-      `.pneuma/pending/c-broken.json is not a waiting change in the shape this Host writes (it is not readable as JSON), ${tail}`,
-      `.pneuma/pending/c-copy.json is not a waiting change in the shape this Host writes (its change_id is not c-copy, the file's name), ${tail}`,
-      `.pneuma/pending/c-undated.json is not a waiting change in the shape this Host writes (created_at is missing or not text), ${tail}`,
+      `.appgov/pending/c-broken.json is not a waiting change in the shape this Host writes (it is not readable as JSON), ${tail}`,
+      `.appgov/pending/c-copy.json is not a waiting change in the shape this Host writes (its change_id is not c-copy, the file's name), ${tail}`,
+      `.appgov/pending/c-undated.json is not a waiting change in the shape this Host writes (created_at is missing or not text), ${tail}`,
     ]);
     expect(host.summaries()).toMatchObject([{ app_id: "todo", pending: [{ change_id: result.change_id }], malformed_pending: status.malformed_pending }]);
     // The owner page names it in plain words on the home page and in the app, with the Host's line under Details.
@@ -217,7 +217,7 @@ describe("changes a person has to decide", () => {
     const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: overview.summaries };
     expect(homeModel(overview, ctx).problems.map((p) => p.line)).toEqual([...status.malformed_pending!]);
     const page = appModel("todo", status, host.history("todo"), ctx);
-    expect(page.notices.map((n) => n.text)).toContain("A change here can't be decided: its file (.pneuma/pending/c-undated.json) isn't in the shape the Host writes. Ask your agent to look at it, or delete it.");
+    expect(page.notices.map((n) => n.text)).toContain("A change here can't be decided: its file (.appgov/pending/c-undated.json) isn't in the shape the Host writes. Ask your agent to look at it, or delete it.");
     expect(page.facts.map((f) => f.value)).toContain(status.malformed_pending![2]!);
 
     // None of them is decided blind; the well-formed change still is.
@@ -391,8 +391,8 @@ describe("the boundary of a change", () => {
     const result = await tampering.submit({ name: "todo", intent: "tweak", agent: "codex" });
 
     expect(result).toMatchObject({ status: "published", version: "v2", changed_paths: ["src/server.ts"], risks: ["source_code_change"] });
-    expect(existsSync(app("todo", ".pneuma/versions/v2/src/migrate.ts"))).toBe(false);
-    expect(readFileSync(app("todo", ".pneuma/versions/v2/sdk/serve.ts"), "utf8")).toBe(sdk);
+    expect(existsSync(app("todo", ".appgov/versions/v2/src/migrate.ts"))).toBe(false);
+    expect(readFileSync(app("todo", ".appgov/versions/v2/sdk/serve.ts"), "utf8")).toBe(sdk);
     expect(space.live.get("todo")!.files).not.toContain("src/migrate.ts");
     expect(readFileSync(app("todo", "sdk/serve.ts"), "utf8")).toBe(sdk);
   });
@@ -438,7 +438,7 @@ describe("the boundary of a change", () => {
     expect(await watching.submit({ name: "todo", intent: "tweak", agent: "codex" })).toMatchObject({ status: "published" });
     expect(checkedIn.startsWith(app("todo"))).toBe(false);
     expect(existsSync(checkedIn)).toBe(false);
-    expect(readdirSync(app("todo", ".pneuma", "drafts"))).toEqual([]);
+    expect(readdirSync(app("todo", ".appgov", "drafts"))).toEqual([]);
   });
 
   test("a check that writes into the draft itself, not its copy, releases nothing", async () => {
@@ -457,7 +457,7 @@ describe("the boundary of a change", () => {
     expect(result.detail).toContain("while verify ran");
     expect(reaching.history("todo").at(-1)).toMatchObject({ outcome: "rejected", reason: "draft_changed_after_check" });
     expect((await reaching.status("todo")).active_version).toBe("v1");
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
     expect(space.live.get("todo")!.files).not.toContain("src/migrate.ts");
   });
 
@@ -477,8 +477,8 @@ describe("the boundary of a change", () => {
     const status = await host.status("todo");
     expect(status.active_version).toBe("v1");
     expect(status.pending).toEqual([]);
-    expect(existsSync(app("todo", ".pneuma/drafts", pending.change_id))).toBe(false);
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/drafts", pending.change_id))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
     expect(host.history("todo").at(-1)).toMatchObject({ kind: "decision", outcome: "rejected", reason: "draft_changed_after_check" });
   });
 
@@ -494,7 +494,7 @@ describe("the boundary of a change", () => {
       },
     });
     expect(result).toMatchObject({ status: "published", version: "v2", changed_paths: ["public/app/note.txt"] });
-    expect(existsSync(app("todo", ".pneuma/versions/v2/data"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2/data"))).toBe(false);
   });
 
   test("what the agent keeps for itself in a host-driven draft is neither reported nor classified", async () => {
@@ -629,7 +629,7 @@ describe("edits that were never submitted are not overwritten", () => {
     await expect(host.resolve("todo", pending.change_id, "denied", "agent:codex")).rejects.toThrow("cannot deny");
     await expect(host.resolve("todo", pending.change_id, "denied", AUTO_SUBJECT)).rejects.toThrow("cannot deny");
     expect((await host.status("todo")).pending).toHaveLength(1);
-    expect(existsSync(app("todo", ".pneuma/drafts", pending.change_id))).toBe(true);
+    expect(existsSync(app("todo", ".appgov/drafts", pending.change_id))).toBe(true);
   });
 });
 
@@ -853,8 +853,8 @@ const serverText = () => readFileSync(app("todo", "src/server.ts"), "utf8");
 describe("the app is on the framework's change record", () => {
   test("create writes the record's own files, and the version counter is not in app.json", async () => {
     await host.create("todo");
-    expect(JSON.parse(readFileSync(app("todo", ".pneuma/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 1, current_version: "v1" });
-    expect(JSON.parse(readFileSync(app("todo", ".pneuma/app.json"), "utf8")).version_counter).toBeUndefined();
+    expect(JSON.parse(readFileSync(app("todo", ".appgov/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 1, current_version: "v1" });
+    expect(JSON.parse(readFileSync(app("todo", ".appgov/app.json"), "utf8")).version_counter).toBeUndefined();
     expect(host.history("todo")[0]).toMatchObject({ kind: "create", version: "v1", guarantees: ["verified", "previewed", "approved", "sealed"] });
   });
 
@@ -885,7 +885,7 @@ describe("the app is on the framework's change record", () => {
     space.onPublish = (name, dir) => name === "todo" && writeFileSync(join(dir, "src", "sneaked.ts"), "export const x = 1;\n");
     const result = await host.submit({ name: "todo", intent: "tweak", agent: "codex" });
     expect(result).toMatchObject({ status: "rejected", reason: "draft_changed_after_check" });
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
     expect((await host.status("todo")).active_version).toBe("v1");
     expect(host.history("todo").at(-1)).toMatchObject({ outcome: "rejected", guarantees: [], address_note: "the address is back on v1" });
   });
@@ -932,7 +932,7 @@ describe("record mode: the zero position of the dial", () => {
   test("no edit is still not a change", async () => {
     await recording.create("todo");
     expect(await recording.submit({ name: "todo", intent: "nothing", agent: "codex" })).toMatchObject({ status: "rejected", reason: "no_change" });
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
   });
 
   test("a refused publish keeps the version recorded, says what the address serves, and the next change goes on from it", async () => {
@@ -948,7 +948,7 @@ describe("record mode: the zero position of the dial", () => {
       address_note: "the address was not touched and still serves v1",
       serving_version: "v1",
     });
-    expect(existsSync(app("todo", ".pneuma/versions/v2/src/extra.ts"))).toBe(true);
+    expect(existsSync(app("todo", ".appgov/versions/v2/src/extra.ts"))).toBe(true);
     expect(space.live.get("todo")!.files).not.toContain("src/extra.ts");
     expect(await recording.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v1", uncommitted: [] });
     expect(recording.history("todo").at(-1)).toMatchObject({ outcome: "release_failed", version: "v2", guarantees: [], address_note: "the address was not touched and still serves v1" });
@@ -1027,7 +1027,7 @@ describe("undo walks back", () => {
     expect(await host.undo("todo", "further")).toMatchObject({ active_version: "v2", undone_version: "v3" });
     expect(serverText()).toBe("export const version = 2;\n");
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", serving_version: "v2", uncommitted: [] });
-    expect(JSON.parse(readFileSync(app("todo", ".pneuma/release-rollout.json"), "utf8")).active.candidate_id).toBe("v2");
+    expect(JSON.parse(readFileSync(app("todo", ".appgov/release-rollout.json"), "utf8")).active.candidate_id).toBe("v2");
 
     edit("todo", "src/server.ts", "export const version = 5;\n");
     expect(await host.submit({ name: "todo", intent: "new direction", agent: "codex" })).toMatchObject({ status: "published", version: "v5" });
@@ -1173,7 +1173,7 @@ describe("one-way changes", () => {
     if (result.status !== "rejected") return;
     expect(result.detail).toContain("the disk is full");
     expect(space.log.slice(steps)).toEqual([`discard ${pending.preview!.app}`]);
-    expect(existsSync(app("todo", ".pneuma/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
     expect((await withData.status("todo")).active_version).toBe("v1");
     expect(withData.history("todo").at(-1)).toMatchObject({ kind: "decision", outcome: "rejected", reason: "data_snapshot_failed", guarantees: ["verified", "previewed", "approved"] });
   });
@@ -1301,7 +1301,7 @@ describe("one-way changes", () => {
     const withData = makeHost(join(work, "apps"), space, { dataSnapshot: cap });
     await approveOneWay(withData);
     // The agent can write the record: it points the snapshot at something the capability never made.
-    const history = app("todo", ".pneuma", "history.jsonl");
+    const history = app("todo", ".appgov", "history.jsonl");
     const lines = readFileSync(history, "utf8");
     expect(lines).toContain('"ref":"snap-1"');
     writeFileSync(history, lines.replaceAll('"ref":"snap-1"', '"ref":"snap_billing_v1"'));
@@ -1374,7 +1374,7 @@ describe("one-way changes", () => {
     const cap = fakeSnapshots([]);
     const withData = makeHost(join(work, "apps"), space, { dataSnapshot: cap });
     await approveOneWay(withData);
-    const state = app("todo", ".pneuma");
+    const state = app("todo", ".appgov");
     const restore = cap.restore;
     cap.restore = async (input) => {
       await restore(input);
@@ -1403,11 +1403,11 @@ describe("switching the dial from record to a governed mode", () => {
   test("guardrails loosened in record mode do not loosen the governed modes", async () => {
     const recording = recordingHost();
     await recording.create("todo");
-    const scaffold = JSON.parse(readFileSync(app("todo", "pneuma.scaffold.json"), "utf8"));
+    const scaffold = JSON.parse(readFileSync(app("todo", "appgov.scaffold.json"), "utf8"));
     scaffold.artifact_boundary.protected_paths = [];
     scaffold.artifact_boundary.writable_roots.push("sdk");
     for (const check of scaffold.guardrails.pre_proposal) if (check.kind === "command") check.command = "true";
-    edit("todo", "pneuma.scaffold.json", JSON.stringify(scaffold, null, 2));
+    edit("todo", "appgov.scaffold.json", JSON.stringify(scaffold, null, 2));
     expect(await recording.submit({ name: "todo", intent: "loosen the rules", agent: "codex" })).toMatchObject({ status: "published", version: "v2" });
 
     const commands: string[] = [];
@@ -1423,7 +1423,7 @@ describe("switching the dial from record to a governed mode", () => {
     edit("todo", "src/server.ts", "export const changed = true;\n");
     expect(await governed.submit({ name: "todo", intent: "tweak", agent: "codex" })).toMatchObject({ status: "published" });
     // The Host's own verify command ran, not the one the record-mode version carries.
-    const overlay = JSON.parse(readFileSync(join(EXAMPLE, "overlay", "pneuma.scaffold.json"), "utf8"));
+    const overlay = JSON.parse(readFileSync(join(EXAMPLE, "overlay", "appgov.scaffold.json"), "utf8"));
     expect(commands).toEqual([overlay.guardrails.pre_proposal.find((check: { kind: string }) => check.kind === "command").command]);
   });
 
@@ -1497,7 +1497,7 @@ describe("recorded but not live", () => {
 
     const result = await recording.submit({ name: "todo", intent: "add a file", agent: "codex" });
     expect(result).toMatchObject({ status: "published", version: "v2", released_as_is: true, changed_paths: ["src/extra.ts"], guarantees: [] });
-    expect(existsSync(app("todo", ".pneuma/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
     expect(space.live.get("todo")!.files).toContain("src/extra.ts");
     expect(await recording.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v2", uncommitted: [] });
     expect(recording.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "published", version: "v2", base_version: "v1", guarantees: [] });
@@ -1518,7 +1518,7 @@ describe("recorded but not live", () => {
       approved_by: [AUTO_SUBJECT],
       guarantees: ["verified", "previewed", "approved", "sealed"],
     });
-    expect(existsSync(app("todo", ".pneuma/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
     expect(space.live.get("todo")!.files).toContain("src/extra.ts");
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v2" });
     expect(host.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "published", version: "v2", guarantees: ["verified", "previewed", "approved", "sealed"] });
@@ -1593,7 +1593,7 @@ describe("recorded but not live", () => {
     await recording.submit({ name: "todo", intent: "drop notes", agent: "codex", oneWay: "drops the note column and its data" });
     const again = await recording.submit({ name: "todo", intent: "drop notes", agent: "codex" });
     expect(again).toMatchObject({ status: "release_failed", version: "v2", reason: "data_snapshot_failed", address_note: "the address was not touched and still serves v1" });
-    expect(existsSync(app("todo", ".pneuma/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
     expect(recording.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "release_failed", version: "v2", reason: "data_snapshot_failed" });
   });
 
@@ -1620,10 +1620,10 @@ describe("a record that cannot be written after a publish", () => {
   /** Makes the record refuse new versions once the release of `name` (not a preview, not an undo) has gone out. */
   const refuseVersionsAfterPublish = (name: string) => {
     space.onPublish = (published, dir) => {
-      if (published === name && !dir.includes(join(".pneuma", "versions"))) chmodSync(app(name, ".pneuma", "versions"), 0o555);
+      if (published === name && !dir.includes(join(".appgov", "versions"))) chmodSync(app(name, ".appgov", "versions"), 0o555);
     };
   };
-  const allowVersions = (name: string) => existsSync(app(name, ".pneuma", "versions")) && chmodSync(app(name, ".pneuma", "versions"), 0o755);
+  const allowVersions = (name: string) => existsSync(app(name, ".appgov", "versions")) && chmodSync(app(name, ".appgov", "versions"), 0o755);
 
   test.skipIf(process.getuid?.() === 0)("a governed change puts the address back and answers with a reason, not a bare error", async () => {
     await host.create("todo");
@@ -1662,8 +1662,8 @@ describe("a record that cannot be written after a publish", () => {
   test.skipIf(process.getuid?.() === 0)("create takes the app down again, so neither the app nor the name is left behind", async () => {
     space.onPublish = (published, dir) => {
       if (published === "todo" && !dir.includes("-pv")) {
-        mkdirSync(app("todo", ".pneuma", "versions"), { recursive: true });
-        chmodSync(app("todo", ".pneuma", "versions"), 0o555);
+        mkdirSync(app("todo", ".appgov", "versions"), { recursive: true });
+        chmodSync(app("todo", ".appgov", "versions"), 0o555);
       }
     };
     let err: HostError;
@@ -1689,7 +1689,7 @@ describe("what the review of this change found", () => {
     const submitted = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
     if (submitted.status !== "needs_approval") throw new Error("expected needs_approval");
     // Rewrite the waiting change the way the earlier Host saved it: no one_way, no cost line.
-    const file = app("todo", ".pneuma", "pending", `${submitted.change_id}.json`);
+    const file = app("todo", ".appgov", "pending", `${submitted.change_id}.json`);
     const saved = JSON.parse(readFileSync(file, "utf8"));
     delete saved.one_way;
     saved.disclosure = saved.disclosure.filter((line: string) => !line.startsWith("What approving costs"));
@@ -1714,7 +1714,7 @@ describe("what the review of this change found", () => {
   test.skipIf(process.getuid?.() === 0)("an undo whose older version went out but could not be recorded puts the address back and says so", async () => {
     edit("todo", "src/extra.ts", "export const extra = 1;\n");
     await host.submit({ name: "todo", intent: "add a file", agent: "codex" });
-    const state = app("todo", ".pneuma");
+    const state = app("todo", ".appgov");
     // Stands in for a disk that refuses the record's write once v1 has gone out.
     space.onPublish = (name, dir) => name === "todo" && dir.endsWith(join("versions", "v1")) && chmodSync(state, 0o555);
     try {
@@ -1738,7 +1738,7 @@ describe("what the second review found", () => {
     space.onPublish = (name, dir) => {
       if (name !== "todo" || !dir.endsWith(join("versions", "v1"))) return;
       const line = { change_id: "chg_meanwhile", at: new Date().toISOString(), kind: "declaration", intent: "written meanwhile", agent: "codex", version: "v2", guarantees: [], one_way: { reason: "rewrote every stored id" } };
-      appendFileSync(app("todo", ".pneuma", "history.jsonl"), `${JSON.stringify(line)}\n`);
+      appendFileSync(app("todo", ".appgov", "history.jsonl"), `${JSON.stringify(line)}\n`);
     };
 
     // Before, the record planned again after v1 was live, refused, and the Host answered 409 as if nothing had happened.
@@ -1865,7 +1865,7 @@ describe("what the second review found", () => {
     expect(page.decision.blocked).toBe("This can't go live yet: the last time you went back, it didn't finish. Go back again first; you can still say no.");
     expect(page.notices).toContainEqual({ tone: "red", text: expect.stringContaining("Changes can't go live until you go back again") });
     // The waiting change's preview has ended as well. From here on, every refusal comes before PneumaSpace is asked anything.
-    await space.discard(`todo-pv${waiting.change_id.slice(-4)}`, "pneuma-host");
+    await space.discard(`todo-pv${waiting.change_id.slice(-4)}`, "appgov");
     const asked: string[] = [];
     const lookUp = space.app.bind(space);
     space.app = async (name) => (asked.push(name), lookUp(name));
@@ -2024,8 +2024,8 @@ describe("app directories made before the change record", () => {
   async function legacyApp(name: string, rollout: boolean, v2 = "export const version = 2;\n"): Promise<string> {
     const root = app(name);
     cpSync(FIXTURE_TEMPLATE, root, { recursive: true });
-    installOverlay(root, join(EXAMPLE, "overlay"), join(EXAMPLE, "bin", "pneuma.mjs"));
-    const versionsDir = join(root, ".pneuma", "versions");
+    installOverlay(root, join(EXAMPLE, "overlay"), join(EXAMPLE, "bin", "appgov.mjs"));
+    const versionsDir = join(root, ".appgov", "versions");
     put(root, "src/server.ts", "export const version = 1;\n");
     snapshot(root, join(versionsDir, "v1"));
     put(root, "src/server.ts", v2);
@@ -2034,11 +2034,11 @@ describe("app directories made before the change record", () => {
     snapshot(root, join(versionsDir, "v3"));
     restoreWorkingTree(join(versionsDir, "v2"), root);
     const thread = await createFileBuildThreadStore({ workspace: root, stateDir: STATE_DIR }).startThread({ profile_id: "space-isolate", app_id: name, builder_user_id: OWNER });
-    put(root, ".pneuma/app.json", JSON.stringify({ schema_version: 1, app_id: name, scaffold_id: "space-isolate", owner: OWNER, thread_id: thread.thread_id, created_at: "2026-11-01T00:00:00.000Z", version_counter: 3 }));
+    put(root, ".appgov/app.json", JSON.stringify({ schema_version: 1, app_id: name, scaffold_id: "space-isolate", owner: OWNER, thread_id: thread.thread_id, created_at: "2026-11-01T00:00:00.000Z", version_counter: 3 }));
     const line = (fields: Record<string, unknown>) => JSON.stringify({ at: "2026-11-01T00:00:00.000Z", agent: "codex", control: "agent-driven", ...fields });
     put(
       root,
-      ".pneuma/history.jsonl",
+      ".appgov/history.jsonl",
       [
         line({ change_id: "a", kind: "create", outcome: "published", intent: "create", version: "v1", agent: "host", control: "owner" }),
         line({ change_id: "b", kind: "change", outcome: "rejected", intent: "broken", base_version: "v1", reason: "verify_failed" }),
@@ -2049,18 +2049,18 @@ describe("app directories made before the change record", () => {
     );
     if (rollout) {
       const instance = (id: string) => ({ candidate_id: id, image_tag: `${name}:${id}`, status: "healthy", checks: [], created_at_ms: 1, updated_at_ms: 1 });
-      put(root, ".pneuma/release-rollout.json", JSON.stringify({ active: instance("v2"), previous: instance("v3"), timeline: [], created_at_ms: 1, updated_at_ms: 1 }));
+      put(root, ".appgov/release-rollout.json", JSON.stringify({ active: instance("v2"), previous: instance("v3"), timeline: [], created_at_ms: 1, updated_at_ms: 1 }));
     }
     return root;
   }
 
   test("are put on the record on first open: the counter from app.json, the current version from what the address serves", async () => {
     const root = await legacyApp("todo", true);
-    await space.publish("todo", join(root, ".pneuma", "versions", "v2"));
+    await space.publish("todo", join(root, ".appgov", "versions", "v2"));
 
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", serving_version: "v2", uncommitted: [] });
-    expect(JSON.parse(readFileSync(join(root, ".pneuma/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 3, current_version: "v2" });
-    expect(JSON.parse(readFileSync(join(root, ".pneuma/app.json"), "utf8"))).not.toHaveProperty("version_counter");
+    expect(JSON.parse(readFileSync(join(root, ".appgov/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 3, current_version: "v2" });
+    expect(JSON.parse(readFileSync(join(root, ".appgov/app.json"), "utf8"))).not.toHaveProperty("version_counter");
     // Old lines never said what held, so they read as nothing guaranteed.
     expect(host.history("todo").map((h) => h.guarantees)).toEqual([[], [], [], [], []]);
 
@@ -2089,24 +2089,24 @@ describe("app directories made before the change record", () => {
   test("without a rollout state, the highest version is taken as current", async () => {
     const root = await legacyApp("todo", false);
     expect((await host.status("todo")).active_version).toBe("v3");
-    expect(JSON.parse(readFileSync(join(root, ".pneuma/record.json"), "utf8"))).toMatchObject({ version_counter: 3, current_version: "v3" });
+    expect(JSON.parse(readFileSync(join(root, ".appgov/record.json"), "utf8"))).toMatchObject({ version_counter: 3, current_version: "v3" });
   });
 });
 
 describe("the data snapshot seam", () => {
   test("nothing named is none; a name no implementation has stops the Host at start", () => {
     expect(dataSnapshotFromEnv({})).toBeUndefined();
-    expect(dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "" })).toBeUndefined();
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "space-state" })).toThrow('PNEUMA_DATA_SNAPSHOT names "space-state"');
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "space-state" })).toThrow("known: postgres-template");
+    expect(dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "" })).toBeUndefined();
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "space-state" })).toThrow('APPGOV_DATA_SNAPSHOT names "space-state"');
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "space-state" })).toThrow("known: postgres-template");
   });
 });
 
 describe("the app's copy of the CLI", () => {
   test("a copy left by an earlier Host is replaced when the app is next opened, and no version sees it", async () => {
     await host.create("todo");
-    const copy = app("todo", ".pneuma", "pneuma.mjs");
-    const current = readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8");
+    const copy = app("todo", ".appgov", "appgov.mjs");
+    const current = readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8");
     writeFileSync(copy, "// a CLI from an earlier Host\n");
 
     const status = await host.status("todo");
@@ -2122,7 +2122,7 @@ describe("the Host records its own address in what it manages", () => {
   test("create writes it into the app, and opening the app under another address rewrites it", async () => {
     const first = makeHost(join(work, "apps"), space, { hostUrl: "http://127.0.0.1:48363" });
     await first.create("todo");
-    const file = app("todo", ".pneuma", "host.json");
+    const file = app("todo", ".appgov", "host.json");
     const recorded = read(file);
     expect(recorded).toMatchObject({ url: "http://127.0.0.1:48363", scope: "app" });
 
@@ -2132,39 +2132,39 @@ describe("the Host records its own address in what it manages", () => {
     const moved = makeHost(join(work, "apps"), space, { hostUrl: "http://127.0.0.1:9999" });
     const status = await moved.status("todo");
     expect(read(file).url).toBe("http://127.0.0.1:9999");
-    // .pneuma/ is not part of any version.
+    // .appgov/ is not part of any version.
     expect(status.uncommitted).toEqual([]);
   });
 
   test("at start it writes the apps directory and every app in it, and brings each app's CLI copy up to this Host's", async () => {
     await host.create("one");
     await host.create("two");
-    expect(existsSync(app("one", ".pneuma", "host.json"))).toBe(false);
+    expect(existsSync(app("one", ".appgov", "host.json"))).toBe(false);
     // A copy from a Host before the address record: it would never read host.json.
-    writeFileSync(app("two", ".pneuma", "pneuma.mjs"), "// a CLI from an earlier Host\n");
+    writeFileSync(app("two", ".appgov", "appgov.mjs"), "// a CLI from an earlier Host\n");
     makeHost(join(work, "apps"), space, { hostUrl: "http://127.0.0.1:8090" }).announce();
-    expect(read(join(work, "apps", ".pneuma", "host.json"))).toMatchObject({ url: "http://127.0.0.1:8090", scope: "apps" });
-    for (const name of ["one", "two"]) expect(read(app(name, ".pneuma", "host.json"))).toMatchObject({ url: "http://127.0.0.1:8090", scope: "app" });
-    expect(readFileSync(app("two", ".pneuma", "pneuma.mjs"), "utf8")).toBe(readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8"));
+    expect(read(join(work, "apps", ".appgov", "host.json"))).toMatchObject({ url: "http://127.0.0.1:8090", scope: "apps" });
+    for (const name of ["one", "two"]) expect(read(app(name, ".appgov", "host.json"))).toMatchObject({ url: "http://127.0.0.1:8090", scope: "app" });
+    expect(readFileSync(app("two", ".appgov", "appgov.mjs"), "utf8")).toBe(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"));
     expect(host.list()).toEqual(["one", "two"]);
   });
 
-  test("bun run serve outside the container derives its address from where it listens; PNEUMA_HOST_URL wins", () => {
+  test("bun run serve outside the container derives its address from where it listens; APPGOV_HOST_URL wins", () => {
     expect(hostUrlFromEnv({}, "127.0.0.1", 8090)).toBe("http://127.0.0.1:8090");
     expect(hostUrlFromEnv({}, "0.0.0.0", 48363)).toBe("http://127.0.0.1:48363");
     expect(hostUrlFromEnv({}, "::", 8090)).toBe("http://[::1]:8090");
-    expect(hostUrlFromEnv({ PNEUMA_HOST_URL: "http://127.0.0.1:48363/" }, "0.0.0.0", 8090)).toBe("http://127.0.0.1:48363");
-    expect(() => hostUrlFromEnv({ PNEUMA_HOST_URL: "ftp://127.0.0.1:8090" }, "0.0.0.0", 8090)).toThrow("PNEUMA_HOST_URL must be an http:// or https:// address");
-    expect(() => hostUrlFromEnv({ PNEUMA_HOST_URL: "not a url" }, "0.0.0.0", 8090)).toThrow("PNEUMA_HOST_URL is not a URL");
+    expect(hostUrlFromEnv({ APPGOV_HOST_URL: "http://127.0.0.1:48363/" }, "0.0.0.0", 8090)).toBe("http://127.0.0.1:48363");
+    expect(() => hostUrlFromEnv({ APPGOV_HOST_URL: "ftp://127.0.0.1:8090" }, "0.0.0.0", 8090)).toThrow("APPGOV_HOST_URL must be an http:// or https:// address");
+    expect(() => hostUrlFromEnv({ APPGOV_HOST_URL: "not a url" }, "0.0.0.0", 8090)).toThrow("APPGOV_HOST_URL is not a URL");
   });
 
-  test("a port the system picks (PNEUMA_HOST_PORT=0) is refused at start, unless PNEUMA_HOST_URL says where the Host is reached", () => {
+  test("a port the system picks (APPGOV_HOST_PORT=0) is refused at start, unless APPGOV_HOST_URL says where the Host is reached", () => {
     // Otherwise every app would record http://127.0.0.1:0, and every CLI copy would try it.
-    expect(() => hostUrlFromEnv({ PNEUMA_HOST_PORT: "0" }, "127.0.0.1", 0)).toThrow(
-      'PNEUMA_HOST_PORT must be a port from 1 to 65535, not "0": this Host records its address in every app, so it needs a fixed port. To listen on another kind of port, also set PNEUMA_HOST_URL',
+    expect(() => hostUrlFromEnv({ APPGOV_HOST_PORT: "0" }, "127.0.0.1", 0)).toThrow(
+      'APPGOV_HOST_PORT must be a port from 1 to 65535, not "0": this Host records its address in every app, so it needs a fixed port. To listen on another kind of port, also set APPGOV_HOST_URL',
     );
-    expect(() => hostUrlFromEnv({ PNEUMA_HOST_PORT: "eighty" }, "127.0.0.1", Number("eighty"))).toThrow('not "eighty"');
-    expect(hostUrlFromEnv({ PNEUMA_HOST_PORT: "0", PNEUMA_HOST_URL: "http://127.0.0.1:48363" }, "127.0.0.1", 0)).toBe("http://127.0.0.1:48363");
+    expect(() => hostUrlFromEnv({ APPGOV_HOST_PORT: "eighty" }, "127.0.0.1", Number("eighty"))).toThrow('not "eighty"');
+    expect(hostUrlFromEnv({ APPGOV_HOST_PORT: "0", APPGOV_HOST_URL: "http://127.0.0.1:48363" }, "127.0.0.1", 0)).toBe("http://127.0.0.1:48363");
   });
 });
 
@@ -2271,7 +2271,7 @@ describe("every app at a glance, and the directory that holds them", () => {
     await host.create("dirty");
     edit("dirty", "src/server.ts", "export const draft = true;\n");
     await host.create("broken");
-    writeFileSync(app("broken", ".pneuma", "app.json"), "{ not json");
+    writeFileSync(app("broken", ".appgov", "app.json"), "{ not json");
 
     const summaries = host.summaries();
     expect(summaries.map((s) => s.app_id)).toEqual(["broken", "calm", "dirty", "waits"]);
@@ -2315,28 +2315,28 @@ describe("every app at a glance, and the directory that holds them", () => {
     announced.announce();
 
     const agents = readFileSync(join(appsDir, "AGENTS.md"), "utf8");
-    expect(agents).toStartWith("<!-- pneuma-host:begin");
+    expect(agents).toStartWith("<!-- appgov-host:begin");
     expect(agents).toContain("The Host is at http://127.0.0.1:48363");
-    expect(agents).toContain("`node .pneuma/pneuma.mjs list`");
-    expect(agents).toContain("`node .pneuma/pneuma.mjs create <name>`");
+    expect(agents).toContain("`node .appgov/appgov.mjs list`");
+    expect(agents).toContain("`node .appgov/appgov.mjs create <name>`");
     expect(agents).toContain("follow its own `AGENTS.md`. A change goes live only through that app's `submit`");
     expect(agents).toEndWith("My own notes about these apps.\n");
     expect(readFileSync(join(appsDir, "CLAUDE.md"), "utf8")).toBe("Mine.\n");
-    expect(readFileSync(join(appsDir, ".pneuma", "pneuma.mjs"), "utf8")).toBe(readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8"));
+    expect(readFileSync(join(appsDir, ".appgov", "appgov.mjs"), "utf8")).toBe(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"));
 
     logged.length = 0;
     announced.announce();
     expect(logged).toEqual([]);
 
     // Another address: the block is replaced, once, and the person's text stays.
-    writeFileSync(join(appsDir, ".pneuma", "pneuma.mjs"), "// an older CLI\n");
+    writeFileSync(join(appsDir, ".appgov", "appgov.mjs"), "// an older CLI\n");
     makeHost(appsDir, space, { hostUrl: "http://127.0.0.1:9999" }).announce();
     const moved = readFileSync(join(appsDir, "AGENTS.md"), "utf8");
-    expect(moved.split("pneuma-host:begin").length).toBe(2);
+    expect(moved.split("appgov-host:begin").length).toBe(2);
     expect(moved).toContain("The Host is at http://127.0.0.1:9999");
     expect(moved).not.toContain("48363");
     expect(moved).toEndWith("My own notes about these apps.\n");
-    expect(readFileSync(join(appsDir, ".pneuma", "pneuma.mjs"), "utf8")).not.toBe("// an older CLI\n");
+    expect(readFileSync(join(appsDir, ".appgov", "appgov.mjs"), "utf8")).not.toBe("// an older CLI\n");
     // None of it is an app.
     expect(announced.list()).toEqual([]);
   });
@@ -2344,8 +2344,8 @@ describe("every app at a glance, and the directory that holds them", () => {
   test("the Host's block in the apps directory's AGENTS.md is the one between its own markers, whatever stray markers sit elsewhere", async () => {
     const appsDir = join(work, "apps");
     mkdirSync(appsDir, { recursive: true });
-    const BEGIN = "<!-- pneuma-host:begin (the pneuma Host rewrites this block when it starts; edits inside it are lost) -->";
-    const END = "<!-- pneuma-host:end -->";
+    const BEGIN = "<!-- appgov-host:begin (the appgov Host rewrites this block when it starts; edits inside it are lost) -->";
+    const END = "<!-- appgov-host:end -->";
     // A stray end marker and a stray begin marker above the block, each with the person's text after it.
     const before = `${END}\nNotes after a stray end.\n${BEGIN}\nNotes after a stray begin.\n`;
     writeFileSync(join(appsDir, "AGENTS.md"), `${before}${BEGIN}\nThe Host is at http://127.0.0.1:48363\n${END}\nMine.\n`);
@@ -2385,8 +2385,8 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     expect(preview!.name).toMatch(/^todo-pv/);
     expect(preview!.listed!.expiresAt! - before).toBeGreaterThanOrEqual(HOUR - 1000);
     expect(preview!.listed!.expiresAt! - before).toBeLessThanOrEqual(HOUR + 5000);
-    expect(preview!.listed!.manager).toEqual({ name: "pneuma-host", url: null });
-    expect(release).toMatchObject({ name: "todo", listed: { expiresAt: null, manager: { name: "pneuma-host", url: null } } });
+    expect(preview!.listed!.manager).toEqual({ name: "appgov", url: null });
+    expect(release).toMatchObject({ name: "todo", listed: { expiresAt: null, manager: { name: "appgov", url: null } } });
     // One call ends it: discard, not remove and purge.
     expect(space.log.at(-1)).toBe(`discard ${preview!.name}`);
     expect(space.previews()).toEqual([]);
@@ -2413,9 +2413,9 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     const result = await tooLong.submit({ name: "todo", intent: "tweak", agent: "codex" });
     expect(result).toMatchObject({ status: "rejected", reason: "preview_refused" });
     if (result.status !== "rejected") return;
-    expect(result.detail).toContain("its ttl, 7200 s (PNEUMA_PREVIEW_TTL), is above the 3600 s PneumaSpace allows");
+    expect(result.detail).toContain("its ttl, 7200 s (APPGOV_PREVIEW_TTL), is above the 3600 s PneumaSpace allows");
     expect(result.detail).toContain("Nothing was found wrong with the change itself");
-    expect(result.detail).toContain("Lower PNEUMA_PREVIEW_TTL to 3600 or less");
+    expect(result.detail).toContain("Lower APPGOV_PREVIEW_TTL to 3600 or less");
     expect(result.detail).toContain("ephemeral ttl_seconds must be a whole number from 1 to 3600 (ephemeral_max_ttl_seconds), got 7200");
     expect((await tooLong.status("todo")).active_version).toBe("v1");
     // The tests passed and no check failed.
@@ -2444,7 +2444,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     expect(await host.submit({ name: "todo", intent: "remove notes 4", agent: "claude-code" })).toMatchObject({ status: "needs_approval" });
 
     // Publishing a preview again meets the same quota, and says so the same way.
-    await space.discard(previewName("todo", ids[1]!), "pneuma-host");
+    await space.discard(previewName("todo", ids[1]!), "appgov");
     space.ephemeralQuota = 2;
     await expect(host.preview("todo", ids[1]!)).rejects.toMatchObject({ status: 409, reason: "preview_refused" });
   });
@@ -2459,7 +2459,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     expect(await space.probe(pending.preview!.app)).toMatchObject({ ok: true });
     expect((await host.status("todo")).pending[0]!.preview).toEqual(pending.preview);
     // The Host keeps one note of the preview, the app id PneumaSpace returned: its name follows from the change, the rest is PneumaSpace's.
-    const file = app("todo", ".pneuma", "pending", `${pending.change_id}.json`);
+    const file = app("todo", ".appgov", "pending", `${pending.change_id}.json`);
     const kept = JSON.parse(readFileSync(file, "utf8"));
     expect(kept).not.toHaveProperty("preview");
     expect(kept.preview_app_id).toBe(space.live.get(pending.preview!.app)!.id);
@@ -2471,7 +2471,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     expect(space.previews()).toEqual([]);
     expect(space.log.at(-1)).toBe(`discard ${pending.preview!.app}`);
     // The discard carries that id, so it cannot end a later app of the same name.
-    expect(discards).toEqual([[pending.preview!.app, "pneuma-host", kept.preview_app_id]]);
+    expect(discards).toEqual([[pending.preview!.app, "appgov", kept.preview_app_id]]);
   });
 
   test("an app under the preview's name counts as the preview only while this Host manages it, it is registered, and its end is ahead", async () => {
@@ -2510,7 +2510,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     const again = await host.preview("todo", pending.change_id);
     expect(again).toMatchObject({ republished: true, preview: { state: "standing" } });
     expect(space.live.get(name)!.id).not.toBe(listed.id);
-    const file = app("todo", ".pneuma", "pending", `${pending.change_id}.json`);
+    const file = app("todo", ".appgov", "pending", `${pending.change_id}.json`);
     expect(JSON.parse(readFileSync(file, "utf8")).preview_app_id).toBe(space.live.get(name)!.id);
     expect(await host.resolve("todo", pending.change_id, "approved", OWNER)).toMatchObject({ status: "published", version: "v2" });
     expect(space.previews()).toEqual([]);
@@ -2527,13 +2527,13 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     space.sweep();
     space.now = () => Date.now();
     expect((await space.publish(name, FIXTURE_TEMPLATE, { ephemeral: { ttlSeconds: 600 } })).code).toBe(0);
-    expect((await host.status("todo")).pending[0]!.preview).toMatchObject({ state: "gone", note: `PneumaSpace lists an app named ${name} that nobody manages, not this Host (pneuma-host): it is not this change's preview` });
+    expect((await host.status("todo")).pending[0]!.preview).toMatchObject({ state: "gone", note: `PneumaSpace lists an app named ${name} that nobody manages, not this Host (appgov): it is not this change's preview` });
     await expect(host.resolve("todo", first.change_id, "approved", OWNER)).rejects.toMatchObject({ reason: "preview_gone" });
     // Asked to publish the preview again, the Host does not take the name from it.
     await expect(host.preview("todo", first.change_id)).rejects.toMatchObject({ status: 502, reason: "preview_failed" });
 
     // A later app under the name that even names this Host as its manager has another id: denying leaves it alone.
-    space.setManager(name, { name: "pneuma-host" });
+    space.setManager(name, { name: "appgov" });
     const theirs = space.live.get(name)!.id;
     expect(await host.resolve("todo", first.change_id, "denied", OWNER)).toMatchObject({ status: "rejected", reason: "denied" });
     expect(space.live.get(name)).toMatchObject({ id: theirs, status: "registered" });
@@ -2565,7 +2565,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     expect(refused).toMatchObject({ status: 409, reason: "preview_gone" });
     const message = (refused as HostError).message;
     expect(message).toContain(`the preview ${pending.preview!.app} is no longer on PneumaSpace: it ended itself (previews stand for 3600 s), or it was discarded, so nobody can look at what approving would release`);
-    expect(message).toContain(`node .pneuma/pneuma.mjs preview ${pending.change_id}`);
+    expect(message).toContain(`node .appgov/appgov.mjs preview ${pending.change_id}`);
     expect(message).toContain("Nothing was approved or released, and the change still waits");
     expect(space.log.slice(steps).filter((line) => !line.startsWith("expire"))).toEqual([]);
     expect((await host.status("todo")).pending.map((p) => p.change_id)).toEqual([pending.change_id]);
@@ -2588,7 +2588,7 @@ describe("a preview is an ephemeral app that waits with the owner", () => {
     edit("todo", "src/server.ts", DROP_NOTE);
     const pending = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
     if (pending.status !== "needs_approval") throw new Error("expected needs_approval");
-    expect(await space.discard(pending.preview!.app, "pneuma-host")).toBe(true);
+    expect(await space.discard(pending.preview!.app, "appgov")).toBe(true);
     await expect(host.resolve("todo", pending.change_id, "approved", OWNER)).rejects.toMatchObject({ status: 409, reason: "preview_gone" });
     expect(await host.preview("todo", pending.change_id)).toMatchObject({ republished: true });
     expect(await host.resolve("todo", pending.change_id, "approved", OWNER)).toMatchObject({ status: "published", version: "v2" });
@@ -2672,17 +2672,17 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
   beforeEach(async () => void (await host.create("todo")));
 
   test("a write that does not name this Host is refused there, while the Host's own writes go through", async () => {
-    expect(await space.app("todo")).toMatchObject({ expiresAt: null, manager: { name: "pneuma-host" } });
+    expect(await space.app("todo")).toMatchObject({ expiresAt: null, manager: { name: "appgov" } });
     const around = await space.publish("todo", app("todo"));
     expect(around.code).not.toBe(0);
-    expect(around.output).toContain('409 app "todo" is managed by pneuma-host');
+    expect(around.output).toContain('409 app "todo" is managed by appgov');
     expect(await space.takeDown("todo")).toBe(false);
-    expect(await space.discard("todo", "pneuma-host")).toBe(false);
+    expect(await space.discard("todo", "appgov")).toBe(false);
 
     edit("todo", "src/server.ts", "export const changed = true;\n");
     expect(await host.submit({ name: "todo", intent: "tweak", agent: "codex" })).toMatchObject({ status: "published", version: "v2" });
     expect(await host.undo("todo", "back")).toMatchObject({ active_version: "v1" });
-    expect((await host.status("todo")).space_manager).toMatchObject({ state: "this_host", name: "pneuma-host" });
+    expect((await host.status("todo")).space_manager).toMatchObject({ state: "this_host", name: "appgov" });
   });
 
   test("an app another manager runs is refused before anything is checked, recorded or released; denying still works", async () => {
@@ -2700,9 +2700,9 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
     const refused = await host.submit({ name: "todo", intent: "add a file", agent: "codex" }).catch((err: unknown) => err);
     expect(refused).toMatchObject({ status: 409, reason: "managed_elsewhere", fields: { manager: "other-host" } });
     const message = (refused as HostError).message;
-    expect(message).toContain("todo is managed on PneumaSpace by other-host (http://elsewhere.test/), not by this Host (pneuma-host)");
+    expect(message).toContain("todo is managed on PneumaSpace by other-host (http://elsewhere.test/), not by this Host (appgov)");
     expect(message).toContain("Nothing was checked, recorded or released");
-    expect(message).toContain("PNEUMA_MANAGER=other-host");
+    expect(message).toContain("APPGOV_MANAGER=other-host");
     expect(message).toContain("appctl unmanage todo --manager other-host");
     await host.discard("todo");
 
@@ -2729,10 +2729,10 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
     expect((await host.status("todo")).space_manager).toMatchObject({ state: "unmanaged", name: null });
     edit("todo", "src/server.ts", "export const changed = true;\n");
     const result = await host.submit({ name: "todo", intent: "tweak", agent: "codex" });
-    expect(result).toMatchObject({ status: "published", version: "v2", note: "PneumaSpace had no manager for todo; this submit marked it as managed by pneuma-host" });
+    expect(result).toMatchObject({ status: "published", version: "v2", note: "PneumaSpace had no manager for todo; this submit marked it as managed by appgov" });
     // Who manages the app is PneumaSpace's fact: the history does not keep it.
     expect(host.history("todo").at(-1)!.note).toBeUndefined();
-    expect((await space.app("todo"))!.manager).toEqual({ name: "pneuma-host", url: null });
+    expect((await space.app("todo"))!.manager).toEqual({ name: "appgov", url: null });
     expect((await host.status("todo")).space_manager).toMatchObject({ state: "this_host" });
 
     // Once marked, nothing more is said.
@@ -2747,19 +2747,19 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
     await host.submit({ name: "todo", intent: "tweak", agent: "codex" });
     space.setManager("todo", null);
     const undone = await host.undo("todo", "back");
-    expect(undone.note).toBe("PneumaSpace had no manager for todo; this undo marked it as managed by pneuma-host");
+    expect(undone.note).toBe("PneumaSpace had no manager for todo; this undo marked it as managed by appgov");
 
     edit("todo", "src/server.ts", DROP_NOTE);
     const pending = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
     if (pending.status !== "needs_approval") throw new Error("expected needs_approval");
     space.setManager("todo", null);
-    expect(await host.resolve("todo", pending.change_id, "approved", OWNER)).toMatchObject({ status: "published", note: "PneumaSpace had no manager for todo; this approval marked it as managed by pneuma-host" });
+    expect(await host.resolve("todo", pending.change_id, "approved", OWNER)).toMatchObject({ status: "published", note: "PneumaSpace had no manager for todo; this approval marked it as managed by appgov" });
 
     space.setManager("todo", null);
     const recording = makeHost(join(work, "apps"), space, { governance: "record" });
     edit("todo", "src/extra.ts", "export const extra = 1;\n");
-    expect(await recording.submit({ name: "todo", intent: "add a file", agent: "codex" })).toMatchObject({ status: "published", note: "PneumaSpace had no manager for todo; this submit marked it as managed by pneuma-host" });
-    expect((await space.app("todo"))!.manager!.name).toBe("pneuma-host");
+    expect(await recording.submit({ name: "todo", intent: "add a file", agent: "codex" })).toMatchObject({ status: "published", note: "PneumaSpace had no manager for todo; this submit marked it as managed by appgov" });
+    expect((await space.app("todo"))!.manager!.name).toBe("appgov");
   });
 
   test("when PneumaSpace does not say who manages the app, the change goes ahead and the publish meets the rule itself", async () => {
@@ -2771,7 +2771,7 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
 
   test("a failed create's take-down names this Host, and a name it manages without a directory is explained", async () => {
     rmSync(app("todo"), { recursive: true, force: true });
-    await expect(host.create("todo")).rejects.toThrow("managed by this Host (pneuma-host) though this apps directory has no such app");
+    await expect(host.create("todo")).rejects.toThrow("managed by this Host (appgov) though this apps directory has no such app");
     space.unhealthy = (name) => name === "notes";
     expect(await host.create("notes")).toMatchObject({ status: "rejected", reason: "published_unhealthy" });
     expect(space.live.has("notes")).toBe(false);
@@ -2782,13 +2782,13 @@ describe("the apps this Host releases are managed on PneumaSpace", () => {
 describe("the preview ttl and the manager name, from the environment", () => {
   test("defaults, a value, and a plain error for what PneumaSpace would refuse", () => {
     expect(previewTtlFromEnv({})).toBe(3600);
-    expect(previewTtlFromEnv({ PNEUMA_PREVIEW_TTL: " 900 " })).toBe(900);
-    expect(() => previewTtlFromEnv({ PNEUMA_PREVIEW_TTL: "1h" })).toThrow('PNEUMA_PREVIEW_TTL must be a whole number of seconds above 0, not "1h"');
-    expect(() => previewTtlFromEnv({ PNEUMA_PREVIEW_TTL: "0" })).toThrow("PNEUMA_PREVIEW_TTL must be");
-    expect(managerFromEnv({})).toEqual({ name: "pneuma-host" });
+    expect(previewTtlFromEnv({ APPGOV_PREVIEW_TTL: " 900 " })).toBe(900);
+    expect(() => previewTtlFromEnv({ APPGOV_PREVIEW_TTL: "1h" })).toThrow('APPGOV_PREVIEW_TTL must be a whole number of seconds above 0, not "1h"');
+    expect(() => previewTtlFromEnv({ APPGOV_PREVIEW_TTL: "0" })).toThrow("APPGOV_PREVIEW_TTL must be");
+    expect(managerFromEnv({})).toEqual({ name: "appgov" });
     // The served Host's owner page is where a person acts through it.
-    expect(managerFromEnv({ PNEUMA_MANAGER: "my-host" }, "http://127.0.0.1:48363")).toEqual({ name: "my-host", url: "http://127.0.0.1:48363/" });
-    expect(() => managerFromEnv({ PNEUMA_MANAGER: "My Host" })).toThrow('PNEUMA_MANAGER must be a name PneumaSpace accepts');
+    expect(managerFromEnv({ APPGOV_MANAGER: "my-host" }, "http://127.0.0.1:48363")).toEqual({ name: "my-host", url: "http://127.0.0.1:48363/" });
+    expect(() => managerFromEnv({ APPGOV_MANAGER: "My Host" })).toThrow('APPGOV_MANAGER must be a name PneumaSpace accepts');
   });
 });
 

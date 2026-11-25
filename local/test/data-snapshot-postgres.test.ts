@@ -95,7 +95,7 @@ let server: ScriptedPostgres;
 let slept: number[];
 
 beforeEach(() => {
-  work = mkdtempSync(join(tmpdir(), "pneuma-pg-snapshot-"));
+  work = mkdtempSync(join(tmpdir(), "appgov-pg-snapshot-"));
   space = new FakeSpace();
   server = new ScriptedPostgres(space.log);
   slept = [];
@@ -134,7 +134,7 @@ const markOf = (database: string) =>
   `sql SELECT d.datname, shobj_description(d.oid, 'pg_database') AS marker, r.rolsuper AS superuser_owner FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = '${database}'`;
 /** The mark a snapshot carries: which app, which version, which database it was copied from, and when. */
 const mark = (app: string, version: string, source: string, at = AT) =>
-  JSON.stringify({ pneuma_snapshot: 1, capability: "postgres-template", app, version, source, taken_at: at.toISOString() });
+  JSON.stringify({ appgov_snapshot: 1, capability: "postgres-template", app, version, source, taken_at: at.toISOString() });
 
 describe("postgres-template: snapshot", () => {
   test("asks PneumaSpace for the database, checks it, stops the app, ends its sessions, copies it and closes the copy", async () => {
@@ -154,7 +154,7 @@ describe("postgres-template: snapshot", () => {
     ]);
     expect(server.databases.get(ref)).toBe("postgres");
     // Set over the admin connection on a database a superuser owns: the app's own role can neither make nor mark one.
-    expect(JSON.parse(server.comments.get(ref)!)).toEqual({ pneuma_snapshot: 1, capability: "postgres-template", app: "todo", version: "v1", source: DB, taken_at: AT.toISOString() });
+    expect(JSON.parse(server.comments.get(ref)!)).toEqual({ appgov_snapshot: 1, capability: "postgres-template", app: "todo", version: "v1", source: DB, taken_at: AT.toISOString() });
     expect([server.opened, server.closed]).toEqual([1, 1]);
   });
 
@@ -219,7 +219,7 @@ describe("postgres-template: snapshot", () => {
     space.bindings.set("todo", [pg(DB)]);
     server.refuseConnect = new Error("Failed to connect");
     const down = await failure(capability().snapshot({ appRoot: appRoot(), version: "v1" }));
-    expect(down.message).toContain("cannot reach the PostgreSQL server at postgres:5432 that PNEUMA_DATA_SNAPSHOT_URL names (Failed to connect)");
+    expect(down.message).toContain("cannot reach the PostgreSQL server at postgres:5432 that APPGOV_DATA_SNAPSHOT_URL names (Failed to connect)");
     expect(down.message).toContain("docker compose --profile postgres up -d");
 
     server.refuseConnect = null;
@@ -466,7 +466,7 @@ describe("postgres-template through the Host", () => {
       appsDir: join(work, "apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
-      cliSource: join(EXAMPLE, "bin", "pneuma.mjs"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
       owner: "user:me",
       policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
       runVerify: async () => ({ ok: true, output: "tests passed" }),
@@ -488,16 +488,16 @@ describe("postgres-template through the Host", () => {
   });
 });
 
-describe("PNEUMA_DATA_SNAPSHOT=postgres-template", () => {
-  test("needs PNEUMA_DATA_SNAPSHOT_URL, says so in plain words, and takes only a postgresql:// URL", () => {
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "postgres-template" }, { space })).toThrow(
-      "PNEUMA_DATA_SNAPSHOT is postgres-template, which needs PNEUMA_DATA_SNAPSHOT_URL: a superuser connection to the PostgreSQL server PneumaSpace puts app databases on",
+describe("APPGOV_DATA_SNAPSHOT=postgres-template", () => {
+  test("needs APPGOV_DATA_SNAPSHOT_URL, says so in plain words, and takes only a postgresql:// URL", () => {
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "postgres-template" }, { space })).toThrow(
+      "APPGOV_DATA_SNAPSHOT is postgres-template, which needs APPGOV_DATA_SNAPSHOT_URL: a superuser connection to the PostgreSQL server PneumaSpace puts app databases on",
     );
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "postgres-template", PNEUMA_DATA_SNAPSHOT_URL: "  " }, { space })).toThrow("needs PNEUMA_DATA_SNAPSHOT_URL");
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "postgres-template", PNEUMA_DATA_SNAPSHOT_URL: "not a url" }, { space })).toThrow("is not a URL");
-    expect(() => dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "postgres-template", PNEUMA_DATA_SNAPSHOT_URL: "mysql://root@db/x" }, { space })).toThrow("must be a postgresql:// URL");
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "postgres-template", APPGOV_DATA_SNAPSHOT_URL: "  " }, { space })).toThrow("needs APPGOV_DATA_SNAPSHOT_URL");
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "postgres-template", APPGOV_DATA_SNAPSHOT_URL: "not a url" }, { space })).toThrow("is not a URL");
+    expect(() => dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "postgres-template", APPGOV_DATA_SNAPSHOT_URL: "mysql://root@db/x" }, { space })).toThrow("must be a postgresql:// URL");
     // Nothing connects at start: the server is reached only when a snapshot or a restore runs.
-    const cap = dataSnapshotFromEnv({ PNEUMA_DATA_SNAPSHOT: "postgres-template", PNEUMA_DATA_SNAPSHOT_URL: "postgresql://postgres:pneuma-local@postgres:5432/postgres" }, { space });
+    const cap = dataSnapshotFromEnv({ APPGOV_DATA_SNAPSHOT: "postgres-template", APPGOV_DATA_SNAPSHOT_URL: "postgresql://postgres:pneuma-local@postgres:5432/postgres" }, { space });
     expect(cap?.id).toBe("postgres-template");
     expect(serverOf("postgresql://postgres:secret@postgres:5432/postgres")).toBe("postgres:5432");
     expect(serverOf("postgres://u:p@db.local/x")).toBe("db.local:5432");
@@ -506,12 +506,12 @@ describe("PNEUMA_DATA_SNAPSHOT=postgres-template", () => {
 
 // --- against a real PostgreSQL ------------------------------------------------------------------
 //
-// Skipped unless PNEUMA_TEST_POSTGRES_URL names a superuser connection to a server this test may
+// Skipped unless APPGOV_TEST_POSTGRES_URL names a superuser connection to a server this test may
 // create and drop roles and databases on, e.g. a throwaway container:
 //   docker run -d --rm -e POSTGRES_PASSWORD=test -p 127.0.0.1:0:5432 postgres:16-alpine
-//   PNEUMA_TEST_POSTGRES_URL=postgresql://postgres:test@127.0.0.1:<port>/postgres bun test ...
+//   APPGOV_TEST_POSTGRES_URL=postgresql://postgres:test@127.0.0.1:<port>/postgres bun test ...
 
-const ADMIN_URL = process.env.PNEUMA_TEST_POSTGRES_URL;
+const ADMIN_URL = process.env.APPGOV_TEST_POSTGRES_URL;
 
 describe.skipIf(!ADMIN_URL)("postgres-template against a real PostgreSQL", () => {
   const id = randomBytes(6).toString("hex");
@@ -579,7 +579,7 @@ describe.skipIf(!ADMIN_URL)("postgres-template against a real PostgreSQL", () =>
       `SELECT shobj_description(d.oid, 'pg_database') AS marker, r.rolsuper AS superuser_owner FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = ${literal(ref)}`,
     );
     expect(stored!.superuser_owner).toBe(true);
-    expect(JSON.parse(stored!.marker)).toMatchObject({ pneuma_snapshot: 1, capability: "postgres-template", app: a, version: "v1", source: role });
+    expect(JSON.parse(stored!.marker)).toMatchObject({ appgov_snapshot: 1, capability: "postgres-template", app: a, version: "v1", source: role });
     itSpace.log.length = 0;
 
     // B is handed A's snapshot: the name fits B's prefix, the mark does not name B.

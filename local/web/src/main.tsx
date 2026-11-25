@@ -64,7 +64,7 @@ function start() {
   // The language the person chose last time, unless the address names one.
   const params = new URLSearchParams(location.search);
   try {
-    const saved = localStorage.getItem("pneuma-lang");
+    const saved = localStorage.getItem("appgov-lang");
     if (!params.has("lang") && (saved === "en" || saved === "zh") && saved !== model.lang) {
       params.set("lang", saved);
       location.replace(`${location.pathname}?${params.toString()}`);

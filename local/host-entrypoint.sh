@@ -6,8 +6,8 @@
 # Docker Desktop), nothing changes.
 set -e
 if [ "$(id -u)" = 0 ]; then
-  uid=$(stat -c %u "${PNEUMA_APPS_DIR:-/apps}")
-  gid=$(stat -c %g "${PNEUMA_APPS_DIR:-/apps}")
+  uid=$(stat -c %u "${APPGOV_APPS_DIR:-/apps}")
+  gid=$(stat -c %g "${APPGOV_APPS_DIR:-/apps}")
   if [ "$uid" != 0 ]; then
     exec setpriv --reuid="$uid" --regid="$gid" --clear-groups "$@"
   fi

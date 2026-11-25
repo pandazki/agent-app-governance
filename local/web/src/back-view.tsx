@@ -9,7 +9,7 @@ import type { BackModel, MissingModel, UnreadableModel } from "./model";
 import { Failure, refusalText } from "./change-view";
 import { ButtonLink, DetailsBlock, EmptyState, Header, RichText, StatePill } from "./parts";
 
-const PLAN_CHANGED = "pneuma-plan-changed";
+const PLAN_CHANGED = "appgov-plan-changed";
 
 /** Going back, as a card in the RecommendationCard's grammar: what happens to the data, then the decision. */
 function BackCard({ model, changed }: { model: BackModel; changed: string | null }) {

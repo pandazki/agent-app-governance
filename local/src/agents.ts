@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isClaudeCodeTurnCompletionTimeout, runClaudeCodeAgent } from "@pneuma-framework/backend-claude-code";
+import { STATE_DIR } from "./artifact";
 import type { SubmitInput } from "./host";
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,7 @@ export const AGENT_KINDS: readonly AgentKind[] = ["claude-code", "codex", "scrip
 
 const DRAFT_RULES = [
   "You are working in a draft copy that the host manages.",
-  "Ignore the 'Changing this app' section of AGENTS.md: do not run .pneuma/pneuma.mjs, do not publish.",
+  `Ignore the 'Changing this app' section of AGENTS.md: do not run ${STATE_DIR}/appgov.mjs, do not publish.`,
   "Edit files, make sure `npm test` passes, then stop. The host verifies, previews and releases the draft.",
 ].join("\n");
 
