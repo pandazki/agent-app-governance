@@ -37,14 +37,14 @@ const SELF = (() => {
   return /[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path;
 })();
 
-const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--host <url>] [--json] [--timing]
+const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--host <url>] [--owner] [--json] [--timing]
 
   status [<name>]        active version, address, files changed here and not submitted, changes waiting for the owner
   history [<name>]       every attempt so far, oldest first, with what was guaranteed for each
   submit "<intent>"      send this working copy to the centre, take it through the Host's loop, and release it
     [--one-way "<what is lost>"]  this change deletes or rewrites data the app already stored, in any
                          storage: say what is lost. The owner then decides it
-  discard               put the working tree back to the active version, at the centre and here
+  discard                put the working tree back to the active version, at the centre and here
   undo "<why>"           go back one version; again to go further back
     [--to <version>]     go straight back to an earlier version
     [--accept-one-way]   owner only: confirm going back past a one-way change
@@ -67,6 +67,12 @@ Owner only:
   token list | token revoke <id>
   container [<name>] [stop]
                          whether the app's Host container runs; stop it (the next operation starts from R2)
+
+Who acts: a command that changes something goes with the agent token and is recorded as the agent's, unless it acts
+as the owner: approve, deny, undo --accept-one-way, token create and revoke, container stop, and create, submit,
+discard, undo or preview given --owner. Those send the owner's session, and only after a person in an interactive
+terminal types the command's name; without a terminal they are refused before anything is sent. login needs a
+terminal too. Reading (status, history, list, fetch) uses the agent token, or the owner's session when there is none.
 
 The centre: --host <url>, else APPGOV_HOST, else ${STATE_DIR}/${CENTRE_FILE} here or in a directory above.
 The agent token: APPGOV_TOKEN, else ${STATE_DIR}/${CENTRE_FILE}. The owner's session: from login, kept in
@@ -94,6 +100,7 @@ function parse(argv) {
     if (arg === "--json") flags.json = true;
     else if (arg === "--timing") flags.timing = true;
     else if (arg === "--accept-one-way") flags.acceptOneWay = true;
+    else if (arg === "--owner") flags.owner = true;
     else if (Object.hasOwn(VALUE_FLAGS, arg)) {
       const [key, missing] = VALUE_FLAGS[arg];
       if (i + 1 >= argv.length) fail(missing);
@@ -265,13 +272,35 @@ function ownerSession() {
   return session;
 }
 
-/** Which credential a request carries: the owner's session for owner commands when there is one, else the agent token. */
-function credential(owner) {
-  const session = ownerSession();
-  if (owner && session) return session.session;
+/**
+ * Which credential a request carries. As the owner: the owner's session, never the agent token, so what the owner does
+ * is recorded as theirs. Otherwise the agent token, so what an agent does is recorded as the agent's; only a read, which
+ * changes nothing and is not recorded, may fall back to the owner's session when there is no token.
+ */
+function credential(owner, method) {
+  if (owner) return ownerSession()?.session ?? null;
   if (TOKEN) return TOKEN;
-  if (session) return session.session;
+  if (method === "GET") return ownerSession()?.session ?? null;
   return null;
+}
+
+/** Whether a person can answer here. Coding agents run commands without an interactive terminal. */
+const TERMINAL = Boolean(process.stdin.isTTY);
+const NOT_FOR_AGENTS = "If you are a coding agent: stop and show this to the user. It is theirs to do; do not look for a way around it.";
+
+/**
+ * Before anything that changes something goes out as the owner: a person at an interactive terminal, the owner's
+ * session, and `word` typed. This keeps an honest agent on the owner's machine, which can read the session file, from
+ * finishing the owner's part itself, as the local edition's terminal check does. It is not a lock (see the README).
+ */
+async function confirmAsOwner(word, what) {
+  if (!TERMINAL) fail(`${what} is the owner's to do, by a person in a terminal; this command has none, so nothing was sent. ${NOT_FOR_AGENTS}`, 2);
+  if (!ownerSession()) fail(`${what} is the owner's to do: sign in first, in your terminal, with node ${SELF} login. Nothing was sent.`, 2);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Ctrl+D or Ctrl+C at the prompt rejects the question; that is a "no", not a crash.
+  const answer = await rl.question(`Type "${word}" to confirm, as the owner: `).catch(() => "");
+  rl.close();
+  if (answer.trim() !== word) fail("not confirmed; nothing changed");
 }
 
 // node:http, not fetch: undici stops waiting for response headers after 300 s, and the centre holds create, submit,
@@ -317,7 +346,7 @@ function checkLevel(level, url) {
 }
 
 const REFUSAL_HINTS = {
-  crosses_one_way_change: `Stop and show this to the user. Going back past a one-way change is the owner's decision: signed in as the owner (node ${SELF} login), they run: node ${SELF} undo --accept-one-way "<why>" (with the same --to, if one was given).`,
+  crosses_one_way_change: `Stop and show this to the user. Going back past a one-way change is the owner's decision: signed in as the owner (node ${SELF} login), they run in their own terminal: node ${SELF} undo --accept-one-way "<why>" (with the same --to, if one was given).`,
   plan_changed: "Nothing changed. Run the same undo again to see what going back does now, then confirm that.",
   owner_required: "Stop and show this to the user: it is theirs to do, signed in as the owner. Do not look for a way around it.",
   working_copy_behind: `Run node ${SELF} fetch, then make the change again.`,
@@ -333,8 +362,16 @@ async function send(method, path, payload, { owner = false } = {}) {
     url = new URL(`${CENTRE}${path}`);
   } catch {}
   if (url?.protocol !== "https:" && url?.protocol !== "http:") fail(`the centre's address must be an https:// address, not "${CENTRE}". ${CENTRE_SOURCE}`, 3);
-  const secret = credential(owner);
-  if (!secret) fail(`no credential for the centre at ${CENTRE}: no APPGOV_TOKEN, no token in ${STATE_DIR}/${CENTRE_FILE}, and no owner session. Ask the user for an agent token.`, 3);
+  const secret = credential(owner, method);
+  if (!secret) {
+    if (owner) fail(`no owner session for the centre at ${CENTRE}: sign in first, in your terminal, with node ${SELF} login.`, 2);
+    fail(
+      method === "GET"
+        ? `no credential for the centre at ${CENTRE}: no APPGOV_TOKEN, no token in ${STATE_DIR}/${CENTRE_FILE}, and no owner session. Ask the user for an agent token.`
+        : `no agent token for the centre at ${CENTRE}: no APPGOV_TOKEN and no token in ${STATE_DIR}/${CENTRE_FILE}, so nothing was sent. Ask the user for an agent token. (The owner acts as themselves with --owner, in a terminal.)`,
+      3,
+    );
+  }
   const began = Date.now();
   const { err, connected, status, level, timing, text } = await request(method, url, payload, secret);
   if (err) {
@@ -477,7 +514,7 @@ function printChange(result) {
     for (const line of result.disclosure) console.log(`  - ${line}`);
     if (result.test_warning) console.log(result.test_warning);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
-    const look = result.preview ? "They can open the preview, then decide, signed in as the owner, with" : "They decide, signed in as the owner, with";
+    const look = result.preview ? "They can open the preview, then decide, signed in as the owner, in their own terminal, with" : "They decide, signed in as the owner, in their own terminal, with";
     console.log(`Show this to the owner. ${look}: node ${SELF} approve ${result.change_id}   (or deny)`);
     return 2;
   }
@@ -596,6 +633,8 @@ if (command === "update") {
 }
 
 if (command === "login") {
+  // The session it keeps is what lets a command act as the owner; making one is a person's act, as using it is.
+  if (!TERMINAL) fail(`login is the owner's to do, by a person in a terminal; this command has none, so nothing was sent. ${NOT_FOR_AGENTS}`, 2);
   const files = ownerFiles();
   if (!files) fail(`no owner credentials file for ${CENTRE ?? "this centre"} in ${join(appgovHome(), "hosts")}; the installer wrote it there. Pass --key-file <file>.`);
   const record = readJson(files.keyFile);
@@ -634,6 +673,7 @@ if (command === "token") {
   }
   if (sub === "revoke") {
     if (!id) fail("token revoke takes <id>");
+    await confirmAsOwner("revoke", `Revoking agent token ${id}`);
     out(await call("DELETE", `/tokens/${encodeURIComponent(id)}`, undefined, { owner: true }), () => console.log(`revoked ${id}`));
     process.exit(0);
   }
@@ -643,6 +683,7 @@ if (command === "token") {
     const dir = resolve(flags.write);
     const file = join(dir, STATE_DIR, CENTRE_FILE);
     if (existsSync(file)) fail(`${file} exists already; revoke the token in it first, or write to another directory`);
+    await confirmAsOwner("create", `Creating an agent token for ${dir}`);
     // What the agent will run and read comes from the centre, before any token exists: nothing is left half made.
     const starter = await call("GET", "/starter", undefined, { owner: true });
     const data = await call("POST", "/tokens", { label: flags.label ?? "agent", ...(flags.days ? { expires_in_days: Number(flags.days) } : {}) }, { owner: true });
@@ -664,8 +705,9 @@ if (command === "create") {
   if (!args[0]) fail("create takes <name>");
   const dir = resolve(flags.into ?? args[0]);
   if (existsSync(dir) && readdirSync(dir).length) fail(`${dir} is not empty; name another directory with --into <dir>`);
+  if (flags.owner) await confirmAsOwner("create", `Creating ${args[0]} as the owner`);
   // The centre records who asked from the credential: with an agent token, as the agent named or detected here.
-  const result = await call("POST", "/apps", { name: args[0], ...agentFields(identifyAgent()) });
+  const result = await call("POST", "/apps", { name: args[0], ...agentFields(identifyAgent()) }, { owner: Boolean(flags.owner) });
   let code = 0;
   out(result, (data) => (code = printChange(data)));
   if (result.status === "published" && result.working_copy) newCopy(dir, result.working_copy);
@@ -752,16 +794,22 @@ switch (command) {
     if (!DIR) fail("submit sends the files of a working copy: run it in the app's working copy");
     if (flags.oneWay !== undefined && !String(flags.oneWay).trim()) fail('--one-way takes "<what putting files back would not undo>"');
     const agent = identifyAgent();
-    if (agent.source === "ambiguous") console.error('appgov: warning: markers of more than one agent are set, so this is recorded as agent "unknown". Say which agent you are with --agent <name> or APPGOV_AGENT=<name>.');
+    if (agent.source === "ambiguous" && !flags.owner) console.error('appgov: warning: markers of more than one agent are set, so this is recorded as agent "unknown". Say which agent you are with --agent <name> or APPGOV_AGENT=<name>.');
+    if (flags.owner) await confirmAsOwner("submit", "Submitting as the owner");
     const entries = localEntries(DIR);
     const uploaded = signature(entries);
-    const result = await call("POST", `${base}/changes`, {
-      intent: args.join(" "),
-      ...agentFields(agent),
-      ...(flags.oneWay !== undefined ? { one_way: flags.oneWay } : {}),
-      ...(baseVersion ? { base_version: baseVersion } : {}),
-      tree: { files: entries.map(([path, body]) => ({ path, body: body.toString("base64") })) },
-    });
+    const result = await call(
+      "POST",
+      `${base}/changes`,
+      {
+        intent: args.join(" "),
+        ...agentFields(agent),
+        ...(flags.oneWay !== undefined ? { one_way: flags.oneWay } : {}),
+        ...(baseVersion ? { base_version: baseVersion } : {}),
+        tree: { files: entries.map(([path, body]) => ({ path, body: body.toString("base64") })) },
+      },
+      { owner: Boolean(flags.owner) },
+    );
     sync(DIR, result, uploaded);
     let code = result.status === "published" ? 0 : result.status === "needs_approval" ? 2 : 1;
     out(result, (data) => (code = printChange(data)));
@@ -769,7 +817,8 @@ switch (command) {
   }
   case "discard": {
     // No base check: putting the centre's working tree back to its active version loses nothing that was released.
-    const data = await call("POST", `${base}/discard`, {});
+    if (flags.owner) await confirmAsOwner("discard", "Discarding as the owner");
+    const data = await call("POST", `${base}/discard`, {}, { owner: Boolean(flags.owner) });
     // Discarding throws away the edits here too: that is what was asked for.
     if (DIR) writePrivate(join(DIR, STATE_DIR, SYNCED_FILE), { ...(synced ?? {}), signature: signature(localEntries(DIR)) });
     sync(DIR, data);
@@ -777,19 +826,21 @@ switch (command) {
     break;
   }
   case "undo": {
-    const actor = identifyAgent();
+    // Confirming a one-way crossing is the owner's alone, and an undo the owner wants recorded as theirs says --owner:
+    // both go with the owner's session, from a terminal. Any other undo goes with the agent token, as the agent's.
+    const owner = Boolean(flags.owner || flags.acceptOneWay);
+    if (owner) await confirmAsOwner("undo", flags.acceptOneWay ? "Going back past a one-way change" : "Going back as the owner");
+    const actor = owner ? { name: "owner" } : identifyAgent();
     const payload = { reason: args.join(" ") || "undo", actor: actor.name, ...(flags.to ? { to: flags.to } : {}), ...(baseVersion ? { base_version: baseVersion } : {}) };
-    let { status, data } = await send("POST", `${base}/undo`, payload);
+    let { status, data } = await send("POST", `${base}/undo`, payload, { owner });
     if (flags.acceptOneWay && status === 409 && data.reason === "crosses_one_way_change") {
-      if (!ownerSession()) fail(`${data.error}\nGoing back past a one-way change is the owner's decision: sign in first with node ${SELF} login`, 2);
       console.log(data.error);
-      if (process.stdin.isTTY) {
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const answer = await rl.question('Type "accept" to go back with the code only, leaving the stored data as it is: ').catch(() => "");
-        rl.close();
-        if (answer.trim() !== "accept") fail("not confirmed; nothing changed");
-      }
-      ({ status, data } = await send("POST", `${base}/undo`, { ...payload, actor: "owner", accept_one_way: true, ...(data.from ? { from: data.from } : {}) }, { owner: true }));
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await rl.question('Type "accept" to go back with the code only, leaving the stored data as it is: ').catch(() => "");
+      rl.close();
+      if (answer.trim() !== "accept") fail("not confirmed; nothing changed");
+      // The confirmation covers the plan just shown: the Host refuses it once the app has moved on from where that plan started.
+      ({ status, data } = await send("POST", `${base}/undo`, { ...payload, accept_one_way: true, ...(data.from ? { from: data.from } : {}) }, { owner: true }));
     }
     if (status < 200 || status >= 300) fail(refusalText(data, `POST ${base}/undo answered ${status}`), refusalCode(data.reason));
     sync(DIR, data);
@@ -807,7 +858,11 @@ switch (command) {
   case "approve":
   case "deny": {
     if (!args[0]) fail(`${command} takes <change-id>`);
-    // The centre decides who may: only the owner's session. Without one, the agent token is sent and refused there.
+    // The owner's decision, by a person: refused here without a terminal or a session, before anything is sent. The
+    // centre refuses an agent token on its own as well.
+    const what = command === "approve" ? `Approving change ${args[0]}` : `Denying change ${args[0]}`;
+    if (!TERMINAL) fail(`${what} is the owner's to do, by a person in a terminal; this command has none, so nothing was sent. ${NOT_FOR_AGENTS}`, 2);
+    if (!ownerSession()) fail(`${what} is the owner's to do: sign in first, in your terminal, with node ${SELF} login. Nothing was sent.`, 2);
     const status = await call("GET", base, undefined, { owner: true });
     const pending = status.pending.find((p) => p.change_id === args[0]);
     if (!pending) fail(`no change ${args[0]} is waiting`);
@@ -816,12 +871,7 @@ switch (command) {
     if (pending.tests) console.log(`tests: ${pending.tests.note}`);
     if (pending.test_warning) console.log(pending.test_warning);
     if (pending.preview) console.log(previewLine(pending.preview, args[0]));
-    if (process.stdin.isTTY && ownerSession()) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const answer = await rl.question(`Type "${command}" to confirm: `).catch(() => "");
-      rl.close();
-      if (answer.trim() !== command) fail("not confirmed; nothing changed");
-    }
+    await confirmAsOwner(command, what);
     const result = await call("POST", `${base}/changes/${args[0]}/${command}`, { reason: args.slice(1).join(" ") || undefined }, { owner: true });
     sync(DIR, result);
     let code = 0;
@@ -830,7 +880,8 @@ switch (command) {
   }
   case "preview":
     if (!args[0]) fail("preview takes <change-id>");
-    out(await call("POST", `${base}/changes/${args[0]}/preview`, {}), (d) => {
+    if (flags.owner) await confirmAsOwner("preview", "Publishing the preview again as the owner");
+    out(await call("POST", `${base}/changes/${args[0]}/preview`, {}, { owner: Boolean(flags.owner) }), (d) => {
       console.log(d.republished ? `published the preview of ${d.change_id} again.` : `the preview of ${d.change_id} still stands; nothing was published.`);
       console.log(previewLine(d.preview, d.change_id));
     });
@@ -849,6 +900,7 @@ switch (command) {
   }
   case "container": {
     const stop = args.includes("stop");
+    if (stop) await confirmAsOwner("stop", `Stopping the Host's container of ${app}`);
     out(await call(stop ? "POST" : "GET", `${base}/container${stop ? "/stop" : ""}`, stop ? {} : undefined, { owner: true }), (d) =>
       console.log(
         stop

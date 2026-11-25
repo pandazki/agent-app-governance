@@ -24,6 +24,8 @@ If `submit` says this working copy is behind (someone else released a version si
 
 `.appgov/centre.json` holds the centre's address and the agent token this copy uses. It is never part of a version and is never sent to the centre with your files. Do not print it, copy it into another file, or commit it; `.gitignore` keeps it out of git. If the CLI cannot reach the centre, it says which address it tried; ask the user, do not start anything yourself.
 
+What acts as the owner is the user's to run, in their own terminal: `approve`, `deny`, `undo --accept-one-way`, `login`, `token`, `container stop`, and any command with `--owner`. Never run them, never read the owner's files under `~/.appgov/`, and never send the centre anything but this copy's token through the CLI. Everything you run goes with the agent token and is recorded as yours.
+
 ## Notes for the next agent
 
 Add a line here when you learn something the next agent needs (a data-model decision, a constraint the user stated). The next agent may be a different product on a different machine; this file and `.pneuma-framework/history.jsonl` are all it gets.

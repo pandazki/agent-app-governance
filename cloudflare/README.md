@@ -85,16 +85,26 @@ node .appgov/appgov.mjs approve <id>
 node .appgov/appgov.mjs deny <id> "why"
 ```
 
-An agent token that tries this is refused by the Worker.
+An agent token that tries this is refused by the Worker. Each command shows the change, asks you to type its word (`approve` or `deny`), and without an interactive terminal refuses before anything is sent, signed in or not.
+
+Who a command acts as, in a working copy or anywhere else:
+
+- **As you, the owner:** `approve`, `deny`, `undo --accept-one-way`, `token create`, `token revoke`, `container stop`, and `create`, `submit`, `discard`, `undo` or `preview` given `--owner`. They send your session, never the agent token, and only after you type the command's name in an interactive terminal. The history records them as yours (`by owner (owner session) [owner]`). `login` needs a terminal too.
+- **As the agent:** every other command that changes something. It goes with the agent token in `.appgov/centre.json` (or `APPGOV_TOKEN`) and is recorded as the agent's, with the token's label, also when you are the one who runs it. Without a token it is refused; it never falls back to your session.
+- **Reading** (`status`, `history`, `list`, `fetch`) changes nothing and is not recorded. It uses the agent token, or your session when there is no token.
+
+Coding agents run commands without an interactive terminal, so an honest agent on your machine does not finish your part itself, although it runs as you and could read your session file. That is the local edition's check, and it is not a lock; see Limits.
 
 ## Go back
 
 ```sh
-node .appgov/appgov.mjs undo "why"          # back one version
-node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
+node .appgov/appgov.mjs undo --owner "why"          # back one version, as you
+node .appgov/appgov.mjs undo --owner --to v2 "why"  # straight back to an earlier version
 ```
 
-Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it; when one of them was declared one-way by its submitter, `undo` prints the submitter's words too. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
+Each asks you to type `undo`. Without `--owner`, an undo in a working copy goes with the agent token and is recorded as the agent's: that is how an agent goes back.
+
+Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it; when one of them was declared one-way by its submitter, `undo` prints the submitter's words too. Going back past a one-way change needs the owner: signed in, in a terminal, `undo --accept-one-way "why"`, which asks you to type `undo` and, once it has shown what the crossing means, `accept`.
 
 ## Where things live
 
@@ -118,6 +128,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - The default rules find destructive SQL by matching text, as in the local edition.
+- **On your machine, your session is a bearer credential.** An agent there runs as your OS user, so it can read `~/.appgov/hosts/<prefix>/session.json` and the owner key beside it. The CLI does not act as you without an interactive terminal and a typed word, and the agent instructions tell agents never to read those files or run those commands. Nothing stops a program that sends your session to the Worker itself, or runs the CLI in a terminal it makes. Against an agent that attacks, keep the owner key and sessions where agents do not run: another OS account or another machine.
 - **For storage other than SQL, the Host relies on the agent's declaration.** The rules read SQL text and the manifest only. A change that deletes or rewrites `kv` entries, files or objects is released by the standing rule unless the agent submits it with `--one-way`.
 
 ## What has been run

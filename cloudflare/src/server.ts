@@ -260,6 +260,8 @@ export function createContainerServer(opts: ContainerServerOptions) {
         if (input.from !== undefined && typeof input.from !== "string") throw new HostError(400, "from must be the version the plan started from, e.g. v5");
         const result = await host.undo(name, text(input.reason, "reason", "undo"), {
           actor: principal.kind === "owner" ? "owner" : text(input.actor, "actor", "unknown"),
+          // An agent token's undo is the agent's, not the owner's, whoever ran the CLI.
+          control: principal.kind === "owner" ? "owner" : "agent-driven",
           credential: credentialOf(principal),
           ...(typeof input.to === "string" ? { to: input.to.trim() } : {}),
           ...(typeof input.from === "string" ? { from: input.from.trim() } : {}),

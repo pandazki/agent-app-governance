@@ -421,6 +421,11 @@ export type AppSummary =
 export interface UndoOptions {
   /** Who asked, e.g. claude-code or owner. Labels the entry. */
   readonly actor?: string;
+  /**
+   * The entry's `control`: `owner` (the default) or `agent-driven`, where the front can tell an agent's undo from the
+   * owner's (the Cloudflare edition, by the credential). An undo is recorded as the owner's only when the owner made it.
+   */
+  readonly control?: ControlPlane;
   /** Go straight to this earlier version instead of one step back. It must be one the current version was built on. */
   readonly to?: string;
   /**
@@ -1965,6 +1970,7 @@ export class AppHost {
     return this.serial(name, async () => {
       const { paths, info, record } = this.open(name);
       const actor = options.actor ?? "owner";
+      const control: ControlPlane = options.control ?? "owner";
       const current = record.current();
       if (!current) throw new HostError(409, `${name} has no version to go back from`);
       if (options.from !== undefined && options.from !== current) {
@@ -2034,7 +2040,7 @@ export class AppHost {
       // Filled in by the steps below, before the record writes the entry: where the replaced data went, and a failed second look.
       const extra: { -readonly [K in keyof HostEntryFields]: HostEntryFields[K] } = {
         outcome: "rolled_back",
-        control: "owner",
+        control,
         reason: stored,
         address,
         ...(confirmedBy ? { confirmed_by: confirmedBy } : {}),
@@ -2147,7 +2153,7 @@ export class AppHost {
               agent: actor,
               baseVersion: current,
               guarantees: [],
-              extra: { outcome: "rejected", control: "owner", reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}), ...credentialField(options.credential) },
+              extra: { outcome: "rejected", control, reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}), ...credentialField(options.credential) },
             });
           } catch {
             // The record cannot be written to; the error is all there is.
