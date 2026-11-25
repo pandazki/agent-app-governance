@@ -6,7 +6,7 @@ import { Section, Surface } from "../beautifui/site";
 import { fill, useUi } from "./lib";
 import type { AppModel, HistoryRow, RowBadge, Tone } from "./model";
 import { noticeRow } from "./change-view";
-import { ArrowOut, ButtonLink, Details, DetailsBlock, Header, HintCard, Picture, RichText, StatePill } from "./parts";
+import { ArrowOut, ButtonLink, Details, DetailsBlock, Header, HintCard, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
 
 const BADGE_STATUS: Record<RowBadge, TaskStatus> = { done: "done", failed: "failed", waiting: "waiting", plain: "plain", undo: "undo" };
 const TONE_TEXT: Record<Tone, string> = { green: "text-green", red: "text-red", orange: "text-orange", neutral: "text-ink-2", accent: "text-accent-ink" };
@@ -34,6 +34,7 @@ function historyRow(row: HistoryRow, ui: AppModel["ui"]): TaskRow {
             <p className="font-medium">{ui.one_way}</p>
             <p className="mt-0.5">{row.oneWay.body}</p>
             {row.oneWay.why && <p className="mt-0.5 opacity-80 [overflow-wrap:anywhere]">{row.oneWay.why}</p>}
+            {row.oneWay.said && <p className="mt-0.5 opacity-80 [overflow-wrap:anywhere]">{row.oneWay.said}</p>}
           </div>
         )}
         {row.files.length > 0 && (
@@ -106,9 +107,14 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
       <Section number={number()} title={ui.running_now} note={model.shot.taken ? <RichText rich={model.shot.taken} /> : undefined} index={2}>
         <Surface className="flex flex-col gap-3">
           <div className="mx-auto w-full max-w-[720px] overflow-hidden rounded-card bg-surface shadow-card">
-            <div className="primitive-card-bar flex items-center gap-2 border-b border-line">
+            <div className={`primitive-card-bar flex items-center gap-2 ${model.picturesNever ? "" : "border-b border-line"}`}>
               <span className="min-w-0 flex-1">
-                <InlineChip mono>{model.addressText}</InlineChip>
+                {/* The chip is a flex box, which clips without an ellipsis: the text gets its own box that ends in one. */}
+                <InlineChip mono>
+                  <span className="min-w-0 truncate" title={model.addressText}>
+                    {model.addressText}
+                  </span>
+                </InlineChip>
               </span>
               {model.address && (
                 <ButtonLink href={model.address} variant="quiet" size="xs" external className="shrink-0">
@@ -117,7 +123,8 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
                 </ButtonLink>
               )}
             </div>
-            {model.address ? (
+            {/* Where no picture is ever taken, the bar with the address is the whole card. */}
+            {model.picturesNever ? null : model.address ? (
               <a href={model.address} target="_blank" rel="noopener noreferrer" aria-label={ui.open_new} className="block">
                 <Picture shot={model.shot} name={model.name} />
               </a>
@@ -125,6 +132,11 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
               <Picture shot={model.shot} name={model.name} />
             )}
           </div>
+          {model.address && model.opensElsewhere && (
+            <div className="mx-auto -mt-3 w-full max-w-[720px]">
+              <OpensElsewhere text={model.opensElsewhere} />
+            </div>
+          )}
           {model.notices.length > 0 && (
             <div className="mx-auto w-full max-w-[720px]">
               <TaskRows rows={model.notices.map(noticeRow)} />

@@ -1,14 +1,18 @@
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EDITION, editionHost, TEMPLATE } from "../src/edition";
-import { APP_HEADER, PRINCIPAL_HEADER, SECRET_HEADER } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, PRINCIPAL_HEADER, SECRET_HEADER } from "../src/protocol";
 import { createContainerServer } from "../src/server";
 import { CfSpace } from "../src/space-cf";
 import { operate, withTiming, type FolderBucket, type HostPort, type StoredObject } from "../worker/folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, sha256, type AuthStore, type StoredToken } from "../worker/gateway";
+import type { PageDeps } from "../worker/page";
+import type { PageModel } from "../../local/src/page-model";
+import { assetType } from "../../local/src/page-views";
+import { loadPageAssets } from "../../local/src/page";
 import { FAKE_TOKEN, FakePlane } from "./fake-plane";
 
 // The whole edition on one machine, without Cloudflare: the Worker's gateway (worker/gateway.ts) on a local port,
@@ -103,7 +107,32 @@ export interface Stack {
   close(): Promise<void>;
 }
 
-export async function startStack(): Promise<Stack> {
+/** The model an owner page view carries, from the inert JSON element the shell puts it in. */
+export function modelOf(html: string): PageModel {
+  const found = /<script type="application\/json" id="model">([\s\S]*?)<\/script>/.exec(html);
+  if (!found) throw new Error("no model in the page");
+  return JSON.parse(found[1]!) as PageModel;
+}
+
+/** The owner page's built client, as the Worker's assets binding serves it: local/web/dist, when it has been built. */
+export function pageFromDist(spaceOrigin: string, dir = join(EDITION, "..", "local", "web", "dist")): PageDeps {
+  return {
+    asset: async (name) => {
+      const file = join(dir, name);
+      return assetType(name) && existsSync(file) ? new Response(readFileSync(file)) : null;
+    },
+    versions: async () => loadPageAssets(dir).files,
+    spaceOrigin,
+    manager: "appgov",
+  };
+}
+
+export interface StackOptions {
+  /** Awaited in the app's Durable Object before each operation: a test or a demo makes one take longer. */
+  readonly beforeOperation?: (method: string, path: string) => Promise<void>;
+}
+
+export async function startStack(options: StackOptions = {}): Promise<Stack> {
   const plane = new FakePlane();
   const bucket = new MemoryBucket();
   const auth = new MemoryAuth();
@@ -150,6 +179,7 @@ export async function startStack(): Promise<Stack> {
       }
       return json({ app, running: container !== null });
     }
+    await options.beforeOperation?.(request.method, new URL(request.url).pathname);
     const timing: Record<string, number> = {};
     const began = Date.now();
     container ??= await startContainer(request.headers.get(ORIGIN_HEADER) ?? "");
@@ -159,7 +189,7 @@ export async function startStack(): Promise<Stack> {
       fetch: (path, init) => fetch(`${at}${path}`, { method: init.method, headers: { ...(init.headers ?? {}), [SECRET_HEADER]: secret }, ...(init.body !== undefined ? { body: init.body } : {}) }),
     };
     const headers: Record<string, string> = {};
-    for (const name of [PRINCIPAL_HEADER, APP_HEADER]) {
+    for (const name of [PRINCIPAL_HEADER, APP_HEADER, CHANNEL_HEADER]) {
       const value = request.headers.get(name);
       if (value !== null) headers[name] = value;
     }
@@ -181,6 +211,7 @@ export async function startStack(): Promise<Stack> {
     fetch: (request) =>
       handle(request, {
         starter: { cli: readFileSync(join(EDITION, "bin", "appgov.mjs"), "utf8"), agents: readFileSync(join(EDITION, "overlay", "AGENTS.start.md"), "utf8") },
+        page: pageFromDist(plane.origin),
         ownerKeyHash,
         auth,
         governance: "personal",

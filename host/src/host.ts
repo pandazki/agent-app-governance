@@ -52,6 +52,7 @@ import {
   type HistoryEntry,
   type HostEntryFields,
 } from "./artifact";
+import { DECLARED_ONE_WAY_MARK, RUN_UNDO } from "./constants";
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
@@ -385,7 +386,7 @@ export interface AppStatus {
 }
 
 /** A change waiting for the owner, as a list of apps shows it. */
-export type PendingSummary = Pick<PendingChange, "change_id" | "intent" | "agent" | "control" | "risks" | "disclosure" | "changed_paths" | "created_at"> & {
+export type PendingSummary = Pick<PendingChange, "change_id" | "intent" | "agent" | "control" | "risks" | "disclosure" | "changed_paths" | "created_at" | "checks" | "credential"> & {
   readonly one_way: string | null;
 };
 
@@ -393,6 +394,8 @@ export type PendingSummary = Pick<PendingChange, "change_id" | "intent" | "agent
 export type AppSummary =
   | {
       readonly app_id: string;
+      /** The subject that holds the owner role in the app's governance, as in `status`. */
+      readonly owner: string;
       readonly active_version: string | null;
       readonly address: string;
       /** What the address serves, by the rollout state. */
@@ -591,7 +594,7 @@ function declaredOneWay(history: readonly ChangeRecordEntry[], version: string):
  * marked as theirs. Undefined when neither says it is.
  */
 function oneWayReason(found: readonly string[], declared: string | undefined): string | undefined {
-  const parts = [...found, ...(declared ? [`declared one-way when it was submitted: "${declared}"`] : [])];
+  const parts = [...found, ...(declared ? [`${DECLARED_ONE_WAY_MARK}"${declared}"`] : [])];
   return parts.length ? parts.join("; ") : undefined;
 }
 
@@ -2353,7 +2356,7 @@ export class AppHost {
 
   /** Keyed by the directory name, which is what every command takes; `app.json` sits in the app directory, where an agent can edit it. */
   private summary(name: string): AppSummary {
-    const { paths, record } = this.open(name);
+    const { paths, info, record } = this.open(name);
     const active = record.current();
     const serving = readServingVersion(paths);
     const last = record
@@ -2364,6 +2367,7 @@ export class AppHost {
     const { pending, malformed } = this.pendingChanges(paths, record);
     return {
       app_id: name,
+      owner: info.owner,
       active_version: active,
       address: this.opts.space.address(name),
       serving_version: serving,
@@ -2381,6 +2385,9 @@ export class AppHost {
         disclosure: p.disclosure,
         changed_paths: p.changed_paths,
         created_at: p.created_at,
+        // How well it was checked, and the credential it came with: what a list of apps says about a change that waits.
+        checks: p.checks,
+        ...credentialField(p.credential),
         one_way: p.one_way ?? null,
       })),
       ...(malformed.length ? { malformed_pending: malformed } : {}),
@@ -2471,6 +2478,5 @@ function servingUncertainLine(record: ChangeRecord, serving: string | null): str
   return uncertain ? `${uncertain.why}. ${uncertain.undoUnfinished ? RUN_UNDO : NEXT_ANSWER_SETTLES}` : undefined;
 }
 
-/** What to do in each case, said the same way by status and by the refusal. The owner page tells the two cases apart by it. */
-export const RUN_UNDO = "Submit and approve are refused until an undo puts a version on the address and sees it answer: run undo.";
+export { RUN_UNDO };
 const NEXT_ANSWER_SETTLES = "The next release or undo that answers settles it.";

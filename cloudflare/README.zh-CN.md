@@ -8,7 +8,7 @@
 
 - **记录在中心。** 每个应用的目录（源码、`.pneuma-framework/` 里的每个版本和历史、`.appgov/` 里 Host 的状态）是 R2 存储桶里的一个对象。每次操作先把它读出来，执行，再写回去，而且只有在这期间没人改过它时才写。容器的磁盘只是缓存：两次操作之间它可能消失，不会丢任何东西。agent 编辑的是一份工作副本；CLI 在 `submit` 时把它发过去，并在每次改动应用的操作之后让它和中心保持一致。
 - **主人要登录。** 安装程序会生成一把主人密钥，只写一次，写进你机器上的一个文件。用它登录得到一个会话。你为自己的 agent 创建 agent 令牌。agent 令牌可以创建应用、提交、查看状态和历史、取回工作副本、撤销和丢弃改动。它不能批准或拒绝改动，不能确认退过单向改动，也不能创建令牌。这些拒绝发生在 Worker 里，不在 CLI 里。
-- **没有主人页面。** 没有应用页面，没有截图，也没有数据快照。你在终端里做决定。
+- **应用页面要先登录。** Worker 在它自己的地址上提供本地版的应用页面。用主人密钥登录之前，它什么都不显示；登录有效 12 小时。它不截图，也没有数据快照。
 
 ## 开始之前
 
@@ -16,6 +16,7 @@
 - **一个部署在 Cloudflare 上的 PneumaSpace**（PneumaSpace 的 `cf/` 版本），它的地址，以及它的主人凭据文件。安装程序会以这个主人的身份登录一次，为 Host 创建一个令牌。它不会改动那个部署的 Worker、数据库结构、密钥或配额。
 - **Docker** 要在运行，用来构建 linux/amd64 的 Host 镜像。在 arm64 的 Mac 上构建是在模拟下进行的；镜像只在 Cloudflare 上启动。
 - **Node.js 20 或更新版本**，用来跑安装程序和 CLI。单跑 CLI 用 Node 18 就够。
+- **Bun**（[bun.sh](https://bun.sh)），用来从 `local/web/` 构建应用页面。缺少构建工具时，安装程序会运行 `local/scripts/setup.sh` 装好它们。
 - **需要联网。** 镜像会从 GitHub 按 `local/compose.yaml` 里固定的提交取 pneuma-framework，从 npm 取 Bun。
 
 ## 安装
@@ -28,7 +29,7 @@ node cloudflare/scripts/install.mjs https://space.example.com \
   --prefix appgov-host
 ```
 
-它在改动任何东西之前，先检查 Node、Docker、Wrangler 的登录和 PneumaSpace 的登录。然后它创建 R2 存储桶 `<prefix>-folders`（位置提示 `wnam`），创建一个只带 `read`、`publish`、`invoke`、`manage` 和 `remove` 权限的 PneumaSpace 令牌，生成主人密钥，并部署名为 `<prefix>` 的 Worker 及其容器。最后它打印 Host 的地址和主人凭据文件的位置。仓库有改动之后，或者某一步失败之后，再跑一次即可：它会沿用之前建好的存储桶、令牌、主人密钥和容器密钥。
+它在改动任何东西之前，先检查 Node、Docker、Wrangler 的登录和 PneumaSpace 的登录，并构建应用页面。然后它创建 R2 存储桶 `<prefix>-folders`（位置提示 `wnam`），创建一个只带 `read`、`publish`、`invoke`、`manage` 和 `remove` 权限的 PneumaSpace 令牌，生成主人密钥，并部署名为 `<prefix>` 的 Worker 及其容器和应用页面。最后它打印 Host 的地址和主人凭据文件的位置。仓库有改动之后，或者某一步失败之后，再跑一次即可：它会沿用之前建好的存储桶、令牌、主人密钥和容器密钥。
 
 如果你的 Docker 跑在别的 context 下，先设好 `DOCKER_CONTEXT`（colima 的话：`DOCKER_CONTEXT=colima`）。
 
@@ -46,6 +47,12 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 历史记录按中心认证的凭据写下是谁做的，而不是按 CLI 运行时所在的环境：用主人会话做的操作记为主人的；用 agent 令牌做的操作记为 CLI 识别出的 agent（识别不出就是 `unknown`），并写上令牌的标签。一次决定会写明做决定的主人，以及那是哪个 agent 的改动。
 
 CLI 和中心会核对彼此说的 API 级别。级别不同的 CLI 会停下并说明；`node .appgov/appgov.mjs update` 会把它换成中心自己的 CLI。
+
+## 打开应用页面
+
+打开 `https://appgov-host.<subdomain>.workers.dev/`，用主人凭据文件里的密钥登录（`owner.json` 里 `key` 的值）。页面列出你的应用和等你决定的改动；这个列表来自 R2 里的摘要，不会启动任何东西。打开某个应用、某个改动或某个版本都要经过这个应用的容器，容器醒着时大约一秒；容器空闲时页面会先启动它，要几秒（下面那次运行里是 3.7 秒，新部署之后第一次是 14 秒），并显示正在打开。页面按浏览器的语言显示英文或中文。
+
+你在页面上做的决定和回退，和在 CLI 里一样记为你的（`by user:owner (owner session) [owner]`），并注明是在页面上做的。输错的密钥和 `login` 计入同一个限额：同一个地址十分钟内 20 次。agent 令牌和 CLI 的会话都打不开这个页面，来自其他网站的写入会被拒绝。页面的会话持续 12 小时；页面标题下方的“你可以在这里做决定”会打开一张卡片，上面的“退出登录”会结束它。应用和它的预览在 PneumaSpace 上打开，那里需要另外登录；页面在这些链接旁边会说明。
 
 ## 创建应用
 
@@ -78,7 +85,9 @@ Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 
 
 规则只读 SQL 文本和清单，所以一个删除或改写应用存在 `kv`、`files` 或对象里的数据的改动，在规则看来就是普通的代码改动。这种情况由 agent 自己声明：`submit --one-way "<会丢失什么>"`；应用的 `AGENTS.md` 要求它，只要改动会删除或改写已存的数据就这样做。预设定下一个改动至少要过哪一关，声明只能往上加：声明过的改动不管有哪些风险都会等你决定，你会在单独一行里读到 agent 的原话，并注明这是它自己的说法、不是规则的发现；发布之后它记为单向改动。
 
-`submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。以主人身份登录后，在应用的工作副本里：
+`submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。在应用页面上，这个改动在“等你确认”下面：agent 用自己的话说它做了什么，是哪个 agent 用哪个令牌提交的，跑了几个应用自己的测试（或者一个都没跑），为什么要等你，回退能不能撤销它；不能的话，规则发现了什么、agent 说会失去什么，各自注明出处，以及它的预览。“让它上线”和“这次不要”就是决定；单向改动要你先勾选表示接受。一次决定和一次提交差不多久，常常 15 到 30 秒；页面会显示正在处理，并且只发送一次。如果改动是在应用后来离开了的版本上做的，它不能上线，页面会说明；你仍然可以拒绝。
+
+在终端里，以主人身份登录后，在应用的工作副本里：
 
 ```sh
 node .appgov/appgov.mjs approve <id>
@@ -97,6 +106,8 @@ agent 令牌这样做会被 Worker 拒绝。每条命令都会先显示这个改
 
 ## 退回
 
+在应用的页面上，当前版本所基于的每个版本都有“回到这个版本”。页面会列出这样做撤销哪些改动、已存的数据会怎样；退过单向改动时要你确认，其中提交者自己声明为单向的，会写出它和提交者的原话。回去之后，它会说一次哪些东西还留在已存的数据里，并再说一次那些原话。在终端里：
+
 ```sh
 node .appgov/appgov.mjs undo --owner "原因"          # 以你的身份退回一个版本
 node .appgov/appgov.mjs undo --owner --to v2 "原因"  # 直接退回到更早的某个版本
@@ -112,7 +123,8 @@ node .appgov/appgov.mjs undo --owner --to v2 "原因"  # 直接退回到更早�
 | --- | --- |
 | 每个应用的源码、每个版本、历史、等待中的改动 | R2 存储桶 `<prefix>-folders` 里每个应用一个 tar 对象（`folders/<app>.tar`），外加一份给 `list` 用的简短摘要（`summaries/<app>.json`） |
 | 工作副本 | 你创建或取回它的地方；CLI 会把中心的 `.pneuma-framework/` 同步进来 |
-| 主人的会话和 agent 令牌（哈希后） | Worker 的一个 Durable Object |
+| 主人的会话（CLI 的和应用页面的，各用自己的前缀）和 agent 令牌（哈希后） | Worker 的一个 Durable Object |
+| 应用页面的文件 | Worker 的静态资源，由安装程序从 `local/web/` 构建 |
 | 主人密钥、Worker 的密钥、生成的 Wrangler 配置 | 运行安装程序的那台机器上的 `~/.appgov/hosts/<prefix>/`（权限 0700） |
 | CLI 用的主人会话 | `~/.appgov/hosts/<prefix>/session.json` |
 | 每个应用存储的数据和它的发布 | PneumaSpace |
@@ -120,7 +132,7 @@ node .appgov/appgov.mjs undo --owner --to v2 "原因"  # 直接退回到更早�
 ## 限度
 
 - **防范的是会犯错的 agent，不是会攻击的 agent。** 应用的测试在 Host 的容器里以第二个 unix 用户运行，这个用户读不到 Host 的文件和环境变量（PneumaSpace 令牌和 Worker 发来的密钥）。它们共享内核、网络（可以上互联网）和磁盘。没有第二层沙箱。
-- 没有做的：主人页面、截图、数据快照、由 Host 启动 Claude Code 或 Codex（`drive` 那条路），以及 `record` 和 `review-all` 模式。只跑过 `personal` 模式。
+- 没有做的：截图、数据快照、由 Host 启动 Claude Code 或 Codex（`drive` 那条路），以及 `record` 和 `review-all` 模式。只跑过 `personal` 模式。
 - 只管新应用。没有办法导入已有的应用或它的数据。
 - 撤销只恢复代码；存储的数据从不放回。
 - **agent 打不开正式的应用，也打不开它的预览。** 两者只回应登录了 PneumaSpace 的人，而 agent 令牌是中心的令牌，不是 PneumaSpace 的：agent 得到的是 401。所以 agent 没法检查自己发布的结果。Host 的探测只请求首页和一个会启动 Node 的路径，所以一个弄坏了数据接口的改动照样可能通过并上线。只有你自己打开应用，才看得到它是否正常。
@@ -133,7 +145,7 @@ node .appgov/appgov.mjs undo --owner --to v2 "原因"  # 直接退回到更早�
 
 ## 跑过什么
 
-2026-11-25，在 macOS 上用 colima，针对一个默认配额的、部署在 Cloudflare 上的 PneumaSpace：安装（以及两次重跑）、主人登录、一个 agent 令牌、`create`、一个由常设规则放行的常规改动、一个去掉 `identity.required` 并等待主人决定的改动（agent 令牌的批准被拒绝，返回 403；主人批准后上线）、`undo`、用令牌在一个空目录里 `fetch` 并从那里提交、从过期的工作副本提交被拒绝、在容器被停掉之后的提交，以及一个故意失败的测试，用来显示测试用户能读到什么（它读不到 `/data`、Host 的主目录和 Host 的环境变量，环境里也没有 `APPGOV_` 开头的变量）。离线测试（在 `cloudflare/` 里运行 `npm run setup`、`npm run typecheck`、`bun test`）覆盖了对着假平台 API 的运行时适配器、带冲突写入的记录往返、Worker 对主人和 agent 令牌的规则，以及在一台机器上用 CLI 走完整个流程。
+2026-11-25，在 macOS 上用 colima，针对一个默认配额的、部署在 Cloudflare 上的 PneumaSpace：安装（以及两次重跑）、主人登录、一个 agent 令牌、`create`、一个由常设规则放行的常规改动、一个去掉 `identity.required` 并等待主人决定的改动（agent 令牌的批准被拒绝，返回 403；主人批准后上线）、`undo`、用令牌在一个空目录里 `fetch` 并从那里提交、从过期的工作副本提交被拒绝、在容器被停掉之后的提交，以及一个故意失败的测试，用来显示测试用户能读到什么（它读不到 `/data`、Host 的主目录和 Host 的环境变量，环境里也没有 `APPGOV_` 开头的变量）。离线测试（在 `cloudflare/` 里运行 `npm run setup`、`npm run typecheck`、`bun test`）覆盖了对着假平台 API 的运行时适配器、带冲突写入的记录往返、Worker 对主人和 agent 令牌的规则、应用页面的登录和它对其他网站的防护、页面在这个版本的真实回答上的各个视图，以及在一台机器上用 CLI 走完整个流程。2026-11-26，应用页面在部署上用无头 Chrome 跑过，用了一个自己的测试应用，和主人的两个应用放在一起：没有会话时每个路径都是登录界面、错误的密钥被拒绝、cookie 的属性、agent 令牌、CLI 会话和来自其他网站的写入被拒绝、应用列表从摘要读出而测试应用的容器一直停着、一个由规则放行的常规改动、一个去掉 `identity.required` 的改动在页面上被拒绝、一个声明为单向的改动在页面上被放行（不管按几次按钮都只发一次请求）、在页面上退回到它之前，以及退出登录。主人感受到的时间：应用列表 0.4 到 0.8 秒；应用页面容器醒着时约 1.3 秒，容器睡过之后 3.7 秒（部署之后第一次 14 秒）；一个等待的改动 2 秒；拒绝 3.6 秒；放行一个改动 16 到 18 秒；回退 11 秒。
 
 一次提交的时间花在哪里：用 `--timing`（它打印每个回答在 `timing` 里带的各个步骤）对一个常规改动（`app/public/index.html` 里的页面标题）测量，节省前后各一次冷提交、两次热提交。单位是秒；冷提交包括启动容器和读入记录。
 

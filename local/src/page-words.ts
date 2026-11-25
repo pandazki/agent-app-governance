@@ -137,6 +137,11 @@ const en = {
   one_way_destructive: "It deletes or rewrites data you already have, and going back won't bring that data back.",
   one_way_other: "Going back won't undo what it did to your stored data.",
   one_way_why: "Why: {why}",
+  one_way_rule: "What the rules found, in their words: {why}",
+  one_way_declared: "Declared one-way by {who} when submitting it. What is lost, in the submitter's own words (not something the rules found): “{said}”",
+  why_declared: "Declared one-way by {who}, so it waits for you whatever the rules found.",
+  back_declared: "{title} was declared one-way when it was submitted. What is lost, in the submitter's words: “{said}” Going back does not bring that back.",
+  d_declared: "Declared one-way",
   change_title: "A change is waiting for you",
   made_by: "{who} made this change · {when}",
   decide_lead: "Nothing changes until you decide.",
@@ -149,6 +154,7 @@ const en = {
   tests_passed: "Its tests passed ({n} tests, {own} of them for this app)",
   tests_passed_plain: "Its tests passed",
   tests_none_own: "None of those tests were written for this app itself.",
+  tests_none_ran: "No tests ran for this change: only its preview checked it.",
   started_in_preview: "It started when it was tried out",
   files_one: "1 file changed",
   files_other: "{n} files changed",
@@ -233,6 +239,7 @@ const en = {
   d_change: "Change id",
   d_outcome: "Recorded as",
   d_agent: "Agent",
+  d_credential: "Credential",
   d_guarantees: "Guarantees",
   d_recorded_only: "none (recorded only)",
   d_risks: "Risks",
@@ -283,6 +290,29 @@ const en = {
   decide_title: "Let this change go live?",
   decision_title: "Your decision",
   section_waiting_hint: "Nothing goes live until you say so.",
+  // Where the Cloudflare edition's page says something the local one has no need to: signing in, apps that open on
+  // PneumaSpace behind its own sign-in, no pictures, a token's label, what going back leaves in stored data.
+  signin_title: "Sign in",
+  signin_lead: "This page shows your apps and lets you decide on their changes. Sign in with your owner key.",
+  signin_where: "The key is in the owner credentials file the installer wrote on your computer (owner.json, the value of “key”).",
+  signin_key: "Owner key",
+  signin_go: "Sign in",
+  signin_wrong: "That isn't the owner key of this Host.",
+  signin_limited: "Too many wrong keys from here. Wait ten minutes, then try again.",
+  sign_out: "Sign out",
+  owner_signed_out: "Signed out",
+  loading: "Opening…",
+  opens_elsewhere: "The app and its previews open on PneumaSpace, where you sign in separately.",
+  no_picture_here: "No pictures on this Host. Use Open to see the app.",
+  d_pictures_never: "none: this edition takes no pictures",
+  made_by_token: "{who} made this change with the token “{token}” · {when}",
+  by_token: "{who}, with the token “{token}” · {when}",
+  blocked_behind: "This can't go live as it is: it was made on an earlier version, and the app has changed since. You can say no, and ask your agent to make it again on the current version.",
+  back_data_left: "Your stored data stays as it is, but the version you go back to may not show all of it: {what}.",
+  back_left_storage: "the changes you undo keep data in a place it doesn't declare",
+  back_left_sql: "the changes you undo write data in ways it doesn't ({sql})",
+  back_left_and: ", and ",
+  unreachable_body: "The Host couldn't reach this app just now. Reload the page in a minute.",
 };
 
 export type Words = typeof en;
@@ -403,6 +433,11 @@ const zh: Words = {
   one_way_destructive: "它会删除或改写你已有的数据，回退也找不回这些数据。",
   one_way_other: "回退无法撤销它对数据做的改动。",
   one_way_why: "原因：{why}",
+  one_way_rule: "规则发现的（规则原文）：{why}",
+  one_way_declared: "{who} 提交时声明它是单向改动。会失去什么，是提交者的原话（不是规则发现的）：“{said}”",
+  why_declared: "{who} 声明它是单向改动，所以不管规则发现了什么，它都要等你决定。",
+  back_declared: "{title} 提交时被声明为单向改动。提交者说会失去的：“{said}”回退不会把它带回来。",
+  d_declared: "声明为单向",
   change_title: "有一个改动等你确认",
   made_by: "{who} 做了这个改动 · {when}",
   decide_lead: "在你决定之前，什么都不会改变。",
@@ -415,6 +450,7 @@ const zh: Words = {
   tests_passed: "测试通过（共 {n} 个，其中 {own} 个是这个应用自己的）",
   tests_passed_plain: "测试通过",
   tests_none_own: "这些测试里没有这个应用自己的测试。",
+  tests_none_ran: "这次改动没有运行任何测试，只有预览检查过它。",
   started_in_preview: "试运行时能正常启动",
   files_one: "改了 1 个文件",
   files_other: "改了 {n} 个文件",
@@ -495,6 +531,7 @@ const zh: Words = {
   d_change: "改动编号",
   d_outcome: "记录为",
   d_agent: "Agent",
+  d_credential: "凭据",
   d_guarantees: "保证",
   d_recorded_only: "无（仅记录）",
   d_risks: "风险",
@@ -545,9 +582,60 @@ const zh: Words = {
   decide_title: "让这个改动上线吗？",
   decision_title: "你的决定",
   section_waiting_hint: "你同意之前，什么都不会上线。",
+  signin_title: "登录",
+  signin_lead: "这个页面显示你的应用，也让你决定它们的改动。请用主人密钥登录。",
+  signin_where: "密钥在安装程序写到你电脑上的主人凭据文件里（owner.json 里 “key” 的值）。",
+  signin_key: "主人密钥",
+  signin_go: "登录",
+  signin_wrong: "这不是这个 Host 的主人密钥。",
+  signin_limited: "这里输错密钥的次数太多了。请等十分钟再试。",
+  sign_out: "退出登录",
+  owner_signed_out: "已退出登录",
+  loading: "正在打开…",
+  opens_elsewhere: "应用和它的预览在 PneumaSpace 上打开，那里需要另外登录。",
+  no_picture_here: "这里不截图，点“打开”查看应用。",
+  d_pictures_never: "无：这个版本不截图",
+  made_by_token: "{who} 用令牌“{token}”做了这个改动 · {when}",
+  by_token: "{who}（令牌“{token}”）· {when}",
+  blocked_behind: "它不能就这样上线：它是在旧版本上做的，之后应用又变了。你可以拒绝它，再让 AI 助手在当前版本上重做一次。",
+  back_data_left: "已存的数据保持不变，但要回到的版本可能显示不全：{what}。",
+  back_left_storage: "被撤销的改动把数据存在了它没有声明的地方",
+  back_left_sql: "被撤销的改动以它没有的方式写入了数据（{sql}）",
+  back_left_and: "；",
+  unreachable_body: "Host 暂时连不上这个应用。请过一分钟再刷新页面。",
 };
 
 export const WORDS: Readonly<Record<Lang, Words>> = { en, zh };
+
+/**
+ * The words that change when the owner signs in to the page (the Cloudflare edition) instead of opening it from an
+ * owner link on their own computer: how deciding works, where the agent is, and what to do when the page's files
+ * are missing. Everything else is said the same way.
+ */
+const SESSION_WORDS: Readonly<Record<Lang, Partial<Words>>> = {
+  en: {
+    tagline: "Apps your agents built for you.",
+    owner_help: "You signed in with your owner key, so this page can let a change go live, say no, and go back. Your agents use tokens, which this page doesn't accept. Signing in lasts 12 hours.",
+    owner_lost: "Your sign-in has ended: it lasts 12 hours, or you signed out in another tab. Reload the page to sign in again.",
+    read_only_decide: "Your sign-in has ended. Reload the page to sign in again.",
+    hint_body: "Tell your agent. Open Claude Code or Codex in the folder you gave it a token for and say something like:",
+    assets_missing: "This page's files are missing from this Host. Run the installer again.",
+  },
+  zh: {
+    tagline: "你的 AI 助手为你做的应用。",
+    owner_help: "你用主人密钥登录了，所以这个页面可以让改动上线、拒绝改动、回到旧版本。你的 AI 助手用的是令牌，这个页面不接受令牌。登录有效 12 小时。",
+    owner_lost: "你的登录已经结束：登录有效 12 小时，或者你在别的标签页退出了。刷新页面即可重新登录。",
+    read_only_decide: "你的登录已经结束。刷新页面即可重新登录。",
+    hint_body: "直接告诉你的 AI 助手。在你给了它令牌的文件夹里打开 Claude Code 或 Codex，然后这样说：",
+    assets_missing: "这个 Host 缺少页面文件。请重新运行安装程序。",
+  },
+};
+const SIGNED_IN: Readonly<Record<Lang, Words>> = { en: { ...en, ...SESSION_WORDS.en }, zh: { ...zh, ...SESSION_WORDS.zh } };
+
+/** The page's words for how the owner is let in (page-model.ts, `OwnerAccess`): the owner link's, or a sign-in's. */
+export function wordsFor(lang: Lang, access: { readonly kind: string } | undefined): Words {
+  return access?.kind === "session" ? SIGNED_IN[lang] : WORDS[lang];
+}
 
 export type WordKey = { [K in keyof Words]: Words[K] extends string ? K : never }[keyof Words];
 

@@ -8,7 +8,8 @@
 //   2. creates a PneumaSpace token with only the scopes the Host uses (read, publish, invoke, manage, remove), unless
 //      the one it created before is still valid;
 //   3. generates the owner key once, and keeps only its SHA-256 hash for the Worker;
-//   4. deploys the Worker <prefix> with its Durable Objects and the Host's container, on workers.dev;
+//   4. builds the owner page (local/web/build.ts) and deploys the Worker <prefix> with it, its Durable Objects and the
+//      Host's container, on workers.dev;
 //   5. writes the owner credentials file, once, and checks that the owner can sign in.
 // State, all of it private, lives in ~/.appgov/hosts/<prefix>/ (mode 0700). Nothing secret is printed, and Wrangler's
 // output is shown with the account id taken out.
@@ -23,6 +24,9 @@ import { parseArgs } from "node:util";
 const EDITION = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = resolve(EDITION, "..");
 const WRANGLER = join(EDITION, "node_modules", "wrangler", "bin", "wrangler.js");
+const LOCAL = join(REPO, "local");
+/** The owner page's built client, which the Worker serves as its static assets. */
+const PAGE = join(LOCAL, "web", "dist");
 const API = "https://api.cloudflare.com/client/v4";
 const LOCATION = "wnam";
 const SPACE_SCOPES = ["read", "publish", "invoke", "manage", "remove"];
@@ -157,6 +161,7 @@ function workerConfig(options, accountId, commit) {
     name: options.prefix,
     account_id: accountId,
     main: join(EDITION, "worker", "index.ts"),
+    assets: { ...template.assets, directory: PAGE },
     vars: { ...template.vars, APPGOV_SPACE_ORIGIN: options.space, APPGOV_LOCATION_HINT: LOCATION },
     r2_buckets: [{ binding: "FOLDERS", bucket_name: `${options.prefix}-folders` }],
     containers: template.containers.map((c) => ({
@@ -165,6 +170,18 @@ function workerConfig(options, accountId, commit) {
       images: { host: { dockerfile: join(EDITION, "container", "Dockerfile"), build_context: REPO, build_vars: { FRAMEWORK_COMMIT: commit } } },
     })),
   };
+}
+
+/** The owner page's client, built from the local edition's sources with its pinned tools (Bun, React, Tailwind, the fonts). */
+function buildPage() {
+  if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status !== 0) throw new Stop("Bun is needed to build the owner page (https://bun.sh); install it, then run this again");
+  if (!existsSync(join(LOCAL, "node_modules", "react", "package.json"))) {
+    log("installing the owner page's build tools (local/scripts/setup.sh)");
+    if (spawnSync("sh", ["scripts/setup.sh"], { cwd: LOCAL, stdio: "inherit" }).status !== 0) throw new Stop("local/scripts/setup.sh failed; fix what it reports and run this again");
+  }
+  log("building the owner page (local/web/build.ts)");
+  if (spawnSync("bun", ["run", "web/build.ts"], { cwd: LOCAL, stdio: "inherit" }).status !== 0) throw new Stop("building the owner page failed; the output is above");
+  for (const file of ["app.js", "app.css"]) if (!existsSync(join(PAGE, file))) throw new Stop(`the owner page's build left no ${file} in ${PAGE}`);
 }
 
 const ACCOUNT_TROUBLE = /plan|paid|subscription|entitle|permission|not authori[sz]ed|forbidden|quota|limit exceeded|not enabled|billing/i;
@@ -179,6 +196,8 @@ export async function install(options) {
   }
   if (spawnSync("docker", ["info"], { stdio: "ignore" }).status !== 0) throw new Stop("Docker does not answer; start it (the Host's image is built locally for linux/amd64). Set DOCKER_CONTEXT if it runs under another context");
   if (!existsSync(options.spaceOwner)) throw new Stop(`no PneumaSpace owner credentials file at ${options.spaceOwner}`);
+  // Built here, on this machine, before anything on Cloudflare or PneumaSpace changes.
+  buildPage();
   const commit = frameworkCommit();
   mkdirSync(options.stateDir, { recursive: true, mode: 0o700 });
   chmodSync(options.stateDir, 0o700);
@@ -225,7 +244,7 @@ export async function install(options) {
   try {
     const ephemeral = space.tenant.quota?.ephemeral;
     if (ephemeral !== undefined && ephemeral < 1) throw new Stop("the PneumaSpace tenant allows no ephemeral apps, which the Host needs for previews");
-    log(`checked: Node ${process.version}, Docker, Wrangler logged in, PneumaSpace ${options.space} signs in its owner, pneuma-framework ${commit.slice(0, 7)}`);
+    log(`checked: Node ${process.version}, Docker, the owner page built, Wrangler logged in, PneumaSpace ${options.space} signs in its owner, pneuma-framework ${commit.slice(0, 7)}`);
 
     // --- 1. the bucket ---------------------------------------------------------------------------------------
     const bucket = `${options.prefix}-folders`;
@@ -296,7 +315,7 @@ export async function install(options) {
   const signedIn = (await login.json()).session;
   await fetch(`${url}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${signedIn}` } }).catch(() => {});
   if (!existsSync(paths.owner)) writePrivate(paths.owner, { url, key: ownerKey });
-  log(`installed. The Host answers at ${url}`);
+  log(`installed. The Host answers at ${url}; its owner page is ${url}/ (sign in with the key in the owner credentials file)`);
   log(`owner credentials: ${paths.owner} (keep this file private; the CLI's login reads it)`);
   log(`next: node cloudflare/bin/appgov.mjs --host ${url} login, then token create --write <the directory your agent works in>`);
 }

@@ -4,6 +4,11 @@ import { isIP } from "node:net";
 import { join } from "node:path";
 import { APP_NAME, type HistoryEntry } from "../../host/src/artifact";
 import type { AppStatus, AppSummary } from "../../host/src/host";
+import { previewOf, type Picture, type PictureMiss, type PreviewView } from "./page-views";
+
+// What the page shows of pictures and previews lives with the page (page-views.ts), which the Cloudflare edition
+// shares; the keeper here reads and writes the same shapes.
+export { previewOf, type Picture, type PictureMiss, type PreviewView };
 
 // ---------------------------------------------------------------------------
 // Pictures of apps, for the owner page.
@@ -294,55 +299,6 @@ export function runtimeAddressMapper(publicBase: string, insideBase: string): (a
     if (!/^[a-z0-9-]+\/$/.test(url.pathname.slice(prefix.length))) return null;
     return `${inside.origin}${insidePrefix}${url.pathname.slice(prefix.length)}`;
   };
-}
-
-/** A waiting change's preview as the Host reports it in `status`. */
-export interface PreviewView {
-  /** Where it is, while it stands. */
-  readonly address: string | null;
-  /** true: it stands. false: it ended itself or was discarded. null: the Host has no preview to report, or could not tell. */
-  readonly standing: boolean | null;
-  /** The Host asked the runtime and got no answer. */
-  readonly unknown: boolean;
-}
-
-/**
- * A waiting change's preview, from the `preview` field `status` gives each waiting change: `{ state: "standing",
- * address }`, `{ state: "gone" }` or `{ state: "unknown" }`. A Host that publishes previews as ephemeral apps
- * derives the preview from the change id and asks the runtime whether it still stands; one that removes the
- * preview when the submit ends reports none. `status` passes on what the pending file holds, which the agent can
- * write, so callers check the address is an app on the runtime before using it.
- */
-export function previewOf(pending: unknown): PreviewView {
-  const none = { address: null, standing: null, unknown: false };
-  if (typeof pending !== "object" || pending === null) return none;
-  const preview = (pending as { preview?: unknown }).preview;
-  if (typeof preview !== "object" || preview === null) return none;
-  const { state, address } = preview as { state?: unknown; address?: unknown };
-  if (state === "standing") return typeof address === "string" ? { address, standing: true, unknown: false } : none;
-  if (state === "gone") return { address: null, standing: false, unknown: false };
-  if (state === "unknown") return { address: null, standing: null, unknown: true };
-  return none;
-}
-
-export interface Picture {
-  /** The file name under the pictures directory; also its URL path segment. */
-  readonly file: string;
-  readonly at: string;
-  /** The version pictured, or `pv-<change id>` for a preview. */
-  readonly key: string;
-  readonly kind: "version" | "preview";
-  /**
-   * The change that recorded the pictured version (or the waiting change, for a preview). A version name alone is
-   * not enough: an app removed and created again under the same name starts at v1 again.
-   */
-  readonly change?: string;
-}
-
-export interface PictureMiss {
-  readonly at: string;
-  readonly reason: string;
-  readonly detail?: string;
 }
 
 interface AppPictures {

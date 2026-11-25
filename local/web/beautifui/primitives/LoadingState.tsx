@@ -62,13 +62,16 @@ function LoaderGrid({
   );
 }
 
+// Adapted: measured from the clock rather than counted in ticks, which a browser slows down in a tab in the background,
+// so a decision that takes half a minute while the owner looks elsewhere still says half a minute.
 function useElapsed() {
-  const [ds, setDs] = useState(0);
+  const [start] = useState(() => Date.now());
+  const [now, setNow] = useState(start);
   useEffect(() => {
-    const t = setInterval(() => setDs((d) => d + 1), 100);
+    const t = setInterval(() => setNow(Date.now()), 100);
     return () => clearInterval(t);
   }, []);
-  const total = ds / 10;
+  const total = Math.floor((now - start) / 100) / 10;
   if (total < 60) return `${total.toFixed(1)}s`;
   return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
 }

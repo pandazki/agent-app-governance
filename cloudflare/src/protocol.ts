@@ -11,6 +11,10 @@ export const PRINCIPAL_HEADER = "x-appgov-principal";
 export const FOLDER_HEADER = "x-appgov-folder-etag";
 /** The app an operation is about, set by the Worker. */
 export const APP_HEADER = "x-appgov-app";
+/** Set by the Worker on the owner page's own writes: the Host writes it into the entry as `channel`. */
+export const CHANNEL_HEADER = "x-appgov-channel";
+/** The one channel there is: a decision or an undo made on the owner page. */
+export const PAGE_CHANNEL = "owner-page";
 /**
  * The level of the centre's API, in the `appgov-api` header of every answer the Worker gives. The CLI (bin/appgov.mjs,
  * HOST_API_LEVEL there) refuses to work with a centre at another level, so it never misreads an answer. Raise both
@@ -21,6 +25,9 @@ export const API_LEVEL = 1;
 export const API_HEADER = "appgov-api";
 /** How long each step of an operation took, in ms: `container`, `load`, `op`, `save`. */
 export const TIMING_HEADER = "x-appgov-timing";
+
+/** The subject that holds the owner role in every app this edition's Host creates (the container's default). */
+export const OWNER_SUBJECT = "user:owner";
 
 /** The owner, signed in with the owner key; or an agent token the owner created. */
 export type Principal = { readonly kind: "owner" } | { readonly kind: "agent"; readonly id: string; readonly label: string };

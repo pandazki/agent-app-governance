@@ -27,7 +27,7 @@ This repository gives such apps one way to go live. You create an app here from 
 | Edition | State | Where the apps run |
 | --- | --- | --- |
 | [local](./local/README.md) | Runs | Your machine: one `docker compose up` starts PneumaSpace and the Host, on loopback ports |
-| [cloudflare](./cloudflare/README.md) | Runs, `personal` mode only, no owner page | Cloudflare: the Host in a Container behind a Worker, each app's record in R2, the apps on a PneumaSpace deployment on Cloudflare. The owner signs in; agents use tokens the owner creates |
+| [cloudflare](./cloudflare/README.md) | Runs, `personal` mode only, the apps page behind a sign-in | Cloudflare: the Host in a Container behind a Worker, each app's record in R2, the apps on a PneumaSpace deployment on Cloudflare. The owner signs in; agents use tokens the owner creates |
 
 The local edition assumes one trusted machine, four free ports on 127.0.0.1, Docker (its gateway container mounts the Docker socket) and Node.js 24. [local/README.md](./local/README.md) lists what it needs before you start. With that in place:
 

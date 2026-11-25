@@ -8,7 +8,7 @@ This edition runs the Host on Cloudflare and publishes apps to a PneumaSpace dep
 
 - **The record is at the centre.** Each app's folder (its source, every version and the history in `.pneuma-framework/`, the Host's state in `.appgov/`) is one object in an R2 bucket. Every operation loads it, runs, and saves it back only if nobody else changed it meanwhile. The container's disk is a cache: it can disappear between two operations and nothing is lost. What your agent edits is a working copy; the CLI sends it with `submit` and brings it in line with the centre after every operation that changes the app.
 - **The owner signs in.** The installer generates an owner key and writes it once to a file on your machine. Signing in with it gives a session. You create agent tokens for your agents. An agent token can create apps, submit, read status and history, fetch a working copy, undo, and discard. It cannot approve or deny a change, confirm going back past a one-way change, or create tokens. These refusals happen in the Worker, not in the CLI.
-- **No owner page.** There is no apps page, no screenshots, and no data snapshots. You decide in your terminal.
+- **The apps page asks you to sign in.** The Worker serves the local edition's apps page at its own address. It shows nothing until you sign in with the owner key, and the session lasts 12 hours. It takes no screenshots, and there are no data snapshots.
 
 ## Before you start
 
@@ -16,6 +16,7 @@ This edition runs the Host on Cloudflare and publishes apps to a PneumaSpace dep
 - **A PneumaSpace deployment on Cloudflare** (PneumaSpace's `cf/` edition), its origin, and its owner credentials file. The installer signs in as that owner once, to create a token for the Host. It does not change the deployment's Worker, schema, secrets or quotas.
 - **Docker**, running, to build the Host's image for linux/amd64. On an arm64 Mac the build runs under emulation; the image is only started on Cloudflare.
 - **Node.js 20 or newer** for the installer and the CLI. The CLI alone runs on Node 18.
+- **Bun** ([bun.sh](https://bun.sh)), which builds the apps page from `local/web/`. When its tools are missing, the installer runs `local/scripts/setup.sh` for them.
 - **Internet access.** The image fetches pneuma-framework from GitHub at the commit `local/compose.yaml` pins, and Bun from npm.
 
 ## Install
@@ -28,7 +29,7 @@ node cloudflare/scripts/install.mjs https://space.example.com \
   --prefix appgov-host
 ```
 
-It checks Node, Docker, the Wrangler login and the PneumaSpace sign-in before it changes anything. Then it creates the R2 bucket `<prefix>-folders` (location hint `wnam`), creates a PneumaSpace token with the scopes `read`, `publish`, `invoke`, `manage` and `remove`, generates the owner key, and deploys the Worker `<prefix>` with its container. It ends by printing the Host's address and where the owner credentials file is. Run it again after a change to this repository, or when something failed: it reuses the bucket, the token, the owner key and the container secret it made before.
+It checks Node, Docker, the Wrangler login and the PneumaSpace sign-in, and builds the apps page, before it changes anything. Then it creates the R2 bucket `<prefix>-folders` (location hint `wnam`), creates a PneumaSpace token with the scopes `read`, `publish`, `invoke`, `manage` and `remove`, generates the owner key, and deploys the Worker `<prefix>` with its container and the apps page. It ends by printing the Host's address and where the owner credentials file is. Run it again after a change to this repository, or when something failed: it reuses the bucket, the token, the owner key and the container secret it made before.
 
 Set `DOCKER_CONTEXT` first if your Docker runs under another context (for colima: `DOCKER_CONTEXT=colima`).
 
@@ -46,6 +47,12 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 The history names who acted from the credential the centre authenticated, not from the environment the CLI ran in: an operation with the owner's session is the owner's, and one with an agent token is recorded as the agent the CLI detected (or `unknown`), with the token's label. A decision names the owner who made it and the agent whose change it was.
 
 The CLI and the centre check that they speak the same API level. A CLI at another level stops and says so; `node .appgov/appgov.mjs update` replaces it with the centre's own.
+
+## Open the apps page
+
+Open `https://appgov-host.<subdomain>.workers.dev/` and sign in with the key in the owner credentials file (`owner.json`, the value of `key`). The page lists your apps and the changes that wait for you; that list comes from the summaries in R2 and starts nothing. Opening one app, a change or a version goes through that app's container, about a second when it is awake; when it is idle the page starts it first, a few seconds (3.7 s in the run below, 14 s the first time after a new deploy), and says it is on its way. The page is in English or Chinese, following your browser's language.
+
+What you decide or undo there is recorded as yours, as from the CLI (`by user:owner (owner session) [owner]`), and marked as made on the page. Wrong keys count against the same limit as `login`: 20 in ten minutes from one address. An agent token or a CLI session does not open the page, and a write from another site is refused. The page's session lasts 12 hours; "You can decide here", under a page's title, opens a card with "Sign out", which ends it. The app and its previews open on PneumaSpace, where you sign in separately; the page says so beside those links.
 
 ## Create an app
 
@@ -78,7 +85,9 @@ The Host runs in `personal` mode. A change has to pass the app's tests (run in t
 
 The rules read only SQL text and the manifest, so a change that deletes or rewrites what the app keeps in `kv`, `files` or objects looks to them like an ordinary code change. For that, the agent declares it: `submit --one-way "<what is lost>"`, which the app's `AGENTS.md` tells it to use whenever a change deletes or rewrites stored data. The preset sets the least a change needs and a declaration can only raise it: a declared change waits for you whatever its risks, you read the agent's words in a line of their own marked as its statement, not a finding of the rules, and once released it is recorded one-way.
 
-When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. Signed in as the owner, in the app's working copy:
+When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. On the apps page the change is under "Waiting for you": what it does in the agent's words, which agent sent it with which token, how many of the app's own tests ran (or that none did), why it waits, whether going back could undo it and, when not, what the rules found and what the agent says is lost, each marked for what it is, and its preview. "Let it go live" and "Not this time" decide; a one-way change asks you to tick that you accept it first. A decision takes about as long as a submit, often 15 to 30 seconds; the page says it is working and sends it once. A change made on a version the app has since left cannot go live, and the page says so; you can still say no.
+
+In a terminal, signed in as the owner, in the app's working copy:
 
 ```sh
 node .appgov/appgov.mjs approve <id>
@@ -97,6 +106,8 @@ Coding agents run commands without an interactive terminal, so an honest agent o
 
 ## Go back
 
+On an app's page, every version the current one was built on has "Go back to this". The page shows which changes that undoes and what happens to stored data, and asks you to confirm when it goes back past a one-way change, naming any of them its submitter declared one-way, with its words. Then it says once what stays in stored data, and those words again. In a terminal:
+
 ```sh
 node .appgov/appgov.mjs undo --owner "why"          # back one version, as you
 node .appgov/appgov.mjs undo --owner --to v2 "why"  # straight back to an earlier version
@@ -112,7 +123,8 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 | --- | --- |
 | Each app's source, every version, the history, changes that wait | One tar object per app in the R2 bucket `<prefix>-folders` (`folders/<app>.tar`), plus a short summary for `list` (`summaries/<app>.json`) |
 | A working copy | Wherever you created or fetched it; the CLI mirrors the centre's `.pneuma-framework/` into it |
-| The owner's sessions and the agent tokens, hashed | A Durable Object of the Worker |
+| The owner's sessions (the CLI's and the apps page's, each kind under its own prefix) and the agent tokens, hashed | A Durable Object of the Worker |
+| The apps page's files | The Worker's static assets, built by the installer from `local/web/` |
 | The owner key, the Worker's secrets, the generated Wrangler configuration | `~/.appgov/hosts/<prefix>/` on the machine that ran the installer (mode 0700) |
 | The owner session the CLI uses | `~/.appgov/hosts/<prefix>/session.json` |
 | Each app's stored data and its releases | PneumaSpace |
@@ -120,7 +132,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 ## Limits
 
 - **The threat model is an agent that makes mistakes, not one that attacks.** The app's tests run in the Host's container as a second unix user that cannot read the Host's files or its environment (the PneumaSpace token and the secret the Worker sends). They share the kernel, the network (with Internet access) and the disk. There is no second sandbox.
-- Left out: the owner page, screenshots, the data snapshot practice, starting Claude Code or Codex from the Host (the `drive` lane), and `record` and `review-all` modes. Only `personal` mode has been run.
+- Left out: screenshots, the data snapshot practice, starting Claude Code or Codex from the Host (the `drive` lane), and `record` and `review-all` modes. Only `personal` mode has been run.
 - New apps only. Nothing imports an existing app or its data.
 - Undo restores code; stored data is never put back.
 - **An agent cannot open the live app or its preview.** Both answer only to people signed in to PneumaSpace, and an agent token is the centre's, not PneumaSpace's: the agent gets 401. So an agent cannot check its own release. The Host's probes only fetch the home page and one path that starts Node, so a change that breaks a data route can still pass and go live. You see it working only by opening the app yourself.
@@ -133,7 +145,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 
 ## What has been run
 
-On 2026-11-25, from macOS with colima, against a PneumaSpace deployment on Cloudflare with default quotas: the install (and two reruns), owner sign-in, an agent token, `create`, an ordinary change released by the standing rule, a change that dropped `identity.required` and waited for the owner (the agent token's approve refused with 403, the owner's approve released it), `undo`, `fetch` into an empty directory with the token and a submit from there, a refused submit from a stale working copy, submits after the container was stopped, and a test that failed on purpose to show what the tests user can read (it could not read `/data`, the Host's home directory or the Host's environment, and had no `APPGOV_` variables). The offline tests (`npm run setup`, `npm run typecheck`, `bun test` in `cloudflare/`) cover the runtime adapter against a fake plane, the record round trip with a conflicting write, the Worker's rules for the owner and agent tokens, and the whole loop with the CLI on one machine.
+On 2026-11-25, from macOS with colima, against a PneumaSpace deployment on Cloudflare with default quotas: the install (and two reruns), owner sign-in, an agent token, `create`, an ordinary change released by the standing rule, a change that dropped `identity.required` and waited for the owner (the agent token's approve refused with 403, the owner's approve released it), `undo`, `fetch` into an empty directory with the token and a submit from there, a refused submit from a stale working copy, submits after the container was stopped, and a test that failed on purpose to show what the tests user can read (it could not read `/data`, the Host's home directory or the Host's environment, and had no `APPGOV_` variables). The offline tests (`npm run setup`, `npm run typecheck`, `bun test` in `cloudflare/`) cover the runtime adapter against a fake plane, the record round trip with a conflicting write, the Worker's rules for the owner and agent tokens, the apps page's sign-in and its rules against other sites, the page's views on the edition's answers, and the whole loop with the CLI on one machine. On 2026-11-26 the apps page ran on the deployment, in headless Chrome, with a test app of its own beside the owner's two: the sign-in view on every path without a session, a wrong key refused, the cookie's attributes, an agent token, a CLI session and writes from another site refused, the list read from the summaries while the test app's container stayed stopped, an ordinary change released by the rule, a change dropping `identity.required` said no to on the page, a change declared one-way let through on the page (one request however often the button was pressed), going back past it on the page, and signing out. As the owner felt it: the list 0.4 to 0.8 s; an app's page about 1.3 s awake, 3.7 s after its container slept (14 s the first time after the deploy); a waiting change 2 s; saying no 3.6 s; letting a change go live 16 to 18 s; going back 11 s.
 
 Where a submit's time goes, measured with `--timing` (which prints the steps each answer carries in `timing`) on an ordinary change, one cold and two warm submits each, before and after the savings described below. Seconds; the cold submit includes starting the container and loading the record.
 

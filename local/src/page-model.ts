@@ -14,10 +14,21 @@ export const UI_KEYS = [
   "change_title", "decide_title", "decision_title", "decide_lead", "approve", "deny", "read_only_decide", "confirm_title", "confirm_go", "deny_title", "deny_body", "deny_reason", "deny_go",
   "working", "failed", "not_released", "why_other", "preview_again_working", "preview_open_hint", "checked_title", "why_title", "back_undoes", "data_title", "back_go", "back_current", "back_not_earlier",
   "theme_light", "theme_dark", "language",
+  "signin_title", "signin_lead", "signin_where", "signin_key", "signin_go", "signin_wrong", "signin_limited", "sign_out", "owner_signed_out", "loading",
 ] as const;
 export type UiKey = (typeof UI_KEYS)[number];
 export type Ui = Readonly<Record<UiKey, string>>;
 export type Tone = "neutral" | "green" | "orange" | "red" | "accent";
+
+/**
+ * How the owner is let in to decide: the one place the two editions' page differs.
+ *   - `owner-link` (the local edition): the views are open to read on the Host's own name; a write carries the
+ *     owner link's token, which this tab took from the link and keeps in its session storage.
+ *   - `session` (the Cloudflare edition): nothing but the sign-in view is shown until the owner signs in with the
+ *     owner key; a write carries the session's cookie, which the browser adds and no script can read, and `csrf`,
+ *     this session's own token, which only a page served to this session holds.
+ */
+export type OwnerAccess = { readonly kind: "owner-link" } | { readonly kind: "session"; readonly csrf: string };
 export type AppState = "normal" | "waiting" | "not_live" | "uncertain" | "unpublished" | "unreadable";
 
 /** A moment, shown relative ("5 minutes ago") or absolute; the page keeps it current in the reader's time zone. */
@@ -88,6 +99,11 @@ interface Common {
   readonly ownerOff: boolean;
   /** Whether the Host takes pictures at all (for "Details"). */
   readonly picturesOn: boolean;
+  /** The Host never takes pictures (the Cloudflare edition): the views leave out the frames a picture would fill. */
+  readonly picturesNever: boolean;
+  readonly access: OwnerAccess;
+  /** Where the page links to the app or a preview: that they open on a runtime with a sign-in of its own, when they do. */
+  readonly opensElsewhere: string | null;
 }
 
 export interface WaitingCard {
@@ -160,7 +176,8 @@ export interface HistoryRow {
   readonly who: Rich;
   /** The reason an undo was given. */
   readonly note: string | null;
-  readonly oneWay: { readonly body: string; readonly why: string | null } | null;
+  /** `why`: what the rules found; `said`: what the submitter declared lost, marked as its own words. */
+  readonly oneWay: { readonly body: string; readonly why: string | null; readonly said: string | null } | null;
   readonly snapshot: string | null;
   readonly review: string | null;
   readonly back: string | null;
@@ -242,7 +259,9 @@ export interface ChangeModel extends Common {
   readonly after: Side;
   readonly checked: readonly CheckRow[];
   readonly why: readonly string[];
-  readonly oneWay: { readonly title: string; readonly body: string } | null;
+  /** `why`: what the Host's rules say is lost, in their own words. */
+  /** `why`: what the rules found; `said`: what the submitter declared lost, marked as its own words. */
+  readonly oneWay: { readonly title: string; readonly body: string; readonly why: string | null; readonly said: string | null } | null;
   /** What holds the app as a whole: another manager, an unfinished undo, an address nobody saw answer. */
   readonly notices: readonly Notice[];
   readonly decision: Decision;
@@ -270,7 +289,18 @@ export interface BackModel extends Common {
   /** The version the plan shown starts from. Sent with "Go back"; the Host refuses with `plan_changed` once it is not current. */
   readonly from: string | null;
   readonly doneHref: string;
+  /** What the submitters of the versions gone back past declared lost, in their words: going back does not bring it back. */
+  readonly declared: readonly string[];
+  /** Said with "Done" once the app is back: what going back left in stored data, when the Host can tell, and what was declared lost. */
+  readonly afterNote: string | null;
   readonly facts: readonly Fact[];
+}
+
+/** Before the owner signs in (the Cloudflare edition): one field, one button, and nothing about the apps. */
+export interface SignInModel extends Common {
+  readonly view: "signin";
+  /** Where the sign-in goes. */
+  readonly signInUrl: string;
 }
 
 export interface MissingModel extends Common {
@@ -287,4 +317,4 @@ export interface UnreadableModel extends Common {
   readonly facts: readonly Fact[];
 }
 
-export type PageModel = HomeModel | AppModel | ChangeModel | BackModel | MissingModel | UnreadableModel;
+export type PageModel = HomeModel | AppModel | ChangeModel | BackModel | MissingModel | UnreadableModel | SignInModel;

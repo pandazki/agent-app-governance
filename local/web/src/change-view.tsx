@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
 import { ValuePill } from "../beautifui/atoms/ValuePill";
@@ -10,7 +10,7 @@ import { Section, Surface } from "../beautifui/site";
 import { act, fill, hue, useOwner, usePage, useUi } from "./lib";
 import type { ChangeModel, Notice, Side } from "./model";
 import { TONE_VAR } from "./home";
-import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, Picture, RichText, StatePill } from "./parts";
+import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
 
 /** What a failed write says: the plain line, and the Host's own words under Details. */
 export function Failure({ text, detail }: { text: string; detail: string }) {
@@ -36,16 +36,18 @@ export function noticeRow(notice: Notice, i: number): TaskRow {
   return { key: `n${i}`, wrap: true, label: <span className="font-normal leading-relaxed">{notice.text}</span>, status: notice.tone === "red" ? "failed" : notice.tone === "orange" ? "caution" : "plain" };
 }
 
-/** One side of before and after: a card with its label, a way to open the real thing, and its picture. */
-function SideCard({ side, name, index }: { side: Side; name: string; index: number }) {
+type Again = "idle" | "working" | { error: string; detail: string };
+
+/** Asking the Host to publish a side's preview again, when it no longer stands. */
+function useShowAgain(side: Side): [Again, () => Promise<void>] {
   const ui = useUi();
-  const { refusals } = usePage();
+  const { refusals, access } = usePage();
   const owner = useOwner();
-  const [again, setAgain] = useState<"idle" | "working" | { error: string; detail: string }>("idle");
+  const [again, setAgain] = useState<Again>("idle");
   const showAgain = async () => {
-    if (!side.again) return;
+    if (!side.again || again === "working") return;
     setAgain("working");
-    const result = await act(side.again.url, {});
+    const result = await act(side.again.url, {}, access);
     if (result.lost) {
       owner.lose();
       setAgain("idle");
@@ -57,6 +59,20 @@ function SideCard({ side, name, index }: { side: Side; name: string; index: numb
     }
     setAgain({ error: refusalText(refusals, result.data, ui.failed), detail: String(result.data.detail ?? result.data.error ?? "") });
   };
+  return [again, showAgain];
+}
+
+const GREEN_TICK = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M20 6L9 17l-5-5" />
+  </svg>
+);
+
+/** One side of before and after: a card with its label, a way to open the real thing, and its picture. */
+function SideCard({ side, name, index }: { side: Side; name: string; index: number }) {
+  const ui = useUi();
+  const owner = useOwner();
+  const [again, showAgain] = useShowAgain(side);
   return (
     <div className="flex flex-col overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 400ms cubic-bezier(0.23,1,0.32,1) ${index * 100}ms both` }}>
       <div className="flex h-12 items-center gap-2.5 border-b border-line px-3">
@@ -78,11 +94,7 @@ function SideCard({ side, name, index }: { side: Side; name: string; index: numb
         <div className={side.shot ? "" : "flex aspect-[16/10] flex-col items-center justify-center"}>
           <EmptyState
             title={side.empty.text}
-            icon={
-              side.empty.tone === "green" ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
-              ) : undefined
-            }
+            icon={side.empty.tone === "green" ? GREEN_TICK : undefined}
           />
           {side.again && (
             <div className="-mt-6 flex flex-col items-center px-4 pb-6">
@@ -96,6 +108,55 @@ function SideCard({ side, name, index }: { side: Side; name: string; index: numb
               {typeof again === "object" && <Failure text={again.error} detail={again.detail} />}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One side as a row, where the Host never takes pictures: the card's bar on its own (its label, when the preview ends
+ * itself, a way to open it), and what stands in for the preview when there is none.
+ */
+function SideRow({ side, index }: { side: Side; index: number }) {
+  const ui = useUi();
+  const owner = useOwner();
+  const [again, showAgain] = useShowAgain(side);
+  return (
+    <div className="overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 400ms cubic-bezier(0.23,1,0.32,1) ${index * 100}ms both` }}>
+      <div className="flex min-h-12 items-center gap-2.5 py-2 pr-2 pl-3">
+        <span className="shrink-0 text-[13px] font-medium text-ink">{side.label}</span>
+        {side.note && (
+          <span className="min-w-0 truncate text-[11.5px] text-ink-3">
+            <RichText rich={side.note} />
+          </span>
+        )}
+        {side.empty && (
+          <span className="flex min-w-0 items-start gap-1.5 text-[12px] leading-relaxed text-ink-3">
+            {side.empty.tone === "green" && <span className="mt-[0.2em] shrink-0">{GREEN_TICK}</span>}
+            <span>{side.empty.text}</span>
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center">
+          {side.open && (
+            <ButtonLink href={side.open} variant="secondary" size="xs" external>
+              {ui.open}
+              <ArrowOut />
+            </ButtonLink>
+          )}
+          {side.again &&
+            (again === "working" ? (
+              <LoadingState label={ui.preview_again_working} variant="Dots" />
+            ) : owner.state === "yes" ? (
+              <Button variant="secondary" size="xs" onClick={showAgain}>
+                {side.again.label}
+              </Button>
+            ) : null)}
+        </span>
+      </div>
+      {typeof again === "object" && (
+        <div className="px-3 pb-3">
+          <Failure text={again.error} detail={again.detail} />
         </div>
       )}
     </div>
@@ -117,18 +178,24 @@ function DecisionCard({ model }: { model: ChangeModel }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ text: string; detail: string } | null>(null);
+  // One decision at a time: a second click while one is on its way, or while the page moves on after it, sends nothing.
+  const sending = useRef(false);
   const can = owner.state === "yes";
 
   const go = async (verb: "approve" | "deny") => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setFailure(null);
-    const result = await act(verb === "approve" ? d.approveUrl : d.denyUrl, verb === "deny" && reason.trim() ? { reason: reason.trim() } : {});
-    setBusy(false);
-    if (result.lost) return owner.lose();
+    const result = await act(verb === "approve" ? d.approveUrl : d.denyUrl, verb === "deny" && reason.trim() ? { reason: reason.trim() } : {}, model.access);
     if (result.ok && !(verb === "approve" && result.data.status === "rejected")) {
+      // Still working until the next view is here: the buttons stay off.
       location.href = verb === "approve" ? d.doneLive : d.doneNo;
       return;
     }
+    sending.current = false;
+    setBusy(false);
+    if (result.lost) return owner.lose();
     const why = model.reasons[String(result.data.reason ?? "")] ?? ui.why_other;
     setFailure({
       text: result.ok ? fill(ui.not_released, { why }) : refusalText(model.refusals, result.data, ui.failed),
@@ -263,7 +330,23 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
       : {}),
   }));
   const why: TaskRow[] = [
-    ...(model.oneWay ? [{ key: "one-way", label: model.oneWay.title, status: "caution" as const, details: <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>, defaultOpen: true }] : []),
+    ...(model.oneWay
+      ? [
+          {
+            key: "one-way",
+            label: model.oneWay.title,
+            status: "caution" as const,
+            details: (
+              <>
+                <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>
+                {model.oneWay.why && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
+                {model.oneWay.said && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
+              </>
+            ),
+            defaultOpen: true,
+          },
+        ]
+      : []),
     ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: <span className="font-normal">{line}</span>, status: "caution" })),
   ];
   return (
@@ -277,10 +360,26 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
       />
       <Section number="01" title={`${model.before.label} · ${model.after.label}`} note={model.after.open ? ui.preview_open_hint : undefined} index={1}>
         <Surface>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <SideCard side={model.before} name={model.name} index={0} />
-            <SideCard side={model.after} name={model.name} index={1} />
-          </div>
+          {model.picturesNever ? (
+            // No picture is ever taken here: two rows, as wide as the running app's card on the app's page.
+            <div className="mx-auto flex w-full max-w-[720px] flex-col gap-2">
+              <SideRow side={model.before} index={0} />
+              <SideRow side={model.after} index={1} />
+              {(model.before.open || model.after.open) && model.opensElsewhere && (
+                <div className="-mt-2">
+                  <OpensElsewhere text={model.opensElsewhere} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SideCard side={model.before} name={model.name} index={0} />
+                <SideCard side={model.after} name={model.name} index={1} />
+              </div>
+              {(model.before.open || model.after.open) && model.opensElsewhere && <OpensElsewhere text={model.opensElsewhere} />}
+            </>
+          )}
           {model.notices.length > 0 && (
             <div className="mx-auto mt-3 w-full max-w-[720px]">
               <TaskRows rows={model.notices.map(noticeRow)} />

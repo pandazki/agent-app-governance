@@ -1,4 +1,5 @@
 import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
+import { isPageRequest, servePage, type PageDeps } from "./page";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -17,6 +18,10 @@ import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Pri
 // Either may fetch the centre's own CLI and the instructions for a directory
 // an agent starts in (GET /starter), so what an agent runs matches this
 // centre. Every answer carries the centre's API level (API_HEADER).
+//
+// The owner page (worker/page.ts) has routes of its own, which take neither
+// credential: the owner signs in to it with the owner key and it keeps a
+// session of its own in a cookie.
 //
 // Sessions and tokens are kept hashed by the AuthStore (a Durable Object in
 // worker/index.ts). Requests about one app go to that app's Durable Object
@@ -69,13 +74,15 @@ export interface GatewayDeps {
   readonly summaries: () => Promise<unknown[]>;
   readonly governance: string;
   readonly now?: () => number;
+  /** The owner page's files and what it says about the deployment; without it, the page's routes are not served. */
+  readonly page?: PageDeps;
 }
 
 export const SESSION_PREFIX = "aps_";
 export const TOKEN_PREFIX = "apt_";
 export const OWNER_KEY_PREFIX = "apk_";
 export const SESSION_MS = 12 * 3600_000;
-const LOGIN_FAILURES_ALLOWED = 20;
+export const LOGIN_FAILURES_ALLOWED = 20;
 const MAX_BODY = 48 * 1024 * 1024;
 /** What each Durable Object request is: `create` and `write` save the folder afterwards, `read` does not. */
 export const OP_HEADER = "x-appgov-op";
@@ -93,7 +100,7 @@ export function randomSecret(prefix: string, bytes = 32): string {
 }
 
 /** Equal-length strings compared without stopping at the first difference. */
-function sameText(a: string, b: string): boolean {
+export function sameText(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -104,7 +111,21 @@ export function json(value: unknown, status = 200, headers: Record<string, strin
   return new Response(`${JSON.stringify(value, null, 2)}\n`, { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
 }
 
-const refuse = (status: number, reason: string, error: string) => json({ error, reason }, status);
+export const refuse = (status: number, reason: string, error: string) => json({ error, reason }, status);
+
+/**
+ * Whether `key` is the owner key, counting a wrong one against `where` (the caller's address): null when it is, the
+ * refusal otherwise. The CLI's sign-in and the owner page's share it, and so share the count of wrong keys.
+ */
+export async function ownerKeyRefusal(deps: GatewayDeps, where: string, key: unknown, now: number): Promise<Response | null> {
+  if ((await deps.auth.loginFailures(where, now, false)) >= LOGIN_FAILURES_ALLOWED) return refuse(429, "too_many_attempts", "too many failed sign-ins from here; wait ten minutes");
+  const text = typeof key === "string" ? key : "";
+  if (!text.startsWith(OWNER_KEY_PREFIX) || !sameText(await sha256(text), deps.ownerKeyHash)) {
+    await deps.auth.loginFailures(where, now, true);
+    return refuse(401, "wrong_key", "that is not the owner key of this Host");
+  }
+  return null;
+}
 
 async function authenticate(request: Request, deps: GatewayDeps, now: number): Promise<{ principal: Principal; session?: string } | null> {
   const match = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "");
@@ -151,6 +172,7 @@ function parseObject(text: string): Record<string, unknown> {
 /** The kind of Durable Object operation a request about an app is, or null when no such route exists. */
 export function appOperation(method: string, rest: readonly string[]): "read" | "write" | "container" | null {
   if (method === "GET" && (rest.length === 0 || (rest.length === 1 && (rest[0] === "history" || rest[0] === "folder")))) return "read";
+  if (method === "GET" && rest.length === 2 && rest[0] === "undo-plan") return "read";
   if (method === "POST" && rest.length === 1 && ["changes", "undo", "discard"].includes(rest[0]!)) return "write";
   if (method === "POST" && rest.length === 3 && rest[0] === "changes" && ["approve", "deny", "preview"].includes(rest[2]!)) return "write";
   if (rest.length === 1 && rest[0] === "container" && method === "GET") return "container";
@@ -185,16 +207,15 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   const method = request.method;
   const parts = url.pathname.split("/").filter(Boolean);
 
+  // The owner page: its views, its files, its sign-in and its writes, none with the API's credentials.
+  if (deps.page && isPageRequest(method, url.pathname)) return servePage(request, deps, deps.page, now);
+
   // The only route without a credential: it takes the owner key and gives a session.
   if (method === "POST" && url.pathname === "/auth/login") {
     const where = request.headers.get("cf-connecting-ip") ?? "unknown";
-    if ((await deps.auth.loginFailures(where, now, false)) >= LOGIN_FAILURES_ALLOWED) return refuse(429, "too_many_attempts", "too many failed sign-ins from here; wait ten minutes");
     const body = parseObject(await readText(request));
-    const key = typeof body.key === "string" ? body.key : "";
-    if (!key.startsWith(OWNER_KEY_PREFIX) || !sameText(await sha256(key), deps.ownerKeyHash)) {
-      await deps.auth.loginFailures(where, now, true);
-      return refuse(401, "wrong_key", "that is not the owner key of this Host");
-    }
+    const wrong = await ownerKeyRefusal(deps, where, body.key, now);
+    if (wrong) return wrong;
     const session = randomSecret(SESSION_PREFIX);
     const expires = now + SESSION_MS;
     await deps.auth.addSession(await sha256(session), expires);
@@ -242,7 +263,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
     const text = await readText(request);
     const body = parseObject(text);
     if (typeof body.name !== "string" || !APP_NAME.test(body.name)) return refuse(400, "bad_name", `name must match ${APP_NAME}`);
-    return forward(deps, body.name, "create", principal, url, "POST", text);
+    return forward(deps, body.name, "create", principal, url.origin, url.pathname, "POST", text);
   }
 
   const name = parts[1] ?? "";
@@ -253,10 +274,11 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   const text = method === "POST" ? await readText(request) : "";
   const reason = ownerOnly(rest, method === "POST" ? parseObject(text) : {});
   if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; an agent token cannot do it`);
-  return forward(deps, name, op, principal, url, method, text);
+  return forward(deps, name, op, principal, url.origin, url.pathname, method, text);
 }
 
-function forward(deps: GatewayDeps, name: string, op: string, principal: Principal, url: URL, method: string, body: string): Promise<Response> {
-  const headers = new Headers({ "content-type": "application/json", [PRINCIPAL_HEADER]: JSON.stringify(principal), [APP_HEADER]: name, [OP_HEADER]: op, [ORIGIN_HEADER]: url.origin });
-  return deps.app(name).fetch(new Request(`https://app${url.pathname}`, { method, headers, ...(method === "POST" ? { body } : {}) }));
+/** A request about app `name`, to its Durable Object, as `principal`; `path` is the Host's route. `extra` adds headers the Worker sets. */
+export function forward(deps: GatewayDeps, name: string, op: string, principal: Principal, origin: string, path: string, method: string, body: string, extra: Record<string, string> = {}): Promise<Response> {
+  const headers = new Headers({ ...extra, "content-type": "application/json", [PRINCIPAL_HEADER]: JSON.stringify(principal), [APP_HEADER]: name, [OP_HEADER]: op, [ORIGIN_HEADER]: origin });
+  return deps.app(name).fetch(new Request(`https://app${path}`, { method, headers, ...(method === "POST" ? { body } : {}) }));
 }

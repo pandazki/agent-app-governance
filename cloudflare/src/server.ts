@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { collectSteps, timedSync } from "../../host/src/steps";
-import { dataLeftBehind } from "./data-left";
+import { dataLeft, dataLeftLine } from "./data-left";
 import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
-import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
+import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, PAGE_CHANNEL, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
 
 // ---------------------------------------------------------------------------
 // The Host's HTTP face inside the container.
@@ -99,6 +99,11 @@ function sameSecret(sent: string | undefined, secret: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** Where an owner's decision or undo came from: the owner page, when the Worker says so; the CLI otherwise. */
+function channelOf(req: IncomingMessage): string | undefined {
+  return req.headers[CHANNEL_HEADER] === PAGE_CHANNEL ? PAGE_CHANNEL : undefined;
+}
+
 function principalOf(req: IncomingMessage): Principal {
   let value: unknown;
   try {
@@ -143,6 +148,21 @@ export function createContainerServer(opts: ContainerServerOptions) {
         undefined,
         { current: String(now) },
       );
+    }
+  };
+  /**
+   * On this edition the centre's working tree only stages what a submit sent: agents edit their own working copies,
+   * and a change that waits keeps its files as a draft of its own. Once a submit or a decision has not released them,
+   * the tree goes back to the current version, so they are never taken for edits nobody sent: going back is not
+   * refused for them, the owner page does not call them work in progress, and `fetch` gives the version that is
+   * current. The answer, with the working copy the CLI mirrors, is taken before.
+   */
+  const settle = async (name: string, result: unknown) => {
+    if ((result as { status?: unknown })?.status === "published") return;
+    try {
+      await host.discard(name);
+    } catch (err) {
+      log(`could not put the working tree of ${name} back to its current version: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
   const withCopy = (name: string, result: unknown) =>
@@ -222,9 +242,18 @@ export function createContainerServer(opts: ContainerServerOptions) {
       // edits are that change and not something still to submit.
       const status = await host.status(name);
       const drafts = appPaths(appsDir, name).drafts;
-      return { ...status, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
+      // The risks the standing rule lets through in this mode: the owner page lists only the others as why a change waits.
+      return { ...status, auto_approved: host.autoApproved, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
     }
     if (parts.length === 3 && method === "GET" && parts[2] === "history") return { history: host.history(name) };
+    if (parts.length === 4 && method === "GET" && parts[2] === "undo-plan") {
+      // What going back to a version would do, without doing it: what the owner page shows before "Go back".
+      const to = parts[3]!;
+      if (!/^v\d+$/.test(to)) throw new HostError(400, "to must be a version name, e.g. v3");
+      const plan = host.undoPlan(name, to);
+      const record = openRecord(appPaths(appsDir, name));
+      return { ...plan, data_left: plan.undone.length ? (dataLeft(plan.undone, to, (version) => record.versionDir(version)) ?? null) : null };
+    }
     if (parts.length === 3 && method === "GET" && parts[2] === "folder") return exportWorkingCopy(appRoot(name), name, current(name));
     if (parts.length === 3 && method === "POST") {
       const input = await jsonBody(req);
@@ -251,7 +280,9 @@ export function createContainerServer(opts: ContainerServerOptions) {
           byOwner: owner,
           ...(typeof input.one_way === "string" ? { oneWay: input.one_way } : {}),
         });
-        return withCopy(name, result);
+        const answer = withCopy(name, result);
+        await settle(name, result);
+        return answer;
       }
       if (parts[2] === "undo") {
         checkBase(name, input.base_version);
@@ -267,11 +298,12 @@ export function createContainerServer(opts: ContainerServerOptions) {
           ...(typeof input.from === "string" ? { from: input.from.trim() } : {}),
           acceptOneWay: input.accept_one_way === true,
           subject: subjectOf(principal),
+          ...(principal.kind === "owner" && channelOf(req) ? { channel: channelOf(req) } : {}),
         });
         // Stored data stays as it is; say when the versions gone back past wrote data the older code may not show.
         const record = openRecord(appPaths(appsDir, name));
-        const left = result.data_restored ? undefined : dataLeftBehind(result.undone, result.active_version, (version) => record.versionDir(version));
-        return withCopy(name, { ...result, ...(left ? { data_left: left } : {}) });
+        const left = result.data_restored ? undefined : dataLeft(result.undone, result.active_version, (version) => record.versionDir(version));
+        return withCopy(name, { ...result, ...(left ? { data_left: dataLeftLine(left), data_left_facts: left } : {}) });
       }
       if (parts[2] === "discard") {
         checkBase(name, input.base_version);
@@ -282,8 +314,10 @@ export function createContainerServer(opts: ContainerServerOptions) {
     if (parts.length === 5 && method === "POST" && parts[2] === "changes" && (parts[4] === "approve" || parts[4] === "deny")) {
       requireOwner(principal, parts[4] === "approve" ? "Approving a change" : "Denying a change");
       const input = await jsonBody(req);
-      const result = await host.resolve(name, parts[3]!, parts[4] === "approve" ? "approved" : "denied", subjectOf(principal), typeof input.reason === "string" ? input.reason : undefined, undefined, credentialOf(principal));
-      return withCopy(name, result);
+      const result = await host.resolve(name, parts[3]!, parts[4] === "approve" ? "approved" : "denied", subjectOf(principal), typeof input.reason === "string" ? input.reason : undefined, channelOf(req), credentialOf(principal));
+      const answer = withCopy(name, result);
+      await settle(name, result);
+      return answer;
     }
     throw new HostError(404, "not found");
   };
