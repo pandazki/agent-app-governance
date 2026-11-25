@@ -52,3 +52,7 @@ node bin/pneuma.mjs create todo
 
 - [pneuma-framework](https://github.com/pandazki/pneuma-framework) 提供改动历史及其保证、改动生效前的检查顺序、批准规则、某个地址正在跑哪个版本的记录，以及启动 Claude Code 和 Codex 的适配器。它的包没有发布；本地版从源码取，固定在一个提交。
 - [PneumaSpace](https://github.com/pandazki/pneuma-space) 运行这些应用：应用是一个目录加一份清单，预览是会自己结束的临时应用，发布出去的应用会拒绝没有写明管理它的 Host 的写操作。本地版从源码构建它，固定在一个提交。
+
+## 许可证
+
+[MIT](./LICENSE)，适用于本仓库。pneuma-framework 和 PneumaSpace 在构建镜像时取得，各自适用它们自己的条款。

@@ -52,3 +52,7 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 
 - [pneuma-framework](https://github.com/pandazki/pneuma-framework) provides the change history and its guarantees, the sequence of checks before a change is applied, the approval rules, the record of which version an address serves, and the adapters that start Claude Code and Codex. Its packages are not published; the local edition takes them from source at one pinned commit.
 - [PneumaSpace](https://github.com/pandazki/pneuma-space) runs the apps: an app is a folder and a manifest, a preview is a temporary app that ends itself, and a released app refuses writes that do not name the Host that manages it. The local edition builds it from source at one pinned commit.
+
+## License
+
+[MIT](./LICENSE). It covers this repository. pneuma-framework and PneumaSpace are fetched when the images are built and come under their own terms.
