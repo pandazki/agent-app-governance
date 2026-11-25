@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
-import { APP_HEADER, SECRET_HEADER } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, SECRET_HEADER } from "../src/protocol";
+import type { PageDeps } from "./page";
 // Bundled as text (the `rules` in wrangler.jsonc): the CLI and the starter instructions this Worker was deployed with.
 import starterCli from "../bin/appgov.mjs";
 import starterAgents from "../overlay/AGENTS.start.md";
@@ -10,10 +11,14 @@ import starterAgents from "../overlay/AGENTS.start.md";
 // The Cloudflare edition's Worker: the gateway in front (worker/gateway.ts),
 // one Durable Object per app that owns that app's container and runs its
 // operations one at a time (worker/folders.ts), and one Durable Object that
-// keeps the owner's sessions and the agent tokens, hashed.
+// keeps the owner's sessions and the agent tokens, hashed. The owner page's
+// built client (local/web/dist) comes with the Worker as its static assets,
+// which only the Worker reads (`run_worker_first`).
 // ---------------------------------------------------------------------------
 
 interface Env {
+  /** The owner page's built client, local/web/dist. */
+  ASSETS: Fetcher;
   APPS: DurableObjectNamespace<AppHostObject>;
   AUTH: DurableObjectNamespace<AuthObject>;
   FOLDERS: R2Bucket;
@@ -35,6 +40,37 @@ interface Env {
 }
 
 const READY_WAIT_MS = 180_000;
+
+/** app.js and app.css with a short hash of each, read once per isolate from the assets this version was deployed with. */
+let pageVersions: Promise<ReadonlyMap<string, string>> | null = null;
+
+function pageDeps(env: Env): PageDeps {
+  const asset = async (name: string) => {
+    const res = await env.ASSETS.fetch(new Request(`https://assets/${name}`));
+    if (res.ok) return res;
+    await res.body?.cancel();
+    return null;
+  };
+  return {
+    asset,
+    versions: () =>
+      (pageVersions ??= (async () => {
+        const files = new Map<string, string>();
+        for (const name of ["app.js", "app.css"]) {
+          const res = await asset(name);
+          if (!res) continue;
+          const digest = await crypto.subtle.digest("SHA-256", await res.arrayBuffer());
+          files.set(name, [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 12));
+        }
+        return files;
+      })().catch((err) => {
+        pageVersions = null;
+        throw err;
+      })),
+    spaceOrigin: env.APPGOV_SPACE_ORIGIN,
+    manager: env.APPGOV_MANAGER,
+  };
+}
 const OPERATION_LIMIT_MS = 20 * 60_000;
 
 export default {
@@ -52,6 +88,7 @@ export default {
     };
     return handle(request, {
       starter: { cli: starterCli, agents: starterAgents },
+      page: pageDeps(env),
       ownerKeyHash: env.APPGOV_OWNER_KEY_HASH,
       auth: store,
       governance: env.APPGOV_GOVERNANCE,
@@ -186,7 +223,7 @@ export class AppHostObject extends DurableObject<Env> {
         },
       };
       const headers: Record<string, string> = {};
-      for (const name of ["x-appgov-principal", APP_HEADER]) {
+      for (const name of ["x-appgov-principal", APP_HEADER, CHANNEL_HEADER]) {
         const value = request.headers.get(name);
         if (value !== null) headers[name] = value;
       }

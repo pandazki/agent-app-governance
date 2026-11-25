@@ -22,6 +22,9 @@
   "r2_buckets": [{ "binding": "FOLDERS", "bucket_name": "appgov-host-folders" }],
   // The CLI and the starter instructions, bundled as text so GET /starter serves what was deployed.
   "rules": [{ "type": "Text", "globs": ["**/*.md", "**/bin/appgov.mjs"], "fallthrough": true }],
+  // The owner page's built client (local/web/build.ts writes it; the installer builds it first). Only the Worker reads
+  // it: every request runs the Worker, which serves the files under /assets/ and nothing else from here.
+  "assets": { "directory": "../local/web/dist", "binding": "ASSETS", "run_worker_first": true },
   // Which version of this Worker a Durable Object runs, shown by `appgov container <app>`.
   "version_metadata": { "binding": "WORKER_VERSION" },
   "durable_objects": {
