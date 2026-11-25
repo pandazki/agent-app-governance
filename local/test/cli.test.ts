@@ -416,8 +416,24 @@ describe("undo and record mode through the artifact CLI", () => {
     expect(await host.resolve("declared", changeId, "approved", "user:me")).toMatchObject({ status: "published", version: "v2" });
     expect((await cli(appDir, "history")).output).toContain('ONE-WAY: declared one-way when it was submitted: "deletes every stored due date"');
     expect((await cli(appDir, "undo", "back")).output).toContain('  - v2: declared one-way when it was submitted: "deletes every stored due date"');
-    const confirmed = await post(`${hostUrl}/apps/declared/undo`, { reason: "back", accept_one_way: true, subject: "user:me" });
-    expect(confirmed.body).toMatchObject({ active_version: "v1", declared_one_way: [{ version: "v2", reason: "deletes every stored due date" }] });
+    // The owner, in a terminal, types "accept"; undo repeats what the agent declared.
+    let out = "";
+    const owner = Bun.spawn(["node", join(EXAMPLE, "bin", "appgov.mjs"), "undo", "--accept-one-way", "back"], {
+      cwd: appDir,
+      env: { PATH: process.env.PATH ?? "", APPGOV_HOST: hostUrl, APPGOV_AGENT: "codex" },
+      terminal: {
+        cols: 400,
+        rows: 50,
+        data(terminal, chunk) {
+          const before = out;
+          out += new TextDecoder().decode(chunk);
+          if (!before.includes('Type "accept"') && out.includes('Type "accept"')) terminal.write("accept\r");
+        },
+      },
+    });
+    expect(await owner.exited).toBe(0);
+    expect(out.replace(/\r/g, "")).toContain('v2 was declared one-way when it was submitted: "deletes every stored due date". Going back put back its code, not what it did to stored data.');
+    expect((await host.status("declared")).active_version).toBe("v1");
   });
 
   test("record mode: submit says nothing checked it, and a release that does not go live exits 1 and says what the address serves", async () => {
