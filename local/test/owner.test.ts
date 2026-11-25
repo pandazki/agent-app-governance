@@ -4,6 +4,7 @@ import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { AppHost } from "../src/host";
 import { makeOwnerToken, OWNER_HEADER, ownerLink, ownerTokenIn, PAGE_CHANNEL } from "../src/owner";
 import { loadRiskPolicy } from "../src/policy";
@@ -93,7 +94,7 @@ const edit = (run: Running, name: string, rel: string, content: string) => {
   writeFileSync(file, content);
 };
 const history = (run: Running, name: string) =>
-  readFileSync(join(run.work, "apps", name, ".appgov", "history.jsonl"), "utf8")
+  readFileSync(join(run.work, "apps", name, STATE_DIR_NAME, "history.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);

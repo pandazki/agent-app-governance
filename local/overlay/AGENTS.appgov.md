@@ -1,6 +1,6 @@
 # This app is governed: read this part first
 
-This directory is a published app with a recorded history. Its address, versions and history are in `.appgov/`. Any coding agent can pick it up; the rules in this part are the whole protocol.
+This directory is a published app with a recorded history. Every version and the history are in `.pneuma-framework/`, which pneuma-framework writes; the CLI, the host's address and the changes waiting for a decision are in `.appgov/`, which the host writes. Any coding agent can pick it up; the rules in this part are the whole protocol.
 
 The part after this one, "PneumaSpace app template", describes the platform, the manifest and the SDK. Use it for writing code. It also explains publishing with `appctl`: **do not do that here.** In this directory a change goes live only through `submit`, described next.
 
@@ -60,4 +60,4 @@ Change the path, the method and the assertions to what you changed. Files under 
 
 ## Notes for the next agent
 
-Add a line here when you learn something the next agent needs (a data-model decision, a constraint the user stated). The next agent may be a different product; this file and `.appgov/history.jsonl` are all it gets.
+Add a line here when you learn something the next agent needs (a data-model decision, a constraint the user stated). The next agent may be a different product; this file and `.pneuma-framework/history.jsonl` are all it gets.

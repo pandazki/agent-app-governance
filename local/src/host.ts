@@ -42,6 +42,7 @@ import {
   sourceDiff,
   sourceFiles,
   sourceSignature,
+  FRAMEWORK_DIR,
   STATE_DIR,
   TREE,
   writeAppInfo,
@@ -664,11 +665,11 @@ export class AppHost {
   }
 
   private threads(paths: AppPaths): BuildThreadStore {
-    return createFileBuildThreadStore({ workspace: paths.root, stateDir: STATE_DIR });
+    return createFileBuildThreadStore({ workspace: paths.root });
   }
 
   private rollout(paths: AppPaths): FileReleaseRolloutStore {
-    return new FileReleaseRolloutStore({ workspace: paths.root, stateDir: STATE_DIR });
+    return new FileReleaseRolloutStore({ workspace: paths.root });
   }
 
   private changeId(): string {
@@ -1860,7 +1861,7 @@ export class AppHost {
           throw new HostError(
             409,
             `undo goes back along the versions ${current} was built on (${line.join(", ")}), and ${options.to} is not one of them. ` +
-              `To bring ${options.to} back, submit its files again (they are in ${STATE_DIR}/versions/${options.to}/)`,
+              `To bring ${options.to} back, submit its files again (they are in ${FRAMEWORK_DIR}/versions/${options.to}/)`,
           );
         }
         target = options.to;

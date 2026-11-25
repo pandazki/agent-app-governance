@@ -5,7 +5,8 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { createServer as createTcpServer, type AddressInfo, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { STATE_DIR } from "../src/artifact";
+import { STATE_DIR_NAME } from "@pneuma-framework/core";
+import { FRAMEWORK_DIR, STATE_DIR } from "../src/artifact";
 import { AppHost } from "../src/host";
 import { loadRiskPolicy } from "../src/policy";
 import { createHostServer, HOST_API_LEVEL } from "../src/server";
@@ -56,11 +57,19 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
-describe("the CLI and the Host name the same state directory", () => {
-  test("the CLI's STATE_DIR is the Host's", () => {
-    // The CLI runs from a copy inside each app with no imports from src/, so it names the directory itself.
-    const named = /^const STATE_DIR = "([^"]+)";$/m.exec(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"))?.[1];
-    expect(named).toBe(STATE_DIR);
+describe("the CLI, the Host and the framework name the same directories", () => {
+  // The CLI runs from a copy inside each app with no imports, so it names both directories itself.
+  const named = (constant: string) =>
+    new RegExp(`^const ${constant} = "([^"]+)";$`, "m").exec(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"))?.[1];
+
+  test("the CLI's STATE_DIR is the Host's own directory", () => {
+    expect(named("STATE_DIR")).toBe(STATE_DIR);
+  });
+
+  test("the CLI's FRAMEWORK_DIR and the Host's are the framework's STATE_DIR_NAME, and differ from the Host's own", () => {
+    expect(named("FRAMEWORK_DIR")).toBe(STATE_DIR_NAME);
+    expect(FRAMEWORK_DIR).toBe(STATE_DIR_NAME);
+    expect(STATE_DIR).not.toBe(STATE_DIR_NAME);
   });
 });
 
@@ -351,7 +360,7 @@ describe("undo and record mode through the artifact CLI", () => {
       writeFileSync(join(appDir, "src", "server.ts"), "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
       const changeId = /needs_approval (\S+):/.exec((await run(appDir, "submit", "drop the note column")).output)![1]!;
       await withData.resolve("forged", changeId, "approved", "user:me");
-      const history = join(appDir, ".appgov", "history.jsonl");
+      const history = join(appDir, STATE_DIR_NAME, "history.jsonl");
       writeFileSync(history, readFileSync(history, "utf8").replaceAll('"ref":"snap-1"', '"ref":"snap_billing_v1"'));
       published.length = 0;
 
@@ -1278,7 +1287,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect((await here(["create", "odd"])).code).toBe(0);
     const dir = join(appsDir(), "odd", ".appgov");
     // A history line and a waiting change written by hand, with the intent, the agent and the risks left out.
-    appendFileSync(join(dir, "history.jsonl"), `${JSON.stringify({ kind: "change", outcome: "published", at: "2026-11-24T08:00:00.000Z" })}\n`);
+    appendFileSync(join(appsDir(), "odd", STATE_DIR_NAME, "history.jsonl"), `${JSON.stringify({ kind: "change", outcome: "published", at: "2026-11-24T08:00:00.000Z" })}\n`);
     mkdirSync(join(dir, "pending"), { recursive: true });
     writeFileSync(join(dir, "pending", "c-hand.json"), JSON.stringify({ change_id: "c-hand", created_at: "2026-11-24T08:01:00.000Z" }));
     // app.json is in the app directory, where an agent can edit it; the commands take the directory name.

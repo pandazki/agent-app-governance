@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { AppHost, type AppHostOptions, type AppStatus } from "../src/host";
 import { appModel, appState, backModel, changeModel, homeModel, json, loadPageAssets, missingModel, NO_PICTURES, renderShell, type Overview, type PageAssets, type PageContext, type PictureLookup } from "../src/page";
 import { chooseLang } from "../src/page-words";
@@ -117,7 +118,7 @@ describe("the owner page: what it shows", () => {
     const waiting = await host.submit({ name: "notes", intent: HOSTILE, agent: `codex<i>`, agentProvenance: { source: "ambiguous", candidates: [{ agent: "<u>x</u>", markers: ["CODEX_<s>"] }] } });
     expect(waiting.status).toBe("needs_approval");
     appendFileSync(
-      join(work, "apps", "notes", ".appgov", "history.jsonl"),
+      join(work, "apps", "notes", STATE_DIR_NAME, "history.jsonl"),
       `${JSON.stringify({ change_id: "c-hand", at: "<script>t</script>", kind: "change<b>", intent: HOSTILE, agent: "<em>x</em>", outcome: "published", version: "v1", guarantees: ["<em>sealed</em>"], approval: { by: "<s>me</s>" }, checks: "nope", one_way: "<b>drop</b>", note: HOSTILE })}\n`,
     );
     const { ctx, overview } = await context();
@@ -523,7 +524,7 @@ describe("the owner page: what it shows", () => {
     const pending = join(work, "apps", "notes", ".appgov", "pending");
     mkdirSync(pending, { recursive: true });
     writeFileSync(join(pending, "c-hand.json"), JSON.stringify({ change_id: "c-hand", created_at: "2026-11-24T08:00:00.000Z", intent: HOSTILE, risks: "<b>all</b>", disclosure: "<i>none</i>", one_way: "<b>yes</b>", checks: 5, preview: { state: "standing", address: ["x"] } }));
-    appendFileSync(join(work, "apps", "notes", ".appgov", "history.jsonl"), `${JSON.stringify(null)}\n${JSON.stringify({ kind: "restore", outcome: "rolled_back", version: 7 })}\n`);
+    appendFileSync(join(work, "apps", "notes", STATE_DIR_NAME, "history.jsonl"), `${JSON.stringify(null)}\n${JSON.stringify({ kind: "restore", outcome: "rolled_back", version: 7 })}\n`);
     const { ctx, overview } = await context();
     const status = await host.status("notes");
     for (const model of [homeModel(overview, ctx), appModel("notes", status, host.history("notes"), ctx), changeModel("notes", status, "c-hand", ctx), missingModel(ctx)]) {
@@ -543,7 +544,7 @@ describe("the owner page: how it is served", () => {
   test("every view is served with a policy that runs only its own scripts, frames nothing and is framed by nothing; reading changes no record", async () => {
     const { id } = await waitingDrop();
     edit("notes", "src/draft.ts", "export const draft = true;\n");
-    const before = readFileSync(join(work, "apps", "notes", ".appgov", "history.jsonl"), "utf8");
+    const before = readFileSync(join(work, "apps", "notes", STATE_DIR_NAME, "history.jsonl"), "utf8");
     const uncommitted = (await host.status("notes")).uncommitted;
     expect(uncommitted).toContain("src/draft.ts");
     const { server, base } = await serve();
@@ -577,7 +578,7 @@ describe("the owner page: how it is served", () => {
         expect(html).toContain('<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">');
         expect(html).not.toMatch(/<(iframe|form|img)\b/);
       }
-      expect(readFileSync(join(work, "apps", "notes", ".appgov", "history.jsonl"), "utf8")).toBe(before);
+      expect(readFileSync(join(work, "apps", "notes", STATE_DIR_NAME, "history.jsonl"), "utf8")).toBe(before);
       expect((await host.status("notes")).uncommitted).toEqual(uncommitted);
     } finally {
       server.close();
