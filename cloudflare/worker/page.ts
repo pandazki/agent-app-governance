@@ -1,7 +1,7 @@
 import { appModel, assetType, backModel, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
 import type { PageModel } from "../../local/src/page-model";
 import { chooseLang } from "../../local/src/page-words";
-import { APP_NAME, CHANNEL_HEADER, PAGE_CHANNEL } from "../src/protocol";
+import { APP_NAME, CHANNEL_HEADER, OWNER_SUBJECT, PAGE_CHANNEL } from "../src/protocol";
 import { forward, json, ownerKeyRefusal, randomSecret, refuse, sameText, SESSION_MS, sha256, type GatewayDeps } from "./gateway";
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,12 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
   const versions = await page.versions();
   const html = (status: number, model: PageModel) => new Response(renderShell(model, tag, { dir: "", files: versions }), { status, headers: pageHeaders(tag) });
   const done = url.searchParams.get("done");
-  const summaries = session ? ((await deps.summaries()).filter((s) => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? ""))) as Overview["summaries"]) : [];
+  // A summary saved by a build before summaries named the owner gets the subject every app here is created with.
+  const summaries = session
+    ? ((await deps.summaries())
+        .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? "")))
+        .map((s) => ("error" in s || typeof s.owner === "string" ? s : { ...s, owner: OWNER_SUBJECT })) as unknown as Overview["summaries"])
+    : [];
   const space = page.spaceOrigin ? `${page.spaceOrigin.replace(/\/+$/, "")}/` : undefined;
   const ctx: PageContext = {
     lang: chooseLang(url.searchParams.get("lang"), request.headers.get("accept-language") ?? undefined),

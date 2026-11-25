@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { GOVERNANCE_MODES, type GovernanceMode } from "../../host/src/policy";
 import { DEFAULT_MANAGER, SPACE_NAME } from "../../host/src/space";
 import { EDITION, editionHost, TEMPLATE } from "./edition";
+import { OWNER_SUBJECT } from "./protocol";
 import { createContainerServer } from "./server";
 import { CfSpace } from "./space-cf";
 import { socketSupervisor, supervisedVerify } from "./verify";
@@ -30,7 +31,7 @@ const manager = env.APPGOV_MANAGER?.trim() || DEFAULT_MANAGER;
 if (!SPACE_NAME.test(manager)) throw new Error(`APPGOV_MANAGER must be a name PneumaSpace accepts, not "${manager}"`);
 const managerUrl = env.APPGOV_MANAGER_URL?.trim();
 const appsDir = env.APPGOV_APPS_DIR?.trim() || "/data/apps";
-const ownerSubject = env.APPGOV_OWNER?.trim() || "user:owner";
+const ownerSubject = env.APPGOV_OWNER?.trim() || OWNER_SUBJECT;
 const log = (line: string) => console.log(`[host] ${line}`);
 mkdirSync(appsDir, { recursive: true });
 

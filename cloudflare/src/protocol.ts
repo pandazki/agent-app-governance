@@ -26,6 +26,9 @@ export const API_HEADER = "appgov-api";
 /** How long each step of an operation took, in ms: `container`, `load`, `op`, `save`. */
 export const TIMING_HEADER = "x-appgov-timing";
 
+/** The subject that holds the owner role in every app this edition's Host creates (the container's default). */
+export const OWNER_SUBJECT = "user:owner";
+
 /** The owner, signed in with the owner key; or an agent token the owner created. */
 export type Principal = { readonly kind: "owner" } | { readonly kind: "agent"; readonly id: string; readonly label: string };
 

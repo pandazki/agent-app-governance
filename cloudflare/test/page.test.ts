@@ -34,7 +34,8 @@ async function door(now = { value: Date.now() }) {
         return Response.json({ status: "published", version: "v4", working_copy: { files: { "app/index.js": "secret source" } } });
       },
     }),
-    summaries: async () => [{ app_id: SECRET_APP, owner: "user:owner", active_version: "v3", address: "https://space.test/apps/secret-garden/", serving_version: "v3", serves_other_version: false, last_change: null, pending: [], uncommitted: [] }],
+    // As a build before summaries named the owner saved it: the owner's decision was the last change.
+    summaries: async () => [{ app_id: SECRET_APP, active_version: "v3", address: "https://space.test/apps/secret-garden/", serving_version: "v3", serves_other_version: false, last_change: { at: new Date(now.value).toISOString(), kind: "decision", outcome: "published", version: "v3", agent: "user:owner", intent: "x" }, pending: [], uncommitted: [] }],
     page,
   };
   type Options = { cookie?: string; origin?: string | null; type?: string; csrf?: string; bearer?: string; site?: string; ip?: string };
@@ -112,6 +113,8 @@ describe("the owner page's door", () => {
     expect(home.status).toBe(200);
     const model = modelOf(await home.text());
     expect(model.view).toBe("home");
+    // A summary without the owner's subject still reads the owner's own decision as theirs.
+    expect(model.view === "home" && model.apps[0]!.meta.parts.filter((p) => typeof p === "string").join("")).toBe("Updated  · you");
     // The session's own token is in the view served to it, and nowhere else.
     expect(model.access).toEqual({ kind: "session", csrf });
     expect((await signIn()).csrf).not.toBe(csrf);
