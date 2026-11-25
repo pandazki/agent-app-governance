@@ -24,7 +24,8 @@ const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--a
                          and what submit does in the mode this Host runs in
   history [<name>]       every attempt so far, oldest first, with what was guaranteed for each
   submit "<intent>"      take the working tree through this Host's loop and release it
-    [--one-way "<what is lost>"]  record mode only: this change drops or rewrites stored data
+    [--one-way "<what is lost>"]  this change deletes or rewrites data the app already stored, in any
+                         storage: say what is lost. In personal and review-all the owner then decides
   discard                put the working tree back to the active version
   undo "<why>"           go back one version; again to go further back
     [--to <version>]     go straight back to an earlier version
@@ -635,6 +636,13 @@ switch (command) {
         if (d.set_aside) console.log(d.set_aside);
       } else if (d.confirmed_by) console.log(`Code only; stored data was not put back, as ${d.confirmed_by} confirmed. This version may fail on it.`);
       else console.log("Code only; stored data was not rolled back.");
+      // What the submitter said it did to stored data, which the Host's rules could not see.
+      for (const declared of Array.isArray(d.declared_one_way) ? d.declared_one_way : []) {
+        const after = d.data_restored
+          ? "The snapshot put back the PostgreSQL database only; files, key-value data and objects stay as they are."
+          : "Going back put back its code, not what it did to stored data.";
+        console.log(`${declared.version} was declared one-way when it was submitted: "${declared.reason}". ${after}`);
+      }
       if (d.note) console.log(d.note);
     });
     break;

@@ -68,13 +68,15 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<一个 age
   node appgov.mjs fetch todo
 ```
 
-落后于中心的工作副本（之后有人发布了新版本）在 `submit` 时会被拒绝；`fetch` 会把它更新到最新，但如果有会被覆盖的编辑，`fetch` 也会拒绝。
+落后于中心的工作副本（之后有人发布了新版本）在 `submit` 时会被拒绝；`fetch` 会把它更新到最新，但如果有会被覆盖的编辑，`fetch` 也会拒绝。在这样的副本里，`status` 会说明它落后了，以及此后中心发布了或退过了哪些版本；列为编辑的只有和副本所持版本不同的文件。
 
 `.appgov/centre.json` 里有 agent 令牌。它永远不属于任何版本，也不会随文件发出去；模板的 `.gitignore` 把它排除在 git 之外。不要把它放进任何你要分享的东西里。
 
 ## 做决定
 
 Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；应用不再声明一项存放数据的能力（`db`、`kv`、`files` 或 `object`；PneumaSpace 会保留数据，但应用再也读不到，所以这也是单向改动）；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
+
+规则只读 SQL 文本和清单，所以一个删除或改写应用存在 `kv`、`files` 或对象里的数据的改动，在规则看来就是普通的代码改动。这种情况由 agent 自己声明：`submit --one-way "<会丢失什么>"`；应用的 `AGENTS.md` 要求它，只要改动会删除或改写已存的数据就这样做。预设定下一个改动至少要过哪一关，声明只能往上加：声明过的改动不管有哪些风险都会等你决定，你会在单独一行里读到 agent 的原话，并注明这是它自己的说法、不是规则的发现；发布之后它记为单向改动。
 
 `submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。以主人身份登录后，在应用的工作副本里：
 
@@ -83,16 +85,26 @@ node .appgov/appgov.mjs approve <id>
 node .appgov/appgov.mjs deny <id> "原因"
 ```
 
-agent 令牌这样做会被 Worker 拒绝。
+agent 令牌这样做会被 Worker 拒绝。每条命令都会先显示这个改动，再要你输入它的词（`approve` 或 `deny`）；没有交互式终端时，不管有没有登录，它都会在发出任何东西之前拒绝。
+
+一条命令以谁的身份行事，在工作副本里外都一样：
+
+- **以你（主人）的身份：** `approve`、`deny`、`undo --accept-one-way`、`token create`、`token revoke`、`container stop`，以及加了 `--owner` 的 `create`、`submit`、`discard`、`undo` 或 `preview`。它们发出的是你的会话，从不是 agent 令牌，而且只在你于交互式终端里输入命令名之后才发。历史把它们记为你的（`by owner (owner session) [owner]`）。`login` 也需要终端。
+- **以 agent 的身份：** 其余所有会改变东西的命令。它们带着 `.appgov/centre.json`（或 `APPGOV_TOKEN`）里的 agent 令牌发出，记为 agent 的操作，并带上令牌的标签，即使运行它的是你。没有令牌时会被拒绝，绝不会退而使用你的会话。
+- **读取**（`status`、`history`、`list`、`fetch`）不改变任何东西，也不记录。它用 agent 令牌；没有令牌时用你的会话。
+
+编程 agent 运行命令时没有交互式终端，所以你机器上一个诚实的 agent 不会替你把你的那一步做完，尽管它以你的身份运行、读得到你的会话文件。这是和本地版一样的检查，不是一把锁；见"限度"。
 
 ## 退回
 
 ```sh
-node .appgov/appgov.mjs undo "原因"          # 退回一个版本
-node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个版本
+node .appgov/appgov.mjs undo --owner "原因"          # 以你的身份退回一个版本
+node .appgov/appgov.mjs undo --owner --to v2 "原因"  # 直接退回到更早的某个版本
 ```
 
-撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。如果被退过的版本在 `pneuma-space.json` 里声明了别的存储，或者跑了早先版本没有的 SQL，`undo` 会说明：它们写下的数据仍然存着，早先的代码可能显示不出来。退过单向改动需要主人：登录后运行 `undo --accept-one-way "原因"`。
+每条都会要你输入 `undo`。不加 `--owner` 时，工作副本里的回退带着 agent 令牌发出，记为 agent 的操作：agent 就是这样回退的。
+
+撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。如果被退过的版本在 `pneuma-space.json` 里声明了别的存储，或者跑了早先版本没有的 SQL，`undo` 会说明：它们写下的数据仍然存着，早先的代码可能显示不出来；如果其中有提交者声明为单向的版本，`undo` 也会打印提交者的原话。退过单向改动需要主人：登录后，在终端里运行 `undo --accept-one-way "原因"`，它会先要你输入 `undo`，说明越过这个改动意味着什么之后，再要你输入 `accept`。
 
 ## 东西放在哪里
 
@@ -116,6 +128,8 @@ node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个�
 - PneumaSpace 的令牌不能彻底清除（purge）应用。Host 撤下一个应用的地址时，应用被移除，名字会一直被占用，直到 PneumaSpace 的主人在控制台里把它清除。
 - 每个应用一个容器，按需启动。一次提交在整个检查期间都占着连接，在下面的运行里约 30 秒，其中约三分之二是 PneumaSpace 先发布预览、再发布正式版本（见下面的表）。
 - 默认规则靠匹配文本找破坏性 SQL，和本地版一样。
+- **在你的机器上，你的会话是一个持有即可用的凭据。** 那里的 agent 以你的系统用户运行，所以读得到 `~/.appgov/hosts/<prefix>/session.json` 和旁边的主人密钥。没有交互式终端和输入的词，CLI 不会以你的身份行事；给 agent 的说明也要求它绝不读这些文件、绝不运行这些命令。但没有什么能挡住一个自己把你的会话发给 Worker 的程序，或者在自己造出的终端里运行 CLI 的程序。要防范会攻击的 agent，就把主人密钥和会话放在 agent 不运行的地方：另一个系统账户或另一台机器。
+- **对 SQL 以外的存储，Host 依靠 agent 的声明。** 规则只读 SQL 文本和清单。一个删除或改写 `kv` 条目、文件或对象的改动，除非 agent 提交时加了 `--one-way`，否则会被常设规则放行。
 
 ## 跑过什么
 
