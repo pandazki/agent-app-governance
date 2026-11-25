@@ -4,3 +4,7 @@ apps/*
 !apps/.gitkeep
 node_modules/
 .env
+.env.*
+!.env.example
+# pneuma-framework's source, fetched by `bun run setup` at the commit compose.yaml pins.
+vendor/

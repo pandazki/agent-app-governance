@@ -3,8 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.5",
+  "workspaces": [
+    "vendor/pneuma-framework/packages/core",
+    "vendor/pneuma-framework/packages/host-kit",
+    "vendor/pneuma-framework/packages/backend-codex",
+    "vendor/pneuma-framework/packages/backend-claude-code"
+  ],
   "description": "A headless Creation Host on PneumaSpace: one governed loop, driven either by a coding agent (Claude Code, Codex) or by the Host.",
   "scripts": {
+    "setup": "sh scripts/setup.sh",
     "serve": "bun run src/serve.ts",
     "drive": "bun run src/drive.ts",
     "dev:page": "bun run test/page-dev.ts",

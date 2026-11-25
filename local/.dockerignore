@@ -1,0 +1,10 @@
+# The images build with this directory as their context. Keep out your apps and their records, installed
+# packages, the framework source `bun run setup` fetched (the Host's image takes pneuma-framework from its own
+# build context, see compose.yaml), the built page, and your settings.
+apps
+node_modules
+**/node_modules
+vendor
+web/dist
+.env
+.env.*

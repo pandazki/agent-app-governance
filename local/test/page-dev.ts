@@ -1,4 +1,4 @@
-// Work on the owner page without the compose stack: `bun run dev:page` in examples/space-all-in-one.
+// Work on the owner page without the compose stack: `bun run dev:page` in local/.
 //
 // Starts the Host server on the tests' in-memory PneumaSpace (FakeSpace), with fixture apps in a temporary
 // directory covering every state the page shows: running normally, a change waiting (on an app PneumaSpace lists

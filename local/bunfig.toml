@@ -1,0 +1,4 @@
+[test]
+# App directories under apps/ are generated apps with their own Node test runner suites (`npm test`), and
+# vendor/ holds pneuma-framework's source with its own tests; neither is part of this directory's tests.
+pathIgnorePatterns = ["apps/**", "vendor/**"]

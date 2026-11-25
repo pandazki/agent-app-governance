@@ -1,19 +1,24 @@
-# The served (agent-driven) Host. Build context is the pneuma-framework repo root;
-# PneumaSpace arrives as three additional build contexts: "space" (gateway/src and shared),
+# The served (agent-driven) Host. Build context is this directory (local/). pneuma-framework arrives as the
+# additional build context "framework": its source at the commit compose.yaml pins, or a local checkout
+# (PNEUMA_FRAMEWORK_CONTEXT). PneumaSpace arrives as three more: "space" (gateway/src and shared),
 # "space-cli" and "space-templates" (see compose.yaml for why they are separate).
 #
 # Node 24 runs PneumaSpace's CLI (appctl) and the apps' own `npm ci && npm test`.
 # Bun runs the Host, because the framework ships TypeScript source for Bun.
 
-# The owner page's client (web/: React and Beautiful UI's components, Tailwind, the fonts), built from the
-# example's pinned devDependencies and the repository's lockfile. Only its output, web/dist (about 0.5 MB), goes
-# into the image: the Host serves it itself, so the page needs no network at run time.
+# The owner page's client (web/: React and Beautiful UI's components, Tailwind, the fonts), built from this
+# directory's pinned devDependencies and its lockfile. Only its output, web/dist (about 0.5 MB), goes into the
+# image: the Host serves it itself, so the page needs no network at run time.
 FROM node:24-bookworm-slim AS page
 RUN npm install -g bun@1.4.5
 WORKDIR /repo
+# package.json's workspace names four framework packages under vendor/pneuma-framework, and two of them depend
+# on others there by path, so the framework's packages/ has to be in place before bun install.
+COPY --from=framework packages vendor/pneuma-framework/packages
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 COPY . .
-RUN bun install --frozen-lockfile --filter space-all-in-one \
- && bun run examples/space-all-in-one/web/build.ts
+RUN bun run web/build.ts
 
 FROM node:24-bookworm-slim
 
@@ -33,18 +38,21 @@ COPY --from=space gateway/src /opt/pneuma-space/gateway/src
 COPY --from=space shared /opt/pneuma-space/shared
 COPY --from=space-templates . /opt/pneuma-space/templates
 
+# The layout under /framework is the one this image had when the Host lived in pneuma-framework's repository
+# as examples/space-all-in-one, kept as it was so that nothing about the running Host changes: the four
+# framework packages it imports, and this directory beside them.
 WORKDIR /framework
-COPY packages/core packages/core
-COPY packages/host-kit packages/host-kit
-COPY packages/backend-codex packages/backend-codex
-COPY packages/backend-claude-code packages/backend-claude-code
-COPY examples/space-all-in-one/package.json examples/space-all-in-one/package.json
-COPY examples/space-all-in-one/src examples/space-all-in-one/src
-COPY examples/space-all-in-one/bin examples/space-all-in-one/bin
-COPY examples/space-all-in-one/overlay examples/space-all-in-one/overlay
-COPY examples/space-all-in-one/policy examples/space-all-in-one/policy
-COPY examples/space-all-in-one/host-entrypoint.sh /usr/local/bin/host-entrypoint.sh
-COPY --from=page /repo/examples/space-all-in-one/web/dist examples/space-all-in-one/web/dist
+COPY --from=framework packages/core packages/core
+COPY --from=framework packages/host-kit packages/host-kit
+COPY --from=framework packages/backend-codex packages/backend-codex
+COPY --from=framework packages/backend-claude-code packages/backend-claude-code
+COPY package.json examples/space-all-in-one/package.json
+COPY src examples/space-all-in-one/src
+COPY bin examples/space-all-in-one/bin
+COPY overlay examples/space-all-in-one/overlay
+COPY policy examples/space-all-in-one/policy
+COPY host-entrypoint.sh /usr/local/bin/host-entrypoint.sh
+COPY --from=page /repo/web/dist examples/space-all-in-one/web/dist
 
 # The Host imports only dependency-free framework modules (governed-change,
 # workspace, enterprise-governance, release-rollout, build-thread), so linking

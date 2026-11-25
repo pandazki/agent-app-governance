@@ -23,6 +23,12 @@
 # Without the two variables the stack behaves as before. Apps on SQLite are not covered.
 name: pneuma-all-in-one
 
+# pneuma-framework, which the Host is built on, comes from source at this commit (its packages are not on npm).
+# This line is where the commit is set: `bun run setup` reads it to fetch the same source into vendor/ for the
+# tests and the host-driven Host. README links into the framework's docs name the commit as well; move them with it.
+# To build the Host on a local checkout instead, set PNEUMA_FRAMEWORK_CONTEXT to its path (.env.example).
+x-framework-context: &framework-context "${PNEUMA_FRAMEWORK_CONTEXT:-https://github.com/pandazki/pneuma-framework.git#c1ffce726866a3b315e9714c49a5547c2426fbcf}"
+
 x-space-context: &space-context "${PNEUMA_SPACE_CONTEXT:-https://github.com/pandazki/pneuma-space.git#6e7353809338901a604973e9fe90d1cafe4cb3cc}"
 
 services:
@@ -149,9 +155,10 @@ services:
 
   host:
     build:
-      context: ../..
-      dockerfile: examples/space-all-in-one/host.Dockerfile
+      context: .
+      dockerfile: host.Dockerfile
       additional_contexts:
+        framework: *framework-context
         space: *space-context
         # cli/ and templates/ are separate contexts because pneuma-space's .dockerignore keeps only
         # gateway/ and shared/, and BuildKit applies it to a local checkout. A subdirectory context
