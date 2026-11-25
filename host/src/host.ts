@@ -52,7 +52,7 @@ import {
   type HistoryEntry,
   type HostEntryFields,
 } from "./artifact";
-import { RUN_UNDO } from "./constants";
+import { DECLARED_ONE_WAY_MARK, RUN_UNDO } from "./constants";
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
@@ -594,7 +594,7 @@ function declaredOneWay(history: readonly ChangeRecordEntry[], version: string):
  * marked as theirs. Undefined when neither says it is.
  */
 function oneWayReason(found: readonly string[], declared: string | undefined): string | undefined {
-  const parts = [...found, ...(declared ? [`declared one-way when it was submitted: "${declared}"`] : [])];
+  const parts = [...found, ...(declared ? [`${DECLARED_ONE_WAY_MARK}"${declared}"`] : [])];
   return parts.length ? parts.join("; ") : undefined;
 }
 

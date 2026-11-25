@@ -34,6 +34,7 @@ function historyRow(row: HistoryRow, ui: AppModel["ui"]): TaskRow {
             <p className="font-medium">{ui.one_way}</p>
             <p className="mt-0.5">{row.oneWay.body}</p>
             {row.oneWay.why && <p className="mt-0.5 opacity-80 [overflow-wrap:anywhere]">{row.oneWay.why}</p>}
+            {row.oneWay.said && <p className="mt-0.5 opacity-80 [overflow-wrap:anywhere]">{row.oneWay.said}</p>}
           </div>
         )}
         {row.files.length > 0 && (

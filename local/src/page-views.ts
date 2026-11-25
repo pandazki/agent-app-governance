@@ -1,7 +1,7 @@
 // Types only from the Host, and its fixed strings from a module without imports: this file runs in the Cloudflare
 // edition's Worker as well, where the Host's own code does not.
 import type { HistoryEntry } from "../../host/src/artifact";
-import { RUN_UNDO, STATE_DIR } from "../../host/src/constants";
+import { DECLARED_ONE_WAY_MARK, RUN_UNDO, STATE_DIR } from "../../host/src/constants";
 import type { AppStatus, AppSummary, Overview } from "../../host/src/host";
 import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, wordsFor, type Lang, type Words } from "./page-words";
 import type {
@@ -523,7 +523,8 @@ export interface TimelineItem {
   readonly kind: ItemKind;
   /** The version this item made, or an undo landed on. */
   readonly version: string | null;
-  readonly oneWay: { readonly reason: string; readonly destructive: boolean } | null;
+  /** `found`: the rules' part of the reason; `declared`: the submitter's words, when it declared the change one-way. */
+  readonly oneWay: { readonly reason: string; readonly found: string | null; readonly declared: string | null; readonly destructive: boolean } | null;
   readonly snapshot: boolean;
   /** Position of `main` in the history: items are told newest first by it. */
   readonly order: number;
@@ -531,6 +532,17 @@ export interface TimelineItem {
 
 const DEFAULT_CREATE_INTENT = "Create the app from the PneumaSpace template";
 const VERSIONED: readonly ItemKind[] = ["created", "change", "release", "not_live"];
+
+/**
+ * The rules' part of a one-way reason, without what the submitter declared (host/src/host.ts `oneWayReason` joins the
+ * two, the declaration last and marked by DECLARED_ONE_WAY_MARK). In record mode the reason is the declaration itself.
+ */
+export function foundOneWay(reason: string, declared: string | null): string | null {
+  if (!declared) return reason || null;
+  const mark = `${DECLARED_ONE_WAY_MARK}"${declared}"`;
+  if (reason === mark || reason === declared) return null;
+  return reason.endsWith(`; ${mark}`) ? reason.slice(0, -(mark.length + 2)) || null : reason || null;
+}
 
 function oneWayReason(entry: HistoryEntry): string | null {
   const value = (entry as { one_way?: unknown }).one_way;
@@ -593,13 +605,15 @@ export function timeline(history: readonly HistoryEntry[], pendingIds: ReadonlyS
       for (const declaration of declarations) if (declaration.version === version) reasons.push(oneWayReason(declaration) ?? "");
     }
     const destructive = entries.some((entry) => items(entry.risks).includes("destructive_definition"));
+    const declared = str(entries.find((entry) => typeof entry.declared_one_way === "string" && entry.declared_one_way)?.declared_one_way) || null;
+    const reason = reasons.find(Boolean) ?? "";
     out.push({
       id,
       entries,
       main,
       kind,
       version,
-      oneWay: reasons.length && kind !== "undo" && kind !== "undo_failed" ? { reason: reasons.find(Boolean) ?? "", destructive } : null,
+      oneWay: reasons.length && kind !== "undo" && kind !== "undo_failed" ? { reason, found: foundOneWay(reason, declared), declared, destructive } : null,
       snapshot: entries.some((entry) => entry.kind === "snapshot"),
       order: indexes[at]!,
     });
@@ -797,7 +811,14 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
     standingTone: stand?.tone ?? "neutral",
     who: whoWords(ctx, { plain: w.by_on, token: w.by_token }, maker.agent, maker.credential, status.owner, { iso: main.at, mode: "abs" }),
     note: undoReason && undoReason !== "undo" ? quoted(undoReason) : null,
-    oneWay: item.oneWay ? { body: item.oneWay.destructive ? w.one_way_destructive : w.one_way_other, why: item.oneWay.reason ? fill(w.one_way_why, { why: item.oneWay.reason }) : null } : null,
+    oneWay: item.oneWay
+      ? {
+          body: item.oneWay.destructive ? w.one_way_destructive : w.one_way_other,
+          // What the rules found and what the submitter declared, each marked for what it is.
+          why: item.oneWay.found ? fill(item.oneWay.declared ? w.one_way_rule : w.one_way_why, { why: item.oneWay.found }) : null,
+          said: item.oneWay.declared ? fill(w.one_way_declared, { who: agentWords(w, maker.agent, status.owner), said: item.oneWay.declared }) : null,
+        }
+      : null,
     snapshot: item.snapshot && item.kind !== "snapshot" ? w.snapshot_saved : null,
     review: item.kind === "waiting" ? link(`/app/${name}/change/${encodeURIComponent(item.id)}`, ctx.lang) : null,
     back: canGoBack && item.version ? link(`/app/${name}/back/${encodeURIComponent(item.version)}`, ctx.lang) : null,
@@ -949,6 +970,10 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   const risks = items<string>(pending.risks);
   const paths = items<string>(pending.changed_paths).map(str);
   const oneWay = typeof pending.one_way === "string" && pending.one_way ? pending.one_way : null;
+  // The submitter's declaration is part of `one_way`; the page shows it apart from what the rules found, as its words.
+  const declared = typeof pending.declared_one_way === "string" && pending.declared_one_way.trim() ? pending.declared_one_way : null;
+  const found = oneWay ? foundOneWay(oneWay, declared) : null;
+  const submitter = agentWords(w, pending.agent, status.owner);
   const snapshotHost = Boolean(status.data_snapshot);
 
   const checked: CheckRow[] = [];
@@ -968,6 +993,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   const auto = new Set(ctx.autoApproved ?? []);
   const why = [...new Set(risks.filter((risk) => !auto.has(risk)).map((risk) => riskWords(w, risk)))];
   if (status.governance === "review-all") why.push(w.review_all);
+  if (declared) why.push(fill(w.why_declared, { who: submitter }));
 
   // The preview, as the Host reports it from PneumaSpace: where it is, when it ends itself, or that it no longer stands.
   const preview = previewOf(pending);
@@ -1015,7 +1041,14 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
     after,
     checked,
     why: why.length ? why : [w.risk_other],
-    oneWay: oneWay ? { title: w.one_way_title, body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot, why: fill(w.one_way_rule, { why: oneWay }) } : null,
+    oneWay: oneWay
+      ? {
+          title: w.one_way_title,
+          body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot,
+          why: found ? fill(w.one_way_rule, { why: found }) : null,
+          said: declared ? fill(w.one_way_declared, { who: submitter, said: declared }) : null,
+        }
+      : null,
     notices: situation(w, status),
     decision: {
       approveUrl: decideUrl("approve"),
@@ -1039,6 +1072,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
       { label: w.d_files, value: list(paths), mono: true },
       { label: w.d_tests, value: checks.map((check) => `${str(check?.id)} ${str(check?.status)}`).join(", "), mono: true },
       oneWay ? { label: w.d_one_way, value: oneWay } : null,
+      declared ? { label: w.d_declared, value: declared } : null,
       preview.address ? { label: w.d_preview, value: preview.address, mono: true } : null,
       previewMissing ? { label: w.d_preview, value: `${str(pending.preview?.app)} (${preview.unknown ? w.d_preview_unknown : w.d_preview_gone}): ${str(pending.preview?.note)}` } : null,
       { label: w.d_manager, value: manager.note },
@@ -1096,7 +1130,7 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     undoUrl: `/owner/apps/${name}/undo`,
     doneHref: link(`/app/${name}?done=${manager.unmanaged ? "back_marked" : "back"}`, ctx.lang),
   };
-  const empty = { undone: [], data: null, check: null, blocked: null, marks: null, accept: false, from: null, afterNote: null, facts: [] };
+  const empty = { undone: [], data: null, check: null, blocked: null, marks: null, accept: false, from: null, declared: [], afterNote: null, facts: [] };
   if (version === status.active_version) return { ...base, ...empty, kind: "current" };
   if (!plan || !inLine) return { ...base, ...empty, kind: "not_earlier" };
   const oneWayVersions = new Set(plan.oneWay.map((entry) => str(entry.version)));
@@ -1107,6 +1141,11 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
   let data: Rich;
   let check: string | null = null;
   const left = dataLeftWords(w, plan.dataLeft);
+  // What the submitters of the versions gone back past declared lost: the rules see only SQL and the manifest.
+  const declared = plan.undone.flatMap((v) => {
+    const made = entries.find((entry) => entry?.version === v && entry.kind !== "restore" && typeof entry.declared_one_way === "string" && entry.declared_one_way);
+    return made ? [fill(w.back_declared, { title: itemTitleOfVersion(w, made), said: str(made.declared_one_way) })] : [];
+  });
   if (!plan.crossing) data = plain(left ?? w.back_data_stays);
   else if (plan.crossing.data_restore === "snapshot" && plan.dataRef) {
     const saved = entries.filter((entry) => str(entry?.data_ref?.ref) === plan.dataRef!.ref).at(-1)?.at;
@@ -1135,7 +1174,8 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     marks: manager.unmanaged ? w.marks_back : null,
     accept: Boolean(plan.crossing),
     from: plan.from,
-    afterNote: left,
+    declared,
+    afterNote: [left, ...declared].filter(Boolean).join(" ") || null,
     facts: facts([
       { label: w.d_version, value: `${str(status.active_version)} → ${version}`, mono: true },
       plan.crossing ? { label: w.d_plan, value: plan.crossing.text } : null,

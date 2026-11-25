@@ -176,7 +176,8 @@ export interface HistoryRow {
   readonly who: Rich;
   /** The reason an undo was given. */
   readonly note: string | null;
-  readonly oneWay: { readonly body: string; readonly why: string | null } | null;
+  /** `why`: what the rules found; `said`: what the submitter declared lost, marked as its own words. */
+  readonly oneWay: { readonly body: string; readonly why: string | null; readonly said: string | null } | null;
   readonly snapshot: string | null;
   readonly review: string | null;
   readonly back: string | null;
@@ -259,7 +260,8 @@ export interface ChangeModel extends Common {
   readonly checked: readonly CheckRow[];
   readonly why: readonly string[];
   /** `why`: what the Host's rules say is lost, in their own words. */
-  readonly oneWay: { readonly title: string; readonly body: string; readonly why: string | null } | null;
+  /** `why`: what the rules found; `said`: what the submitter declared lost, marked as its own words. */
+  readonly oneWay: { readonly title: string; readonly body: string; readonly why: string | null; readonly said: string | null } | null;
   /** What holds the app as a whole: another manager, an unfinished undo, an address nobody saw answer. */
   readonly notices: readonly Notice[];
   readonly decision: Decision;
@@ -287,7 +289,9 @@ export interface BackModel extends Common {
   /** The version the plan shown starts from. Sent with "Go back"; the Host refuses with `plan_changed` once it is not current. */
   readonly from: string | null;
   readonly doneHref: string;
-  /** Said with "Done" once the app is back: what going back left in stored data, when the Host can tell. */
+  /** What the submitters of the versions gone back past declared lost, in their words: going back does not bring it back. */
+  readonly declared: readonly string[];
+  /** Said with "Done" once the app is back: what going back left in stored data, when the Host can tell, and what was declared lost. */
   readonly afterNote: string | null;
   readonly facts: readonly Fact[];
 }

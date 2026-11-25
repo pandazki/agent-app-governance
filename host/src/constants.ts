@@ -12,5 +12,12 @@
  */
 export const STATE_DIR = ".appgov";
 
+/**
+ * How a governed change's `one_way` reason marks the part its submitter declared (`submit --one-way`): after what the
+ * rules found, joined with "; ", this prefix and the submitter's words in double quotes. The owner page tells the
+ * rules' finding from the declaration by it.
+ */
+export const DECLARED_ONE_WAY_MARK = "declared one-way when it was submitted: ";
+
 /** What to do in each case, said the same way by status and by the refusal. The owner page tells the two cases apart by it. */
 export const RUN_UNDO = "Submit and approve are refused until an undo puts a version on the address and sees it answer: run undo.";

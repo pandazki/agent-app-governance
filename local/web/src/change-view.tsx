@@ -340,6 +340,7 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
               <>
                 <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>
                 {model.oneWay.why && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
+                {model.oneWay.said && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
               </>
             ),
             defaultOpen: true,

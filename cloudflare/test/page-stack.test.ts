@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppModel, BackModel, ChangeModel, HomeModel, PageModel, Rich } from "../../local/src/page-model";
+import { foundOneWay } from "../../local/src/page-views";
 import { csrfToken, PAGE_COOKIE } from "../worker/page";
 import { modelOf, startStack, type Stack } from "./stack";
 
@@ -78,8 +79,8 @@ async function write(path: string, body: Record<string, unknown> = {}): Promise<
   return { status: res.status, data: (await res.json()) as Record<string, unknown> };
 }
 
-async function submit(intent: string): Promise<{ code: number | null; out: string; id?: string; version?: string }> {
-  const done = await cli(copy(), ["submit", intent]);
+async function submit(intent: string, oneWay?: string): Promise<{ code: number | null; out: string; id?: string; version?: string }> {
+  const done = await cli(copy(), ["submit", intent, ...(oneWay ? ["--one-way", oneWay] : [])]);
   return { ...done, id: /needs_approval (\S+):/.exec(done.out)?.[1], version: /published (v\d+)/.exec(done.out)?.[1] };
 }
 
@@ -185,7 +186,7 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(model.checked[0]).toEqual({ text: "No tests ran for this change: only its preview checked it.", tone: "caution" });
     expect(model.oneWay?.title).toBe("This one can't be taken back");
     expect(model.oneWay?.body).toBe("If you go back later, only the app goes back. The data this change removes stays removed, and the older version may not work with your data.");
-    expect(model.oneWay?.why).toBe('In the words of this Host\'s rules: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
+    expect(model.oneWay?.why).toBe('What the rules found, in their words: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
     // A test run with no test in it is not "checked".
     expect(model.decision.signalLabel).toBe("Tried out");
     expect(model.decision.oneWay).toBe(true);
@@ -249,6 +250,72 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(model.decision.blocked).toBe("This can't go live as it is: it was made on an earlier version, and the app has changed since. You can say no, and ask your agent to make it again on the current version.");
     expect((await view<ChangeModel>(`/app/journal/change/${ids.behind}?lang=zh`)).decision.blocked).toBe("它不能就这样上线：它是在旧版本上做的，之后应用又变了。你可以拒绝它，再让 AI 助手在当前版本上重做一次。");
     expect((await write(`/owner/apps/journal/changes/${ids.behind}/deny`)).status).toBe(200);
+  });
+
+  test("a change declared one-way beside what the rules found: each said apart, marked for what it is", async () => {
+    expect((await cli(copy(), ["fetch"])).code).toBe(0);
+    const kept = readFileSync(join(copy(), "app/server.mjs"), "utf8");
+    edit("app/server.mjs", (text) => `${text}\nexport const cleanup = "DROP TABLE entries";\n`);
+    const sent = await submit("Start the journal over, again", "Every entry and its mood");
+    expect(sent.code).toBe(2);
+    const model = await view<ChangeModel>(`/app/journal/change/${sent.id}`);
+    expect(model.oneWay?.why).toBe('What the rules found, in their words: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
+    expect(model.oneWay?.said).toBe("Declared one-way by Codex when submitting it. What is lost, in the submitter's own words (not something the rules found): “Every entry and its mood”");
+    expect(model.why).toContain("Declared one-way by Codex, so it waits for you whatever the rules found.");
+    expect(model.facts.find((fact) => fact.label === "Declared one-way")?.value).toBe("Every entry and its mood");
+    const zh = await view<ChangeModel>(`/app/journal/change/${sent.id}?lang=zh`);
+    expect(zh.oneWay?.said).toBe("Codex 提交时声明它是单向改动。会失去什么，是提交者的原话（不是规则发现的）：“Every entry and its mood”");
+    expect(zh.oneWay?.why).toStartWith("规则发现的（规则原文）：app/server.mjs now runs");
+    expect((await write(`/owner/apps/journal/changes/${sent.id}/deny`)).status).toBe(200);
+    writeFileSync(join(copy(), "app/server.mjs"), kept);
+  });
+
+  test("a change only its submitter calls one-way: it waits, goes live on the page, and the history and going back say so", async () => {
+    expect((await cli(copy(), ["fetch"])).code).toBe(0);
+    edit("app/server.mjs", (text) => `${text}\n// moods are cleared from the kv store on start\n`);
+    const sent = await submit("Clear every mood", "Every mood stored so far");
+    expect(sent.code).toBe(2);
+    const model = await view<ChangeModel>(`/app/journal/change/${sent.id}`);
+    // The rules found nothing one-way: only the declaration says it, and it is why the change waits.
+    expect(model.oneWay?.why).toBeNull();
+    expect(model.oneWay?.said).toBe("Declared one-way by Codex when submitting it. What is lost, in the submitter's own words (not something the rules found): “Every mood stored so far”");
+    expect(model.why).toEqual(["Declared one-way by Codex, so it waits for you whatever the rules found."]);
+    expect(model.decision.oneWay).toBe(true);
+    expect(model.decision.check).not.toBeNull();
+    const home = await view<HomeModel>("/");
+    expect(home.waiting.find((card) => card.href.includes(sent.id!))?.oneWay).toBe(true);
+
+    const decided = await write(`/owner/apps/journal/changes/${sent.id}/approve`);
+    expect(decided.status).toBe(200);
+    const version = String(decided.data.version);
+    const app = await view<AppModel>("/app/journal?done=live");
+    const row = app.history.find((r) => r.title === "“Clear every mood”")!;
+    expect(row.oneWay?.why).toBeNull();
+    expect(row.oneWay?.said).toBe("Declared one-way by Codex when submitting it. What is lost, in the submitter's own words (not something the rules found): “Every mood stored so far”");
+    expect(words(row.standing!)).toContain("you confirmed");
+
+    // Going back past it: the confirmation, and the submitter's words, before and after.
+    const back = await view<BackModel>("/app/journal/back/v3");
+    expect(back.kind).toBe("plan");
+    expect(back.from).toBe(version);
+    expect(back.accept).toBe(true);
+    expect(back.undone.find((u) => u.title === "“Clear every mood”")?.oneWay).toBe(true);
+    const said = "“Clear every mood” was declared one-way when it was submitted. What is lost, in the submitter's words: “Every mood stored so far” Going back does not bring that back.";
+    expect(back.declared).toEqual([said]);
+    expect(back.afterNote).toContain(said);
+    expect((await view<BackModel>("/app/journal/back/v3?lang=zh")).declared).toEqual(["“Clear every mood” 提交时被声明为单向改动。提交者说会失去的：“Every mood stored so far”回退不会把它带回来。"]);
+    const gone = await write("/owner/apps/journal/undo", { to: "v3", from: version, accept_one_way: true });
+    expect(gone.status).toBe(200);
+    expect(gone.data.declared_one_way).toEqual([{ version, reason: "Every mood stored so far" }]);
+  });
+
+  test("the rules' finding is told from the declaration by the Host's own mark", () => {
+    const mark = 'declared one-way when it was submitted: "the moods"';
+    expect(foundOneWay(`app/server.mjs now runs "DROP"; ${mark}`, "the moods")).toBe('app/server.mjs now runs "DROP"');
+    expect(foundOneWay(mark, "the moods")).toBeNull();
+    // Record mode: the reason is the declaration itself.
+    expect(foundOneWay("the moods", "the moods")).toBeNull();
+    expect(foundOneWay('app/server.mjs now runs "DROP"', null)).toBe('app/server.mjs now runs "DROP"');
   });
 
   test("a change that does not wait (any more) says so", async () => {
