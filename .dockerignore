@@ -1,0 +1,11 @@
+# The Cloudflare edition's Host image builds with this repository's root as its context
+# (cloudflare/container/Dockerfile). It needs the shared Host code and this edition's own files, nothing else.
+*
+!host/src
+!cloudflare/src
+!cloudflare/bin
+!cloudflare/overlay
+!cloudflare/template
+!cloudflare/policy
+!cloudflare/container/supervisor.mjs
+**/node_modules
