@@ -1,0 +1,10 @@
+{
+  "contract": "pneuma-space.cf/1",
+  "runtime": "node",
+  "entry": "server.mjs",
+  "capabilities": {
+    "static": { "dir": "public" },
+    "kv": {},
+    "identity": { "required": true }
+  }
+}

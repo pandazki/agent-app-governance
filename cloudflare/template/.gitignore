@@ -1,0 +1,3 @@
+# The working copy's centre address and agent token: never commit them.
+.appgov/centre.json
+node_modules/
