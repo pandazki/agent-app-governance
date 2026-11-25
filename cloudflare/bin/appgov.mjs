@@ -693,7 +693,10 @@ switch (command) {
   case "status": {
     const s = await call("GET", base);
     const here = DIR ? changedAgainst(DIR, s.active_version) : null;
-    out({ ...s, ...(here ? { uncommitted_here: here } : {}) }, () => {
+    // The edits here may be a change that was submitted and waits for the owner: then they are not still to submit.
+    const mine = DIR ? signature(localEntries(DIR)) : null;
+    const waitingHere = mine ? s.pending.find((p) => p.tree_signature === mine) : undefined;
+    out({ ...s, ...(here ? { uncommitted_here: here } : {}), ...(waitingHere ? { waiting_here: waitingHere.change_id } : {}) }, () => {
       console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} at ${s.address}`);
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
       else if (s.serving_version && s.serving_version !== s.active_version) {
@@ -704,7 +707,12 @@ switch (command) {
       console.log(`on PneumaSpace: ${s.space_manager.note}`);
       if (DIR) {
         if (baseVersion && baseVersion !== s.active_version) console.log(`this working copy is on ${baseVersion}; the centre is on ${s.active_version}. Run fetch before changing anything.`);
-        console.log(`changed here, not submitted: ${here === null ? "unknown (this working copy does not hold the active version's files; run fetch)" : here.length ? here.join(", ") : "none"}`);
+        if (waitingHere) {
+          console.log(`changed here: ${here?.length ? here.join(", ") : "the files of the change below"}. These edits are change ${waitingHere.change_id}, which was submitted and waits for the owner. Do not submit them again; the owner approves or denies it.`);
+        } else {
+          const other = s.pending.length && here?.length ? ` (they are not the change waiting for the owner as it was submitted)` : "";
+          console.log(`changed here, not submitted: ${here === null ? "unknown (this working copy does not hold the active version's files; run fetch)" : here.length ? `${here.join(", ")}${other}` : "none"}`);
+        }
       } else console.log(`uncommitted at the centre: ${s.uncommitted.length ? s.uncommitted.join(", ") : "none"}`);
       for (const p of s.pending) {
         console.log(`waiting for the owner: ${p.change_id} "${p.intent}" (${p.risks.join(", ")})`);

@@ -226,6 +226,12 @@ describe("the Cloudflare edition end to end, offline", () => {
     const status = (await cli(copy(), ["status"])).out;
     expect(status).toContain("  tests: No tests ran.");
     expect(status).toContain("  warning: this change touched app code (app/server.mjs)");
+    // The edits in the copy are that change: status says so, and does not call them "not submitted".
+    expect(status).toMatch(/changed here: app\/server\.mjs, pneuma-space\.json\. These edits are change \S+, which was submitted and waits for the owner\. Do not submit them again/);
+    expect(status).not.toContain("not submitted");
+    // Edited further, they are no longer that change, and status says that too.
+    writeFileSync(join(copy(), "app", "server.mjs"), `${readFileSync(join(copy(), "app", "server.mjs"), "utf8")}// more\n`);
+    expect((await cli(copy(), ["status"])).out).toContain("changed here, not submitted: app/server.mjs, pneuma-space.json (they are not the change waiting for the owner as it was submitted)");
     expect((await cli(copy(), ["discard"])).code).toBe(0);
   });
 

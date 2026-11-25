@@ -1,10 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { collectSteps, timedSync } from "../../host/src/steps";
-import { exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
+import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
 import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -196,7 +197,13 @@ export function createContainerServer(opts: ContainerServerOptions) {
     if (!APP_NAME.test(name)) throw new HostError(400, `app name must match ${APP_NAME}`);
     if (name !== req.headers[APP_HEADER]) throw new HostError(400, "this request was routed for another app");
     checkFolder(req, name);
-    if (parts.length === 2 && method === "GET") return host.status(name);
+    if (parts.length === 2 && method === "GET") {
+      // Each waiting change carries its files' signature as the CLI computes one, so a working copy can tell that its
+      // edits are that change and not something still to submit.
+      const status = await host.status(name);
+      const drafts = appPaths(appsDir, name).drafts;
+      return { ...status, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
+    }
     if (parts.length === 3 && method === "GET" && parts[2] === "history") return { history: host.history(name) };
     if (parts.length === 3 && method === "GET" && parts[2] === "folder") return exportWorkingCopy(appRoot(name), name, current(name));
     if (parts.length === 3 && method === "POST") {
