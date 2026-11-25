@@ -42,6 +42,7 @@ import {
   sourceDiff,
   sourceFiles,
   sourceSignature,
+  STATE_DIR,
   TREE,
   writeAppInfo,
   type AppInfo,
@@ -663,11 +664,11 @@ export class AppHost {
   }
 
   private threads(paths: AppPaths): BuildThreadStore {
-    return createFileBuildThreadStore({ workspace: paths.root });
+    return createFileBuildThreadStore({ workspace: paths.root, stateDir: STATE_DIR });
   }
 
   private rollout(paths: AppPaths): FileReleaseRolloutStore {
-    return new FileReleaseRolloutStore({ workspace: paths.root });
+    return new FileReleaseRolloutStore({ workspace: paths.root, stateDir: STATE_DIR });
   }
 
   private changeId(): string {

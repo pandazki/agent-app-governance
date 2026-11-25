@@ -20,7 +20,7 @@ name: agent-app-governance
 # This line is where the commit is set: `bun run setup` reads it to fetch the same source into vendor/ for the
 # tests and for `bun run drive`.
 # To build the Host on a local checkout instead, set PNEUMA_FRAMEWORK_CONTEXT to its path (.env.example).
-x-framework-context: &framework-context "${PNEUMA_FRAMEWORK_CONTEXT:-https://github.com/pandazki/pneuma-framework.git#c1ffce726866a3b315e9714c49a5547c2426fbcf}"
+x-framework-context: &framework-context "${PNEUMA_FRAMEWORK_CONTEXT:-https://github.com/pandazki/pneuma-framework.git#d6d699445a0889a37c76fd8b16756c298c089f1e}"
 
 x-space-context: &space-context "${PNEUMA_SPACE_CONTEXT:-https://github.com/pandazki/pneuma-space.git#6e7353809338901a604973e9fe90d1cafe4cb3cc}"
 

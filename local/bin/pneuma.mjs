@@ -10,6 +10,9 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_HOST = "http://127.0.0.1:8090";
+// The directory under each app directory, and under the apps directory, that the Host keeps for itself.
+// The Host names it in src/artifact.ts (STATE_DIR); this copy runs without that code, and a test checks the two agree.
+const STATE_DIR = ".pneuma";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const USAGE = `usage: node .pneuma/pneuma.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json]
@@ -67,7 +70,7 @@ function parse(argv) {
 
 function findApp(start) {
   for (let dir = resolve(start); ; dir = dirname(dir)) {
-    const info = join(dir, ".pneuma", "app.json");
+    const info = join(dir, STATE_DIR, "app.json");
     if (existsSync(info)) return JSON.parse(readFileSync(info, "utf8")).app_id;
     if (dirname(dir) === dir) return null;
   }
@@ -83,10 +86,10 @@ const readableTime = (iso) => (typeof iso === "string" && iso.length >= 16 ? `${
 function findRecordedHost(start) {
   const files = [];
   for (let dir = resolve(start); ; dir = dirname(dir)) {
-    files.push(join(dir, ".pneuma", "host.json"));
+    files.push(join(dir, STATE_DIR, "host.json"));
     if (dirname(dir) === dir) break;
   }
-  files.push(join(SCRIPT_DIR, "host.json"), join(SCRIPT_DIR, "..", "apps", ".pneuma", "host.json"));
+  files.push(join(SCRIPT_DIR, "host.json"), join(SCRIPT_DIR, "..", "apps", STATE_DIR, "host.json"));
   for (const file of files) {
     if (!existsSync(file)) continue;
     try {
@@ -448,7 +451,7 @@ function markedBlock(text, beginMarker, endMarker) {
 
 /** A self-contained block for an agent's user-level instructions, so any session can answer "what apps do I have?". */
 function guideBlock(appsDir) {
-  const own = join(appsDir, ".pneuma", "pneuma.mjs");
+  const own = join(appsDir, STATE_DIR, "pneuma.mjs");
   const cli = existsSync(own) ? own : fileURLToPath(import.meta.url);
   // Every path in single quotes, as a POSIX shell takes it literally, so a command copied from the block works
   // in a directory whose name has a space or any other character the shell would read.
@@ -475,7 +478,7 @@ if (command === "guide") {
   }
   // The block names this directory as the Host's, so every app the Host lists must be in it.
   const { apps } = await call("GET", "/apps");
-  const missing = items(apps).map((a) => String(a.app_id)).filter((name) => !existsSync(join(APPS_DIR, name, ".pneuma", "app.json")));
+  const missing = items(apps).map((a) => String(a.app_id)).filter((name) => !existsSync(join(APPS_DIR, name, STATE_DIR, "app.json")));
   if (missing.length) {
     fail(
       `the apps directory found here (${APPS_DIR}) does not hold the apps of the Host at ${HOST} (not there: ${missing.join(", ")}). ` +
@@ -514,7 +517,7 @@ if (command === "create") {
     if (data.status === "published") {
       // Named only when the Host's app is there: the record found here may be stale.
       console.log(
-        APPS_DIR && existsSync(join(APPS_DIR, args[0], ".pneuma", "app.json"))
+        APPS_DIR && existsSync(join(APPS_DIR, args[0], STATE_DIR, "app.json"))
           ? `The app directory is ${join(APPS_DIR, args[0])}. Open it with your coding agent.`
           : `The app directory is ${args[0]}/ in the Host's apps directory (apps/ next to the compose file, unless PNEUMA_APPS_DIR moved it). Open it with your coding agent.`,
       );

@@ -5,6 +5,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { createServer as createTcpServer, type AddressInfo, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { STATE_DIR } from "../src/artifact";
 import { AppHost } from "../src/host";
 import { loadRiskPolicy } from "../src/policy";
 import { createHostServer, HOST_API_LEVEL } from "../src/server";
@@ -53,6 +54,14 @@ beforeAll(async () => {
 afterAll(() => {
   server.close();
   rmSync(work, { recursive: true, force: true });
+});
+
+describe("the CLI and the Host name the same state directory", () => {
+  test("the CLI's STATE_DIR is the Host's", () => {
+    // The CLI runs from a copy inside each app with no imports from src/, so it names the directory itself.
+    const named = /^const STATE_DIR = "([^"]+)";$/m.exec(readFileSync(join(EXAMPLE, "bin", "pneuma.mjs"), "utf8"))?.[1];
+    expect(named).toBe(STATE_DIR);
+  });
 });
 
 describe("the artifact CLI against a served Host", () => {

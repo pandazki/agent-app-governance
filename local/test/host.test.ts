@@ -6,7 +6,7 @@ import { validateScaffoldProjectManifest } from "@pneuma-framework/core/host-aut
 import { createFileBuildThreadStore } from "@pneuma-framework/core/build-thread";
 import type { DataSnapshotCapability } from "@pneuma-framework/host-kit/change-record";
 import { agentLane } from "../src/agents";
-import { installOverlay, restoreWorkingTree, snapshot } from "../src/artifact";
+import { installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../src/artifact";
 import { dataSnapshotFromEnv, hostUrlFromEnv, managerFromEnv, previewTtlFromEnv } from "../src/config";
 import { print } from "../src/drive";
 import { AppHost, HostError, type AppHostOptions, type HostDataSnapshot } from "../src/host";
@@ -2033,7 +2033,7 @@ describe("app directories made before the change record", () => {
     put(root, "src/server.ts", "export const version = 3;\n");
     snapshot(root, join(versionsDir, "v3"));
     restoreWorkingTree(join(versionsDir, "v2"), root);
-    const thread = await createFileBuildThreadStore({ workspace: root }).startThread({ profile_id: "space-isolate", app_id: name, builder_user_id: OWNER });
+    const thread = await createFileBuildThreadStore({ workspace: root, stateDir: STATE_DIR }).startThread({ profile_id: "space-isolate", app_id: name, builder_user_id: OWNER });
     put(root, ".pneuma/app.json", JSON.stringify({ schema_version: 1, app_id: name, scaffold_id: "space-isolate", owner: OWNER, thread_id: thread.thread_id, created_at: "2026-11-01T00:00:00.000Z", version_counter: 3 }));
     const line = (fields: Record<string, unknown>) => JSON.stringify({ at: "2026-11-01T00:00:00.000Z", agent: "codex", control: "agent-driven", ...fields });
     put(

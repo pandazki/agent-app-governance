@@ -29,6 +29,14 @@ import type { TestCoverage } from "./test-coverage";
 // ---------------------------------------------------------------------------
 
 /**
+ * The directory, directly under every app directory and under the directory that holds the apps, where this
+ * Host keeps what is not part of any version: the change record, the app's identity, waiting changes, the
+ * CLI copy and the recorded address. The framework's stores are told this name (`stateDir`). The CLI in
+ * bin/ names the same directory on its own, because it runs without this code; a test checks the two agree.
+ */
+export const STATE_DIR = ".pneuma";
+
+/**
  * Never part of a version: host state, installed dependencies, VCS, local secrets, the
  * directories coding agents and editors keep for themselves, and the files directory a local
  * run leaves at the top level. Claude Code writes `.claude/settings.local.json` when the user
@@ -39,7 +47,7 @@ import type { TestCoverage } from "./test-coverage";
  * `changedPaths` and `draftSignature` cover exactly what a version holds.
  */
 export const TREE: TreeWalkOptions = {
-  ignoredDirs: new Set(["node_modules", ".pneuma", ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea"]),
+  ignoredDirs: new Set(["node_modules", STATE_DIR, ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea"]),
   ignoredFiles: new Set([".env", ".env.local", ".DS_Store"]),
   ignoredPaths: new Set(["data"]),
 };
@@ -60,7 +68,7 @@ export interface AppPaths {
 
 export function appPaths(appsDir: string, name: string): AppPaths {
   const root = join(appsDir, name);
-  const state = join(root, ".pneuma");
+  const state = join(root, STATE_DIR);
   return {
     root,
     state,
@@ -93,7 +101,7 @@ export function writeAppInfo(paths: AppPaths, info: AppInfo): void {
 
 /** The app's change record, with the Host's own idea of which files make up a version. */
 export function openRecord(paths: AppPaths): ChangeRecord {
-  return openChangeRecord(paths.root, { walkOptions: TREE });
+  return openChangeRecord(paths.root, { stateDir: STATE_DIR, walkOptions: TREE });
 }
 
 /**
@@ -298,8 +306,8 @@ export function installOverlay(root: string, overlayDir: string, cliSource: stri
 }
 
 export function installCli(root: string, cliSource: string): void {
-  mkdirSync(join(root, ".pneuma"), { recursive: true });
-  copyFileSync(cliSource, join(root, ".pneuma", "pneuma.mjs"));
+  mkdirSync(join(root, STATE_DIR), { recursive: true });
+  copyFileSync(cliSource, join(root, STATE_DIR, "pneuma.mjs"));
 }
 
 /** Where the Host can be reached from the person's machine, as the Host itself recorded it in `.pneuma/host.json`. */
@@ -322,7 +330,7 @@ const HOST_ADDRESS_NOTE =
  * address or scope changed, so `recorded_at` says when this address was first recorded. Returns whether it wrote.
  */
 export function recordHostAddress(dir: string, url: string, scope: HostAddressRecord["scope"], now: Date = new Date()): boolean {
-  const file = join(dir, ".pneuma", "host.json");
+  const file = join(dir, STATE_DIR, "host.json");
   if (existsSync(file)) {
     try {
       const current = JSON.parse(readFileSync(file, "utf8")) as Partial<HostAddressRecord>;
@@ -390,7 +398,7 @@ export function describeAppsDir(appsDir: string, overlayDir: string, cliSource: 
  * plain undo). It lives under `.pneuma/`, which is not part of any version. Returns whether it changed.
  */
 export function refreshCli(root: string, cliSource: string): boolean {
-  const installed = join(root, ".pneuma", "pneuma.mjs");
+  const installed = join(root, STATE_DIR, "pneuma.mjs");
   const wanted = readFileSync(cliSource);
   if (existsSync(installed) && readFileSync(installed).equals(wanted)) return false;
   installCli(root, cliSource);
