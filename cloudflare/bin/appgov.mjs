@@ -313,13 +313,13 @@ async function send(method, path, payload, { owner = false } = {}) {
     if (code === "EPERM" || code === "EACCES") fail(`the sandbox this command runs in blocks the connection to the centre at ${CENTRE} (${code}). Nothing was sent. Run this command with network access (ask the user for permission), then repeat it.`, 3);
     fail(`cannot reach the centre at ${CENTRE} (${code}). ${CENTRE_SOURCE} Ask the user, do not start anything yourself.`, 3);
   }
-  if (flags.timing) console.error(`appgov: ${method} ${path} took ${Date.now() - began} ms${timing ? ` (${timing})` : ""}`);
   let data;
   try {
     data = JSON.parse(text);
   } catch {
     data = { error: text.slice(0, 300) };
   }
+  if (flags.timing) printTiming(`${method} ${path}`, Date.now() - began, data?.timing, timing);
   return { status, data };
 }
 
@@ -334,6 +334,54 @@ function sync(dir, data, uploaded) {
   if (!dir || !data?.working_copy) return;
   const replaced = applyCopy(dir, data.working_copy, uploaded);
   if (!replaced) console.log(`kept your edits in ${dir}: they differ from what was sent and from the centre. The record in ${FRAMEWORK_DIR}/ is up to date; run fetch once the edits are submitted or discarded.`);
+}
+
+/**
+ * Where an operation's time went, on stderr (so --json stays one document): the centre's steps (starting the
+ * container, loading and saving the record), the Host's steps as it marked them, nested, and what is left for the
+ * network and the Worker. A step with inner steps also shows the time none of them account for.
+ */
+function printTiming(what, wall, timing, header) {
+  const lines = [`timing: ${what} took ${wall} ms at this CLI`];
+  const row = (depth, name, ms) => lines.push(`${"  ".repeat(depth + 1)}${name.padEnd(58 - depth * 2)} ${String(ms).padStart(6)} ms`);
+  const centre = timing?.centre ?? Object.fromEntries(String(header ?? "").split(";").filter(Boolean).map((kv) => kv.split("=")).map(([k, v]) => [k, Number(v)]));
+  const steps = Array.isArray(timing?.steps) ? timing.steps : [];
+  if (centre.container !== undefined) row(0, "start the Host's container (0 when it runs)", centre.container);
+  if (centre.load !== undefined) row(0, "load the record from R2 into the container", centre.load);
+  if (centre.op !== undefined) row(0, "the Host's operation, as the centre waited for it", centre.op);
+  // Steps nest by depth; when a step with inner steps closes, the time they do not account for is shown under it.
+  const open = [];
+  const close = (depth) => {
+    while (open.length && open.at(-1).step.depth >= depth) {
+      const { step, inner, children } = open.pop();
+      if (children && step.ms - inner > 0) row(step.depth + 2, `(rest of: ${step.step})`, step.ms - inner);
+    }
+  };
+  for (const step of steps) {
+    close(step.depth);
+    const parent = open.at(-1);
+    if (parent) {
+      parent.inner += step.ms;
+      parent.children = true;
+    }
+    row(step.depth + 1, step.step, step.ms);
+    open.push({ step, inner: 0, children: false });
+  }
+  close(0);
+  if (typeof timing?.host_ms === "number") {
+    // Steps that ran at the same time count once: the time covered by at least one of the Host's own steps.
+    let covered = 0;
+    let end = -Infinity;
+    for (const s of steps.filter((s) => s.depth === 0).sort((a, b) => a.at_ms - b.at_ms)) {
+      covered += Math.max(0, s.at_ms + s.ms - Math.max(s.at_ms, end));
+      end = Math.max(end, s.at_ms + s.ms);
+    }
+    row(1, "(the Host's other work: open, classify, decide, write files)", Math.max(0, timing.host_ms - covered));
+  }
+  if (centre.save !== undefined) row(0, "save the record to R2", centre.save);
+  const known = (centre.container ?? 0) + (centre.load ?? 0) + (centre.op ?? 0) + (centre.save ?? 0);
+  if (known) row(0, "(the network, the Worker and the Durable Object)", wall - known);
+  console.error(lines.join("\n"));
 }
 
 // --- printing, as the local edition's CLI prints ----------------------------------------------------------
@@ -450,8 +498,9 @@ function newCopy(dir, copy) {
   if (existsSync(dir) && readdirSync(dir).length) fail(`${dir} is not empty; name another directory with --into <dir>`);
   mkdirSync(dir, { recursive: true });
   applyCopy(dir, copy);
-  if (TOKEN) writePrivate(join(dir, STATE_DIR, CENTRE_FILE), { url: CENTRE, token: TOKEN });
-  console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}${TOKEN ? `; the centre's address and the agent token are in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git)` : ""}. Open it with your coding agent.`);
+  // The centre's address always; the agent token when this command had one (signed in as the owner, it has none).
+  writePrivate(join(dir, STATE_DIR, CENTRE_FILE), { url: CENTRE, ...(TOKEN ? { token: TOKEN } : {}) });
+  console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}; the centre's address${TOKEN ? " and the agent token are" : " is"} in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git). Open it with your coding agent.`);
 }
 
 // --- commands that need no app ----------------------------------------------------------------------------

@@ -95,12 +95,28 @@ describe("the Cloudflare plane as the Host's runtime", () => {
     expect(refused.detail).toContain("not the app itself");
   });
 
-  test("a probe puts a preview to sleep again, so a waiting change does not hold an awake slot", async () => {
+  test("a probe puts a preview to sleep again, so a waiting change does not hold an awake slot; a discard waits for that", async () => {
     const { plane, space } = setup();
-    await space.publish("todo-pvab12", appDir(), { ephemeral: { ttlSeconds: 600 }, manager: MANAGER });
+    const published = await space.publish("todo-pvab12", appDir(), { ephemeral: { ttlSeconds: 600 }, manager: MANAGER });
     await space.probe("todo-pvab12");
-    expect(plane.calls.at(-1)!.body).toEqual({ type: "sleep" });
-    expect(plane.apps[0]!.awake).toBe(false);
+    expect(await space.discard("todo-pvab12", MANAGER.name, published.app)).toBe(true);
+    const actions = plane.calls.filter((call) => call.path.endsWith("/actions")).map((call) => (call.body as { type: string }).type);
+    expect(actions).toEqual(["sleep", "discard"]);
+  });
+
+  test("a lookup reads the detail by the id it found before, and looks the name up again when that id is gone", async () => {
+    const { plane, space } = setup();
+    await space.publish("todo", appDir(), { manager: MANAGER });
+    const lists = () => plane.calls.filter((call) => call.method === "GET" && call.path.endsWith("/apps")).length;
+    const before = lists();
+    expect(await space.app("todo")).toMatchObject({ name: "todo" });
+    expect(lists()).toBe(before);
+    // The app is gone and another took its name: the remembered id no longer answers, so the name is listed again.
+    plane.apps.splice(0, plane.apps.length);
+    await space.publish("todo", appDir(), { manager: MANAGER });
+    const again = await space.app("todo");
+    expect(again).toMatchObject({ name: "todo" });
+    expect(lists()).toBeGreaterThan(before);
   });
 
   test("the tenant's ephemeral quota and a ttl above the plane's maximum reach the Host's previews in the words they read", async () => {

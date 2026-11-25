@@ -11,6 +11,7 @@ import {
   type SpaceRuntime,
   type SpaceState,
 } from "../../host/src/space";
+import { measured, timed } from "../../host/src/steps";
 
 // ---------------------------------------------------------------------------
 // PneumaSpace's Cloudflare plane as the runtime of the Host.
@@ -120,8 +121,14 @@ export class CfSpace implements SpaceRuntime {
   private readonly origin: string;
   private readonly fetcher: typeof fetch;
   private tenantId: string | undefined;
-  /** Apps this process published as ephemeral, by name: a probe of one puts it to sleep again (see `probe`). */
-  private readonly ephemeral = new Set<string>();
+  /** Apps this process published as ephemeral, by name, with their ids: a probe of one puts it to sleep again (see `probe`). */
+  private readonly ephemeral = new Map<string, string>();
+  /** Every app gets its own upload on this plane: a release never draws on a preview's. */
+  readonly releaseUsesPreviewUpload = false;
+  /** The plane's id for each app name this process has found (see `find`). */
+  private readonly ids = new Map<string, string>();
+  /** A preview being put to sleep, by name; discarding it waits for that first. */
+  private readonly sleeping = new Map<string, Promise<void>>();
 
   constructor(private readonly opts: CfSpaceOptions) {
     this.origin = new URL(opts.origin).origin;
@@ -176,10 +183,23 @@ export class CfSpace implements SpaceRuntime {
     }
   }
 
-  /** The app under `name` as the plane holds it now: found in the listing, read from its authoritative detail. */
+  /**
+   * The app under `name` as the plane holds it now, read from its authoritative detail. The id is looked up in the
+   * listing once and remembered: a name keeps its id until the app is purged, and a remembered id whose detail is
+   * gone, or now carries another name, is looked up again.
+   */
   private async find(name: string): Promise<Detail | null> {
+    const known = this.ids.get(name);
+    if (known) {
+      const detail = await this.detail(known);
+      if (detail?.name === name) return detail;
+      this.ids.delete(name);
+    }
     const listed = (await this.list()).find((app) => app.name === name);
-    return listed ? this.detail(listed.id) : null;
+    if (!listed) return null;
+    const detail = await this.detail(listed.id);
+    if (detail) this.ids.set(name, detail.id);
+    return detail;
   }
 
   init(dir: string): Promise<CommandResult> {
@@ -192,7 +212,7 @@ export class CfSpace implements SpaceRuntime {
   }
 
   async app(name: string): Promise<SpaceApp | null> {
-    const found = await this.find(name);
+    const found = await timed("look up the app on PneumaSpace", () => this.find(name));
     if (!found) return null;
     return { name, status: found.status, expiresAt: found.expiresAt ?? null, manager: found.manager ? { name: found.manager.name, url: found.manager.url ?? null } : null };
   }
@@ -200,19 +220,21 @@ export class CfSpace implements SpaceRuntime {
   async publish(name: string, dir: string, options: PublishOptions = {}): Promise<PublishResult> {
     const { ephemeral, manager } = options;
     try {
-      const { pkg, bytes, digest } = packageApp(dir);
-      let app = await this.find(name);
+      const { pkg, bytes, digest } = await timed("build the package", () => packageApp(dir));
+      let app = await timed("look up the app on PneumaSpace", () => this.find(name));
       if (!app) {
-        const created = await this.api<Listed>(
+        const tenant = await this.tenant();
+        const created = await timed("create the app", () => this.api<Listed>(
           "POST",
-          `/tenants/${await this.tenant()}/apps`,
+          `/tenants/${tenant}/apps`,
           { name, ...(ephemeral ? { ephemeral: { ttlSeconds: ephemeral.ttlSeconds } } : {}), ...(manager ? { manager: { name: manager.name, ...(manager.url ? { url: manager.url } : {}) } } : {}) },
           manager?.name,
-        );
-        app = await this.detail(created.id);
-        if (!app) throw new Error(`PneumaSpace created ${name} and then did not find it`);
+        ));
+        // Just created: no release yet, so nothing more to read about it.
+        app = { ...created, current: null, releases: [] };
+        this.ids.set(name, created.id);
       }
-      if (ephemeral) this.ephemeral.add(name);
+      if (ephemeral) this.ephemeral.set(name, app.id);
       const kind = ephemeral ? { ephemeral: true } : {};
       // A durable app that already has a release with these exact bytes goes back to it with the typed action
       // `rollback`, which uploads nothing. Undo and putting the address back take this path.
@@ -222,23 +244,25 @@ export class CfSpace implements SpaceRuntime {
       }
       const earlier = !ephemeral && sameManager ? [...app.releases].reverse().find((release) => release.digest === digest) : undefined;
       if (earlier && app.status === "registered") {
-        const after = await this.api<Detail>("POST", `/apps/${app.id}/actions`, { type: "rollback", release: earlier.number }, manager?.name);
+        const after = await timed("roll back to the earlier release", () => this.api<Detail>("POST", `/apps/${app!.id}/actions`, { type: "rollback", release: earlier.number }, manager?.name));
         return { code: 0, output: `${name} went back to release ${earlier.number}, which holds these exact files, as release ${after.current?.number ?? "?"}`, app: app.id };
       }
-      const ticket = await this.api<{ uploadId: string; url: string; headers: Record<string, string> }>(
-        "POST",
-        `/apps/${app.id}/uploads`,
-        { manifest: pkg.manifest, digest, bytes: bytes.length, ...kind },
-        manager?.name,
+      const id = app.id;
+      const ticket = await timed("ask for an upload ticket", () =>
+        this.api<{ uploadId: string; url: string; headers: Record<string, string> }>("POST", `/apps/${id}/uploads`, { manifest: pkg.manifest, digest, bytes: bytes.length, ...kind }, manager?.name),
       );
-      const put = await this.fetcher(ticket.url, { method: "PUT", headers: ticket.headers, body: new Uint8Array(bytes), redirect: "error", signal: AbortSignal.timeout(120_000) });
-      if (!put.ok) throw new Error(`the package upload answered ${put.status}`);
-      await put.body?.cancel();
-      const released = await this.api<Detail>(
-        "POST",
-        `/apps/${app.id}/releases`,
-        { uploadId: ticket.uploadId, ...kind, ...(manager ? { manager: { name: manager.name, ...(manager.url ? { url: manager.url } : {}) } } : {}) },
-        manager?.name,
+      await timed(`upload the package (${Math.round(bytes.length / 1024)} KiB)`, async () => {
+        const put = await this.fetcher(ticket.url, { method: "PUT", headers: ticket.headers, body: new Uint8Array(bytes), redirect: "error", signal: AbortSignal.timeout(120_000) });
+        if (!put.ok) throw new Error(`the package upload answered ${put.status}`);
+        await put.body?.cancel();
+      });
+      const released = await timed("release the upload", () =>
+        this.api<Detail>(
+          "POST",
+          `/apps/${id}/releases`,
+          { uploadId: ticket.uploadId, ...kind, ...(manager ? { manager: { name: manager.name, ...(manager.url ? { url: manager.url } : {}) } } : {}) },
+          manager?.name,
+        ),
       );
       const ends = released.expiresAt ? ` expires ${new Date(released.expiresAt).toISOString()}  app ${app.id}` : "";
       return { code: 0, output: `released ${name} as release ${released.current?.number ?? "?"}${ends}`, app: app.id };
@@ -277,41 +301,49 @@ export class CfSpace implements SpaceRuntime {
    * does not hold one of the tenant's few awake slots; opening it wakes it.
    */
   async probe(name: string): Promise<ProbeResult> {
-    let first: ProbeResult | undefined;
-    for (const path of ["", "appgov-probe"]) {
-      const url = `${this.origin}/apps/${name}/${path}`;
-      let result: ProbeResult;
-      try {
-        const res = await this.fetcher(url, {
-          headers: { authorization: `Bearer ${this.opts.token}`, accept: "text/html" },
-          redirect: "manual",
-          signal: AbortSignal.timeout(this.opts.probeTimeoutMs ?? 90_000),
-        });
-        const timing = res.headers.get("server-timing") ?? "";
-        const byApp = /(^|,)\s*(static|app)\b/.test(timing);
-        const text = res.status >= 500 || !byApp ? (await res.text()).slice(0, 400) : (await res.body?.cancel(), "");
-        result = byApp
-          ? { ok: res.status < 500, status: res.status, detail: text }
-          : { ok: false, status: res.status, detail: `PneumaSpace answered for the app, not the app itself: ${text}` };
-      } catch (err) {
-        result = { ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) };
-      }
-      first ??= result;
-      if (!result.ok) {
-        first = { ...result, detail: `GET /apps/${name}/${path}: ${result.detail}` };
-        break;
-      }
+    // Both requests at once: each has to be answered by the app, so neither waits for the other.
+    const results = await Promise.all(["", "appgov-probe"].map((path) => this.probePath(name, path)));
+    const failed = results.findIndex((result) => !result.ok);
+    const id = this.ephemeral.get(name);
+    if (id && !this.sleeping.has(name)) {
+      // Not waited for: putting the preview to sleep is not part of the check, and a preview that is released
+      // right away is discarded soon after. Discarding it waits for this first.
+      const sleep = this.api("POST", `/apps/${encodeURIComponent(id)}/actions`, { type: "sleep" }).then(
+        () => {},
+        () => {},
+      );
+      this.sleeping.set(name, sleep);
+      void sleep.finally(() => this.sleeping.delete(name));
     }
-    if (this.ephemeral.has(name)) {
-      try {
-        const found = (await this.list()).find((app) => app.name === name);
-        if (found) await this.api("POST", `/apps/${found.id}/actions`, { type: "sleep" });
-      } catch {}
+    if (failed === -1) return results[0]!;
+    const path = failed === 0 ? "" : "appgov-probe";
+    return { ...results[failed]!, detail: `GET /apps/${name}/${path}: ${results[failed]!.detail}` };
+  }
+
+  private async probePath(name: string, path: string): Promise<ProbeResult> {
+    const began = performance.now();
+    let result: ProbeResult;
+    try {
+      const res = await this.fetcher(`${this.origin}/apps/${name}/${path}`, {
+        headers: { authorization: `Bearer ${this.opts.token}`, accept: "text/html" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(this.opts.probeTimeoutMs ?? 90_000),
+      });
+      const timing = res.headers.get("server-timing") ?? "";
+      const byApp = /(^|,)\s*(static|app)\b/.test(timing);
+      const text = res.status >= 500 || !byApp ? (await res.text()).slice(0, 400) : (await res.body?.cancel(), "");
+      result = byApp
+        ? { ok: res.status < 500, status: res.status, detail: text }
+        : { ok: false, status: res.status, detail: `PneumaSpace answered for the app, not the app itself: ${text}` };
+    } catch (err) {
+      result = { ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) };
     }
-    return first!;
+    measured(path ? "GET a path that wakes Node (at the same time)" : "GET the home page (at the same time)", performance.now() - began);
+    return result;
   }
 
   async discard(name: string, manager?: string, app?: string): Promise<boolean> {
+    await this.sleeping.get(name);
     try {
       const id = app ?? (await this.list()).find((listed) => listed.name === name)?.id;
       if (!id) return true;

@@ -55,6 +55,7 @@ import {
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
+import { timed, timedSync } from "./steps";
 import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -841,10 +842,12 @@ export class AppHost {
     let tests: CheckRun;
     let coverage: TestCoverage;
     try {
-      snapshot(draftRoot, checkRoot);
-      tests = await this.verifyCommand(checkRoot, command);
-      // Read while the copy exists: the report names files by their path in it.
-      coverage = testCoverage(tests, checkRoot, this.layout);
+      [tests, coverage] = await timed("tests", async () => {
+        timedSync("copy the draft for the tests", () => snapshot(draftRoot, checkRoot));
+        const run = await this.verifyCommand(checkRoot, command);
+        // Read while the copy exists: the report names files by their path in it.
+        return [run, testCoverage(run, checkRoot, this.layout)] as const;
+      });
     } finally {
       rmSync(checkRoot, { recursive: true, force: true });
     }
@@ -1061,8 +1064,8 @@ export class AppHost {
       }
     }
 
-    const published = await this.opts.space.publish(name, releaseRoot, { manager: this.manager });
-    const probe = published.code === 0 ? await this.opts.space.probe(name) : NOT_PROBED;
+    const published = await timed("publish the release", () => this.opts.space.publish(name, releaseRoot, { manager: this.manager }));
+    const probe = published.code === 0 ? await timed("wait until the release answers", () => this.opts.space.probe(name)) : NOT_PROBED;
     if (published.code !== 0 || !probe.ok) {
       // A refused publish never reached an existing address. Everything else did: a build that went up
       // and did not come up, and any attempt on a name this create had just claimed.
@@ -1430,14 +1433,16 @@ export class AppHost {
 
     // Agent-driven: the working tree the agent just edited is the draft.
     // Host-driven: the draft starts as the active version and the agent edits it.
-    snapshot(input.runAgent ? baseRoot : paths.root, draftRoot);
+    timedSync("copy the working tree into a draft", () => snapshot(input.runAgent ? baseRoot : paths.root, draftRoot));
 
     let keepDraft = false;
     const previewed = () => earnedByChecks(checks).includes(GUARANTEES.previewed);
+    /** The preview's discard, once it has started. */
+    let dropping: Promise<void> | undefined;
     try {
       let proposal;
       try {
-        proposal = await buildGovernedProposal({
+        proposal = await timed("check the draft (diff, boundaries, seal, checks)", () => buildGovernedProposal({
           draftId: changeId,
           activeRoot: liveRoot,
           draftRoot,
@@ -1466,7 +1471,7 @@ export class AppHost {
             });
           },
           observe: (root) => this.observe(root),
-        });
+        }));
       } catch (err) {
         const rejected = err instanceof GovernedProposalRejected;
         const refused = err instanceof ChangeRefused;
@@ -1546,6 +1551,13 @@ export class AppHost {
       }
 
       await threads.appendTurn(info.thread_id, { kind: "host_event", label: "policy_approval", payload: decision });
+      // The preview has done its part, and it goes whether or not the release works. Where the release does not draw
+      // on the preview's upload, it is discarded while the release goes out instead of after it; the change still
+      // answers only once the discard is over (see below).
+      if (previewed() && this.opts.space.releaseUsesPreviewUpload === false) {
+        dropping = this.previews.drop(previewName(input.name, changeId), preview.id);
+        dropping.catch(() => {});
+      }
       return await this.finish(
         input.name,
         paths,
@@ -1573,7 +1585,7 @@ export class AppHost {
       );
     } finally {
       // A change that waits for the owner keeps its draft and its preview (discarded when they decide, or it ends itself).
-      if (!keepDraft && previewed()) await this.previews.drop(previewName(input.name, changeId), preview.id);
+      if (!keepDraft && previewed()) await (dropping ?? this.previews.drop(previewName(input.name, changeId), preview.id));
       if (!keepDraft) rmSync(draftRoot, { recursive: true, force: true });
     }
   }
@@ -1632,7 +1644,7 @@ export class AppHost {
     const asIs = record.versions().includes(change.base_version) && sourceSignature(record.versionDir(change.base_version)) === draftSignature;
     // What the address serves before this release, and what goes back on it if the release fails.
     const servingBefore = this.serving(paths, record);
-    const releaseRoot = this.privateCopy(draftRoot);
+    const releaseRoot = timedSync("copy the draft for release", () => this.privateCopy(draftRoot));
     try {
       let released = await this.publishRelease({
         name,
@@ -1706,7 +1718,7 @@ export class AppHost {
             extra,
           });
         } else {
-          record.record<HostEntryFields>({ changeId: change.change_id, kind: change.kind, intent: change.intent, agent: change.agent, from: releaseRoot, guarantees, oneWay, extra });
+          timedSync("record the version", () => record.record<HostEntryFields>({ changeId: change.change_id, kind: change.kind, intent: change.intent, agent: change.agent, from: releaseRoot, guarantees, oneWay, extra }));
         }
       } catch (err) {
         throw await this.releasedButNotRecorded(name, record, servingBefore, err, (address_note) =>

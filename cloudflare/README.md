@@ -106,12 +106,34 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - New apps only. Nothing imports an existing app or its data.
 - Undo restores code; stored data is never put back.
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
-- One container per app, started on demand. A submit holds the connection open for the whole check, which took 30 to 40 seconds in the runs below, most of it in the Host's checks and PneumaSpace publishes rather than in loading or saving the record.
+- One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - After a redeploy, an app whose Durable Object is still active keeps the previous build until it has been idle for a few minutes.
 - The default rules find destructive SQL by matching text, as in the local edition.
 
 ## What has been run
 
-On 2026-11-25, from macOS with colima, against a PneumaSpace deployment on Cloudflare with default quotas: the install (and two reruns), owner sign-in, an agent token, `create`, an ordinary change released by the standing rule, a change that dropped `identity.required` and waited for the owner (the agent token's approve refused with 403, the owner's approve released it), `undo`, `fetch` into an empty directory with the token and a submit from there, a refused submit from a stale working copy, submits after the container was stopped, and a test that failed on purpose to show what the tests user can read (it could not read `/data`, the Host's home directory or the Host's environment, and had no `APPGOV_` variables). Timings from those runs: a submit took 35 s with a cold container (container start 1 s, record load 0.3 s, save 0.3 s) and 33 to 39 s warm; `create` 43 s; `undo` 9 s; `fetch` under 1 s. The offline tests (`npm run setup`, `npm run typecheck`, `bun test` in `cloudflare/`) cover the runtime adapter against a fake plane, the record round trip with a conflicting write, the Worker's rules for the owner and agent tokens, and the whole loop with the CLI on one machine.
+On 2026-11-25, from macOS with colima, against a PneumaSpace deployment on Cloudflare with default quotas: the install (and two reruns), owner sign-in, an agent token, `create`, an ordinary change released by the standing rule, a change that dropped `identity.required` and waited for the owner (the agent token's approve refused with 403, the owner's approve released it), `undo`, `fetch` into an empty directory with the token and a submit from there, a refused submit from a stale working copy, submits after the container was stopped, and a test that failed on purpose to show what the tests user can read (it could not read `/data`, the Host's home directory or the Host's environment, and had no `APPGOV_` variables). The offline tests (`npm run setup`, `npm run typecheck`, `bun test` in `cloudflare/`) cover the runtime adapter against a fake plane, the record round trip with a conflicting write, the Worker's rules for the owner and agent tokens, and the whole loop with the CLI on one machine.
+
+Where a submit's time goes, measured with `--timing` (which prints the steps each answer carries in `timing`) on an ordinary change, one cold and two warm submits each, before and after the savings described below. Seconds; the cold submit includes starting the container and loading the record.
+
+| Step | Before: cold, warm, warm | After: cold, warm, warm |
+| --- | --- | --- |
+| The whole submit, at the CLI | 41.5, 42.8, 40.5 | 31.9, 30.0, 30.3 |
+| Start the container, load the record from R2 | 1.8, 0, 0 | 1.2, 0, 0 |
+| Look up the app on PneumaSpace | 1.3, 0.9, 0.9 | 1.0, 0.5, 0.5 |
+| Tests: `npm ci --ignore-scripts` | 1.2, 1.6, 1.5 | 1.2, 0.0, 0.0 |
+| Tests: `npm test` | 0.8, 1.5, 1.5 | 0.8, 1.6, 1.6 |
+| Preview: look up, create, upload ticket, upload | 4.3, 3.6, 3.5 | 2.6, 2.7, 2.7 |
+| Preview: PneumaSpace releases it | 9.5, 12.3, 9.2 | 8.9, 8.3, 9.2 |
+| Wait until the preview answers (and put it to sleep) | 3.9, 4.1, 4.3 | 0.6, 0.7, 0.7 |
+| Read the preview's state | 0.9, 0.9, 0.9 | 0.6, 0.5, 0.5 |
+| Release: look up, upload ticket, upload | 2.3, 2.3, 2.7 | 1.8, 1.8, 1.7 |
+| Release: PneumaSpace releases it | 10.2, 10.3, 10.1 | 10.9, 11.4, 10.9 |
+| Wait until the release answers | 1.5, 1.5, 1.4 | 0.6, 0.6, 0.7 |
+| Discard the preview | 2.2, 2.1, 2.1 | 3.7, 3.6, 3.5, while the release goes out |
+| Save the record to R2 | 0.5, 0.5, 0.5 | 0.3, 0.3, 0.3 |
+| The network, the Worker and the Durable Object | 0.9, 0.9, 1.5 | 1.2, 1.4, 1.3 |
+
+The savings taken change nothing that is checked: both probe requests go out at the same time instead of one after the other; putting the preview to sleep after its probe is no longer waited for; the preview is discarded while the release goes out (the release never draws on the preview's upload on this plane, and the submit still answers only once the discard is over); a lookup reads only the app's detail once its id is known, and nothing is read back right after a create; and `npm ci --ignore-scripts` reuses the install an earlier run made from the same `package.json`, lockfile and `.npmrc` in the same container, kept as it was before any test ran and out of the tests user's reach. Not taken: anything that skips or shortens a check (the tests, either probe, the preview), releasing before the preview answers or at the same time as it, running the tests and the preview at the same time (a change that fails its tests would then reach PneumaSpace as a preview), and uploading the release before the decision to release (what goes out has to be the copy checked against the sealed draft right before it is recorded). The two PneumaSpace releases, about 20 s of the 30, are the platform's own work, which this edition does not change. An earlier run of the after set gave 30.5, 28.1 and 29.3 s. `create` took 44 s before and 32 to 38 s after, `undo` 9 s, `fetch` 1 s.
 
 Not run: a real coding agent session against this edition, several people, a Linux machine as the installer's host, waiting more than an hour for a preview to end, and anything beyond PneumaSpace's default quotas (5 apps, 3 ephemeral, 2 awake).

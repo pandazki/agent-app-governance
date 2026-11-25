@@ -83,10 +83,10 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   }
   const text = await res.text();
   lap("op");
-  if (op.op === "read" || NOTHING_WRITTEN.has(res.status)) return withTiming(new Response(text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
+  if (op.op === "read" || NOTHING_WRITTEN.has(res.status)) return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 
   const saved = await host.fetch(`/folder/save?app=${op.app}`, { method: "POST" });
-  if (saved.status === 204) return withTiming(new Response(text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
+  if (saved.status === 204) return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
   if (!saved.ok) return answer({ error: `the operation ran, but its folder could not be taken from the container: ${(await saved.text()).slice(0, 300)}`, reason: "save_failed", result: safeJson(text) }, 500);
   const tar = await saved.arrayBuffer();
   const put = await bucket.put(key, tar, stored ? { etagMatches: stored.etag } : { etagDoesNotMatch: "*" });
@@ -106,7 +106,19 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   if (summary.ok) await bucket.put(summaryKey(op.app), await summary.text());
   else await summary.body?.cancel();
   lap("save");
-  return withTiming(new Response(text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
+  return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
+}
+
+/** The Host's answer with the Durable Object's own steps beside the Host's: `timing.centre`, in ms. */
+function withCentre(text: string, timing: Record<string, number>): string {
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return text;
+    const answer = value as { timing?: Record<string, unknown> };
+    return JSON.stringify({ ...answer, timing: { ...(answer.timing ?? {}), centre: { ...timing } } });
+  } catch {
+    return text;
+  }
 }
 
 function safeJson(text: string): unknown {

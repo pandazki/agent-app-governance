@@ -1,3 +1,4 @@
+import { measured } from "../../host/src/steps";
 import type { CheckRun } from "../../host/src/test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,15 @@ interface SupervisorAnswer {
   readonly report?: string;
   /** Where the supervisor ran the command; the report names test files by their path there. */
   readonly ran_in?: string;
+  /** How long copying the tree for the user `tests` took, and each part of the command (`npm ci`, `npm test`). */
+  readonly copy_ms?: number;
+  readonly steps?: readonly { readonly command: string; readonly ms: number; readonly code: number }[];
+}
+
+/** The supervisor's own timings, as steps of the operation being timed. */
+function recordSteps(answer: SupervisorAnswer): void {
+  if (answer.copy_ms !== undefined) measured("copy the tree for the user tests", answer.copy_ms);
+  for (const step of answer.steps ?? []) measured(step.command, step.ms);
 }
 
 export type SupervisorCall = (body: { source: string; command: string; report: boolean; timeout_ms: number }) => Promise<SupervisorAnswer>;
@@ -52,8 +62,10 @@ export function supervisedVerify(call: SupervisorCall, timeoutMs = 600_000): (ro
     let answer: SupervisorAnswer;
     try {
       answer = await call({ source: root, command, report: true, timeout_ms: timeoutMs });
+      recordSteps(answer);
       if (answer.code !== 0 && answer.output.includes(REPORTER_CLASH)) {
         const plain = await call({ source: root, command, report: false, timeout_ms: timeoutMs });
+        recordSteps(plain);
         return { ok: plain.code === 0, output: plain.output, no_report: "Node refused the per-file report beside the reporter the tests pick themselves, so the check ran again without it" };
       }
     } catch (err) {

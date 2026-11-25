@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
+import { collectSteps, timedSync } from "../../host/src/steps";
 import { exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
 import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
 
@@ -132,7 +133,9 @@ export function createContainerServer(opts: ContainerServerOptions) {
     }
   };
   const withCopy = (name: string, result: unknown) =>
-    existsSync(appPaths(appsDir, name).info) ? { ...(result as object), working_copy: exportWorkingCopy(appRoot(name), name, current(name)) } : result;
+    existsSync(appPaths(appsDir, name).info)
+      ? { ...(result as object), working_copy: timedSync("export the working copy", () => exportWorkingCopy(appRoot(name), name, current(name))) }
+      : result;
 
   const folderRoute = async (req: IncomingMessage, url: URL): Promise<{ status: number; type: string; body: string | Buffer } | null> => {
     const name = url.searchParams.get("app") ?? "";
@@ -252,7 +255,10 @@ export function createContainerServer(opts: ContainerServerOptions) {
           if (!answer) throw new HostError(404, "not found");
           res.writeHead(answer.status, { "content-type": answer.type }).end(answer.body);
         })
-      : apiRoute(req, url).then((result) => reply(200, result));
+      : // Every answer about an app says where the Host's time went: `timing.steps`, in the order they started.
+        collectSteps(() => apiRoute(req, url)).then(({ value, steps, ms }) =>
+          reply(200, typeof value === "object" && value !== null && !Array.isArray(value) ? { ...value, timing: { host_ms: ms, steps } } : value),
+        );
     work.catch((err: unknown) => {
       const status = err instanceof HostError ? err.status : 500;
       const message = err instanceof Error ? err.message : String(err);

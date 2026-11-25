@@ -140,6 +140,11 @@ export interface SpaceRuntime {
   stop(name: string): Promise<void>;
   /** The address a person opens. */
   address(name: string): string;
+  /**
+   * False when a release never draws on what a preview uploaded, so a preview can be discarded while the release
+   * goes out. Left out, a release may reuse the preview's bundle, and the preview stays until the release is done.
+   */
+  readonly releaseUsesPreviewUpload?: boolean;
 }
 
 /** The header that names the manager on a write to a managed app (PneumaSpace ADR 0039). Not a credential. */

@@ -148,10 +148,15 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stopped.out).toContain("stopped the Host's container");
     const status = await cli(copy(), ["status", "--timing"]);
     expect(status.code).toBe(0);
-    expect(status.out).toMatch(/load=\d+/);
+    expect(status.out).toMatch(/load the record from R2 into the container +\d+ ms/);
     expect(stack.starts()).toBe(before + 1);
     writeFileSync(join(copy(), "app", "public", "style.css"), "body { background: #ffffff; }\n");
-    expect((await cli(copy(), ["submit", "White background"])).code).toBe(0);
+    const submitted = await cli(copy(), ["submit", "White background", "--timing"]);
+    expect(submitted.code).toBe(0);
+    // The answer carries where the time went, and --timing prints it.
+    for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2"]) {
+      expect(submitted.out).toContain(step);
+    }
   });
 
   test("a write to the record by someone else meanwhile is not overwritten; the next operation starts from what R2 holds", async () => {
