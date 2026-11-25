@@ -24,6 +24,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildPage } from "../web/build";
+import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { AppHost, type HostDataSnapshot } from "../src/host";
 import { makeOwnerToken, ownerLink } from "../src/owner";
 import { loadRiskPolicy } from "../src/policy";
@@ -283,7 +284,7 @@ async function build() {
   await submit("garden", "show what to sow this month", "codex");
   edit("garden", "src/db.ts", "export const migrate = `DROP TABLE sown`;\n");
   await submit("garden", "forget what I sowed last year", "claude-code");
-  const rollout = join(appsDir, "garden", ".appgov", "release-rollout.json");
+  const rollout = join(appsDir, "garden", STATE_DIR_NAME, "release-rollout.json");
   const state = JSON.parse(readFileSync(rollout, "utf8"));
   state.active.candidate_id = "v2";
   writeFileSync(rollout, `${JSON.stringify(state, null, 2)}\n`);
@@ -309,7 +310,7 @@ async function build() {
 function backdate() {
   const lastAgo: Record<string, number> = { todo: 12, notes: 95, budget: 6, "reading-list": 41, habits: 180, recipes: 300, locked: 60 * 26, garden: 70, shop: 20 };
   for (const name of readdirSync(appsDir)) {
-    const file = join(appsDir, name, ".appgov", "history.jsonl");
+    const file = join(appsDir, name, STATE_DIR_NAME, "history.jsonl");
     if (!existsSync(file)) continue;
     const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
     let at = Date.now() - (lastAgo[name] ?? 30) * 60_000;
@@ -339,7 +340,7 @@ function backdate() {
 
 function liveVersion(name: string): string | null {
   try {
-    return JSON.parse(readFileSync(join(appsDir, name, ".appgov", "release-rollout.json"), "utf8")).active?.candidate_id ?? null;
+    return JSON.parse(readFileSync(join(appsDir, name, STATE_DIR_NAME, "release-rollout.json"), "utf8")).active?.candidate_id ?? null;
   } catch {
     return null;
   }
@@ -375,7 +376,7 @@ const ingressServer = Bun.serve({
       root = id ? join(drafts, id) : null;
     } else {
       const version = liveVersion(name);
-      root = version ? join(appsDir, name, ".appgov", "versions", version) : null;
+      root = version ? join(appsDir, name, STATE_DIR_NAME, "versions", version) : null;
     }
     if (!root || !existsSync(root)) return html(`{"error":"no app at this address"}`, 404);
     if (needsSignIn(root)) return new Response(null, { status: 303, headers: { location: `/_pneuma-space/login?next=${encodeURIComponent(url.pathname)}` } });

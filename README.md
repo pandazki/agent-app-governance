@@ -55,4 +55,4 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 
 ## License
 
-[MIT](./LICENSE). It covers this repository. pneuma-framework and PneumaSpace are fetched when the images are built and come under their own terms.
+[MIT](./LICENSE). pneuma-framework and PneumaSpace, which the images are built from, are MIT too.

@@ -13,6 +13,9 @@ const DEFAULT_HOST = "http://127.0.0.1:8090";
 // The directory under each app directory, and under the apps directory, that the Host keeps for itself.
 // The Host names it in src/artifact.ts (STATE_DIR); this copy runs without that code, and a test checks the two agree.
 const STATE_DIR = ".appgov";
+// The directory under each app directory where pneuma-framework keeps every version and the history.
+// The name is the framework's (STATE_DIR_NAME in @pneuma-framework/core); a test checks this copy of it.
+const FRAMEWORK_DIR = ".pneuma-framework";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json]
@@ -219,7 +222,7 @@ const REFUSAL_HINTS = {
   plan_changed: 'Nothing changed. Run the same undo again to see what going back does now, then confirm that.',
   // The capability's check refused the snapshot before the older code went out. Unlike data_restore_failed, nothing happened.
   data_snapshot_refused:
-    `Nothing changed: no code was released and the stored data was not touched. Stop and show this to the user. Do not edit ${STATE_DIR}/ to name another snapshot: the Host checks every snapshot it is given.`,
+    `Nothing changed: no code was released and the stored data was not touched. Stop and show this to the user. Do not edit ${FRAMEWORK_DIR}/ to name another snapshot: the Host checks every snapshot it is given.`,
 };
 
 // What the owner types "accept" to, after the refusal has said which case applies.
@@ -300,7 +303,7 @@ function fail(message, code = 1) {
 // What the agent should do next, for the reasons where the raw detail does not say it.
 const REJECTION_HINTS = {
   protected_file_changed:
-    `These paths are protected (see AGENTS.md). Restore them from ${STATE_DIR}/versions/<active version>/ and submit again; put your own styles and scripts under public/app/.`,
+    `These paths are protected (see AGENTS.md). Restore them from ${FRAMEWORK_DIR}/versions/<active version>/ and submit again; put your own styles and scripts under public/app/.`,
   outside_writable_roots:
     "A change may only touch the writable roots listed in AGENTS.md and appgov.scaffold.json. Move these files under src/ or public/app/, or remove them, and submit again.",
   invalid_manifest: "Fix pneuma-space.json so that it parses, and submit again.",

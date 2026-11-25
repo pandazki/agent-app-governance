@@ -6,14 +6,14 @@
   "materialization": {
     "strategy": "copy",
     "source_roots": ["."],
-    "exclude": ["node_modules", "data", ".appgov", ".git", ".env"]
+    "exclude": ["node_modules", "data", ".pneuma-framework", ".appgov", ".pneuma", ".git", ".env"]
   },
   "artifact_boundary": {
     "writable_roots": ["src", "public/app", "pneuma-space.json", "package.json", "package-lock.json", "AGENTS.md"],
     "protected_paths": ["sdk", "ui", "public/ui.css", "public/ui.js", "appgov.scaffold.json", "CLAUDE.md"],
     "generated_roots": ["node_modules"],
     "share_include": ["src", "sdk", "ui", "public", "pneuma-space.json", "appgov.scaffold.json", "package.json", "package-lock.json", "AGENTS.md", "CLAUDE.md"],
-    "share_exclude": [".env", "node_modules", "data", ".appgov/versions", ".appgov/drafts"]
+    "share_exclude": [".env", "node_modules", "data", ".pneuma-framework/versions", ".appgov/drafts"]
   },
   "agent_contract": {
     "allowed_tasks": [

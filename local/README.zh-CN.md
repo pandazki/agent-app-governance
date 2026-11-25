@@ -36,7 +36,7 @@ docker compose up -d --build
 node bin/appgov.mjs create todo
 ```
 
-应用名以小写字母开头，最多 30 个字符，只能用小写字母、数字和连字符。Host 会把模板拷到 `apps/todo/`，加上写给 agent 的说明和一个 `.appgov/` 目录，跑一遍应用的测试，用一个临时名字把应用启动一次、确认它有应答（这叫预览），然后发布为版本 `v1`。它会打印应用地址、这次发布是怎么批准的，以及该用 agent 打开的目录：
+应用名以小写字母开头，最多 30 个字符，只能用小写字母、数字和连字符。Host 会把模板拷到 `apps/todo/`，加上写给 agent 的说明和两个隐藏目录 `.pneuma-framework/` 与 `.appgov/`，跑一遍应用的测试，用一个临时名字把应用启动一次、确认它有应答（这叫预览），然后发布为版本 `v1`。它会打印应用地址、这次发布是怎么批准的，以及该用 agent 打开的目录：
 
 ```
 published v1 at http://127.0.0.1:8080/apps/todo/
@@ -138,10 +138,12 @@ node .appgov/appgov.mjs undo --to v2 "原因" # 直接退回到更早的某个�
 
 | 什么 | 在哪里 |
 | --- | --- |
-| 源码、每一个版本、历史、等待中的改动 | 应用目录 `apps/<name>/`，大部分在 `.appgov/` 下 |
+| 源码、每一个版本、历史、等待中的改动 | 应用目录 `apps/<name>/`：每个版本和历史在 `.pneuma-framework/` 里，等待中的改动在 `.appgov/` 里 |
 | 主人链接的令牌、应用截图 | Docker 卷 `host-state` |
 | 每个应用存储的数据（数据库、文件、键值数据、对象）及其已发布的版本 | PneumaSpace 的 Docker 卷：`gateway-data`、`runner-data`、`redis-data`、`rustfs-data`，开启 PostgreSQL 时还有 `postgres-data` |
 | 数据快照（仅限 PostgreSQL 那项设置） | PostgreSQL 服务器上额外的数据库 |
+
+应用目录里有两个隐藏目录。`.pneuma-framework/` 由 pneuma-framework 写入，存着每一个版本和历史。`.appgov/` 由 Host 写入，存着它的 CLI 和等待决定的改动。
 
 Docker 会在每个卷名前面加上 compose 项目名，比如 `agent-app-governance_host-state`。`docker compose down` 会保留这些卷；`docker compose down -v` 会删掉它们，连同每个应用存储的数据和主人链接一起删掉，应用目录则不受影响。把应用目录拷到另一台电脑，拷过去的是源码和历史，不包括数据。
 

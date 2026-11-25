@@ -5,8 +5,10 @@ import { basename, dirname, join } from "node:path";
 import { validateScaffoldProjectManifest } from "@pneuma-framework/core/host-authoring";
 import { createFileBuildThreadStore } from "@pneuma-framework/core/build-thread";
 import type { DataSnapshotCapability } from "@pneuma-framework/host-kit/change-record";
+import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { agentLane } from "../src/agents";
-import { installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../src/artifact";
+import { listFiles } from "@pneuma-framework/host-kit/workspace";
+import { FRAMEWORK_DIR, installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../src/artifact";
 import { dataSnapshotFromEnv, hostUrlFromEnv, managerFromEnv, previewTtlFromEnv } from "../src/config";
 import { print } from "../src/drive";
 import { AppHost, HostError, type AppHostOptions, type HostDataSnapshot } from "../src/host";
@@ -55,6 +57,31 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(work, { recursive: true, force: true }));
 
+describe("what a version holds", () => {
+  test("neither the framework's directory, this Host's, nor pneuma-skills' .pneuma goes into a version or anything published", async () => {
+    await host.create("todo");
+    // pneuma-skills keeps its own .pneuma/ in the directories it works in.
+    edit("todo", ".pneuma/sessions.json", "{}\n");
+    edit("todo", "src/extra.ts", "export const extra = 1;\n");
+    const published: string[][] = [];
+    space.onPublish = (_name, dir) => void published.push(listFiles(dir));
+    expect(await host.submit({ name: "todo", intent: "add a file", agent: "codex" })).toMatchObject({ status: "published", version: "v2" });
+
+    const hiddenDirs = [FRAMEWORK_DIR, STATE_DIR, ".pneuma"];
+    const inside = (files: string[]) => files.filter((file) => file.split("/").some((part) => hiddenDirs.includes(part)));
+    // The preview and the release.
+    expect(published).toHaveLength(2);
+    for (const files of published) {
+      expect(files).toContain("src/extra.ts");
+      expect(inside(files)).toEqual([]);
+    }
+    const v2 = app("todo", FRAMEWORK_DIR, "versions", "v2");
+    expect(listFiles(v2)).toContain("src/extra.ts");
+    expect(inside(listFiles(v2))).toEqual([]);
+    expect((await host.status("todo")).uncommitted).toEqual([]);
+  });
+});
+
 describe("create", () => {
   test("publishes v1 and leaves a self-describing artifact", async () => {
     const result = await host.create("todo");
@@ -66,11 +93,16 @@ describe("create", () => {
     // The governed protocol has to be met before the platform guide's own "publish with appctl".
     expect(agents.indexOf("## Changing this app")).toBeLessThan(agents.indexOf("PneumaSpace app template (test fixture)"));
     expect(readFileSync(app("todo", "CLAUDE.md"), "utf8").trim()).toBe("@AGENTS.md");
-    for (const file of ["appgov.scaffold.json", ".appgov/app.json", ".appgov/appgov.mjs", ".appgov/history.jsonl", ".appgov/build-threads.json", ".appgov/release-rollout.json", ".appgov/versions/v1/src/server.ts"]) {
+    for (const file of ["appgov.scaffold.json", ".appgov/app.json", ".appgov/appgov.mjs", `${STATE_DIR_NAME}/history.jsonl`, `${STATE_DIR_NAME}/build-threads.json`, `${STATE_DIR_NAME}/release-rollout.json`, `${STATE_DIR_NAME}/versions/v1/src/server.ts`]) {
       expect(existsSync(app("todo", file))).toBe(true);
     }
+    // Each side keeps its own files: nothing the framework writes is in the Host's directory.
+    for (const file of ["versions", "history.jsonl", "record.json", "build-threads.json", "release-rollout.json"]) {
+      expect(existsSync(app("todo", STATE_DIR, file))).toBe(false);
+    }
+    expect(existsSync(app("todo", ".pneuma"))).toBe(false);
     // Host state never ships: the version is clean source.
-    expect(existsSync(app("todo", ".appgov/versions/v1/.appgov"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v1/.appgov`))).toBe(false);
 
     const [entry] = host.history("todo");
     expect(entry).toMatchObject({ kind: "create", outcome: "published", version: "v1" });
@@ -147,7 +179,7 @@ describe("agent-driven change", () => {
     edit("todo", "src/PUBLISH_FAILS", "x");
     expect(await noPreview.submit({ name: "todo", intent: "over quota", agent: "codex" })).toMatchObject({ status: "rejected", reason: "publish_failed" });
     expect((await noPreview.status("todo")).active_version).toBe("v1");
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
   });
 });
 
@@ -391,8 +423,8 @@ describe("the boundary of a change", () => {
     const result = await tampering.submit({ name: "todo", intent: "tweak", agent: "codex" });
 
     expect(result).toMatchObject({ status: "published", version: "v2", changed_paths: ["src/server.ts"], risks: ["source_code_change"] });
-    expect(existsSync(app("todo", ".appgov/versions/v2/src/migrate.ts"))).toBe(false);
-    expect(readFileSync(app("todo", ".appgov/versions/v2/sdk/serve.ts"), "utf8")).toBe(sdk);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2/src/migrate.ts`))).toBe(false);
+    expect(readFileSync(app("todo", `${STATE_DIR_NAME}/versions/v2/sdk/serve.ts`), "utf8")).toBe(sdk);
     expect(space.live.get("todo")!.files).not.toContain("src/migrate.ts");
     expect(readFileSync(app("todo", "sdk/serve.ts"), "utf8")).toBe(sdk);
   });
@@ -457,7 +489,7 @@ describe("the boundary of a change", () => {
     expect(result.detail).toContain("while verify ran");
     expect(reaching.history("todo").at(-1)).toMatchObject({ outcome: "rejected", reason: "draft_changed_after_check" });
     expect((await reaching.status("todo")).active_version).toBe("v1");
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
     expect(space.live.get("todo")!.files).not.toContain("src/migrate.ts");
   });
 
@@ -478,7 +510,7 @@ describe("the boundary of a change", () => {
     expect(status.active_version).toBe("v1");
     expect(status.pending).toEqual([]);
     expect(existsSync(app("todo", ".appgov/drafts", pending.change_id))).toBe(false);
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
     expect(host.history("todo").at(-1)).toMatchObject({ kind: "decision", outcome: "rejected", reason: "draft_changed_after_check" });
   });
 
@@ -494,7 +526,7 @@ describe("the boundary of a change", () => {
       },
     });
     expect(result).toMatchObject({ status: "published", version: "v2", changed_paths: ["public/app/note.txt"] });
-    expect(existsSync(app("todo", ".appgov/versions/v2/data"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2/data`))).toBe(false);
   });
 
   test("what the agent keeps for itself in a host-driven draft is neither reported nor classified", async () => {
@@ -853,7 +885,7 @@ const serverText = () => readFileSync(app("todo", "src/server.ts"), "utf8");
 describe("the app is on the framework's change record", () => {
   test("create writes the record's own files, and the version counter is not in app.json", async () => {
     await host.create("todo");
-    expect(JSON.parse(readFileSync(app("todo", ".appgov/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 1, current_version: "v1" });
+    expect(JSON.parse(readFileSync(app("todo", `${STATE_DIR_NAME}/record.json`), "utf8"))).toEqual({ schema_version: 1, version_counter: 1, current_version: "v1" });
     expect(JSON.parse(readFileSync(app("todo", ".appgov/app.json"), "utf8")).version_counter).toBeUndefined();
     expect(host.history("todo")[0]).toMatchObject({ kind: "create", version: "v1", guarantees: ["verified", "previewed", "approved", "sealed"] });
   });
@@ -885,7 +917,7 @@ describe("the app is on the framework's change record", () => {
     space.onPublish = (name, dir) => name === "todo" && writeFileSync(join(dir, "src", "sneaked.ts"), "export const x = 1;\n");
     const result = await host.submit({ name: "todo", intent: "tweak", agent: "codex" });
     expect(result).toMatchObject({ status: "rejected", reason: "draft_changed_after_check" });
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
     expect((await host.status("todo")).active_version).toBe("v1");
     expect(host.history("todo").at(-1)).toMatchObject({ outcome: "rejected", guarantees: [], address_note: "the address is back on v1" });
   });
@@ -932,7 +964,7 @@ describe("record mode: the zero position of the dial", () => {
   test("no edit is still not a change", async () => {
     await recording.create("todo");
     expect(await recording.submit({ name: "todo", intent: "nothing", agent: "codex" })).toMatchObject({ status: "rejected", reason: "no_change" });
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
   });
 
   test("a refused publish keeps the version recorded, says what the address serves, and the next change goes on from it", async () => {
@@ -948,7 +980,7 @@ describe("record mode: the zero position of the dial", () => {
       address_note: "the address was not touched and still serves v1",
       serving_version: "v1",
     });
-    expect(existsSync(app("todo", ".appgov/versions/v2/src/extra.ts"))).toBe(true);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2/src/extra.ts`))).toBe(true);
     expect(space.live.get("todo")!.files).not.toContain("src/extra.ts");
     expect(await recording.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v1", uncommitted: [] });
     expect(recording.history("todo").at(-1)).toMatchObject({ outcome: "release_failed", version: "v2", guarantees: [], address_note: "the address was not touched and still serves v1" });
@@ -1027,7 +1059,7 @@ describe("undo walks back", () => {
     expect(await host.undo("todo", "further")).toMatchObject({ active_version: "v2", undone_version: "v3" });
     expect(serverText()).toBe("export const version = 2;\n");
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", serving_version: "v2", uncommitted: [] });
-    expect(JSON.parse(readFileSync(app("todo", ".appgov/release-rollout.json"), "utf8")).active.candidate_id).toBe("v2");
+    expect(JSON.parse(readFileSync(app("todo", `${STATE_DIR_NAME}/release-rollout.json`), "utf8")).active.candidate_id).toBe("v2");
 
     edit("todo", "src/server.ts", "export const version = 5;\n");
     expect(await host.submit({ name: "todo", intent: "new direction", agent: "codex" })).toMatchObject({ status: "published", version: "v5" });
@@ -1173,7 +1205,7 @@ describe("one-way changes", () => {
     if (result.status !== "rejected") return;
     expect(result.detail).toContain("the disk is full");
     expect(space.log.slice(steps)).toEqual([`discard ${pending.preview!.app}`]);
-    expect(existsSync(app("todo", ".appgov/versions/v2"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v2`))).toBe(false);
     expect((await withData.status("todo")).active_version).toBe("v1");
     expect(withData.history("todo").at(-1)).toMatchObject({ kind: "decision", outcome: "rejected", reason: "data_snapshot_failed", guarantees: ["verified", "previewed", "approved"] });
   });
@@ -1301,7 +1333,7 @@ describe("one-way changes", () => {
     const withData = makeHost(join(work, "apps"), space, { dataSnapshot: cap });
     await approveOneWay(withData);
     // The agent can write the record: it points the snapshot at something the capability never made.
-    const history = app("todo", ".appgov", "history.jsonl");
+    const history = app("todo", STATE_DIR_NAME, "history.jsonl");
     const lines = readFileSync(history, "utf8");
     expect(lines).toContain('"ref":"snap-1"');
     writeFileSync(history, lines.replaceAll('"ref":"snap-1"', '"ref":"snap_billing_v1"'));
@@ -1374,7 +1406,7 @@ describe("one-way changes", () => {
     const cap = fakeSnapshots([]);
     const withData = makeHost(join(work, "apps"), space, { dataSnapshot: cap });
     await approveOneWay(withData);
-    const state = app("todo", ".appgov");
+    const state = app("todo", STATE_DIR_NAME);
     const restore = cap.restore;
     cap.restore = async (input) => {
       await restore(input);
@@ -1497,7 +1529,7 @@ describe("recorded but not live", () => {
 
     const result = await recording.submit({ name: "todo", intent: "add a file", agent: "codex" });
     expect(result).toMatchObject({ status: "published", version: "v2", released_as_is: true, changed_paths: ["src/extra.ts"], guarantees: [] });
-    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v3`))).toBe(false);
     expect(space.live.get("todo")!.files).toContain("src/extra.ts");
     expect(await recording.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v2", uncommitted: [] });
     expect(recording.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "published", version: "v2", base_version: "v1", guarantees: [] });
@@ -1518,7 +1550,7 @@ describe("recorded but not live", () => {
       approved_by: [AUTO_SUBJECT],
       guarantees: ["verified", "previewed", "approved", "sealed"],
     });
-    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v3`))).toBe(false);
     expect(space.live.get("todo")!.files).toContain("src/extra.ts");
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", serving_version: "v2" });
     expect(host.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "published", version: "v2", guarantees: ["verified", "previewed", "approved", "sealed"] });
@@ -1593,7 +1625,7 @@ describe("recorded but not live", () => {
     await recording.submit({ name: "todo", intent: "drop notes", agent: "codex", oneWay: "drops the note column and its data" });
     const again = await recording.submit({ name: "todo", intent: "drop notes", agent: "codex" });
     expect(again).toMatchObject({ status: "release_failed", version: "v2", reason: "data_snapshot_failed", address_note: "the address was not touched and still serves v1" });
-    expect(existsSync(app("todo", ".appgov/versions/v3"))).toBe(false);
+    expect(existsSync(app("todo", `${STATE_DIR_NAME}/versions/v3`))).toBe(false);
     expect(recording.history("todo").at(-1)).toMatchObject({ kind: "release", outcome: "release_failed", version: "v2", reason: "data_snapshot_failed" });
   });
 
@@ -1620,10 +1652,10 @@ describe("a record that cannot be written after a publish", () => {
   /** Makes the record refuse new versions once the release of `name` (not a preview, not an undo) has gone out. */
   const refuseVersionsAfterPublish = (name: string) => {
     space.onPublish = (published, dir) => {
-      if (published === name && !dir.includes(join(".appgov", "versions"))) chmodSync(app(name, ".appgov", "versions"), 0o555);
+      if (published === name && !dir.includes(join(STATE_DIR_NAME, "versions"))) chmodSync(app(name, STATE_DIR_NAME, "versions"), 0o555);
     };
   };
-  const allowVersions = (name: string) => existsSync(app(name, ".appgov", "versions")) && chmodSync(app(name, ".appgov", "versions"), 0o755);
+  const allowVersions = (name: string) => existsSync(app(name, STATE_DIR_NAME, "versions")) && chmodSync(app(name, STATE_DIR_NAME, "versions"), 0o755);
 
   test.skipIf(process.getuid?.() === 0)("a governed change puts the address back and answers with a reason, not a bare error", async () => {
     await host.create("todo");
@@ -1662,8 +1694,8 @@ describe("a record that cannot be written after a publish", () => {
   test.skipIf(process.getuid?.() === 0)("create takes the app down again, so neither the app nor the name is left behind", async () => {
     space.onPublish = (published, dir) => {
       if (published === "todo" && !dir.includes("-pv")) {
-        mkdirSync(app("todo", ".appgov", "versions"), { recursive: true });
-        chmodSync(app("todo", ".appgov", "versions"), 0o555);
+        mkdirSync(app("todo", STATE_DIR_NAME, "versions"), { recursive: true });
+        chmodSync(app("todo", STATE_DIR_NAME, "versions"), 0o555);
       }
     };
     let err: HostError;
@@ -1714,7 +1746,7 @@ describe("what the review of this change found", () => {
   test.skipIf(process.getuid?.() === 0)("an undo whose older version went out but could not be recorded puts the address back and says so", async () => {
     edit("todo", "src/extra.ts", "export const extra = 1;\n");
     await host.submit({ name: "todo", intent: "add a file", agent: "codex" });
-    const state = app("todo", ".appgov");
+    const state = app("todo", STATE_DIR_NAME);
     // Stands in for a disk that refuses the record's write once v1 has gone out.
     space.onPublish = (name, dir) => name === "todo" && dir.endsWith(join("versions", "v1")) && chmodSync(state, 0o555);
     try {
@@ -1738,7 +1770,7 @@ describe("what the second review found", () => {
     space.onPublish = (name, dir) => {
       if (name !== "todo" || !dir.endsWith(join("versions", "v1"))) return;
       const line = { change_id: "chg_meanwhile", at: new Date().toISOString(), kind: "declaration", intent: "written meanwhile", agent: "codex", version: "v2", guarantees: [], one_way: { reason: "rewrote every stored id" } };
-      appendFileSync(app("todo", ".appgov", "history.jsonl"), `${JSON.stringify(line)}\n`);
+      appendFileSync(app("todo", STATE_DIR_NAME, "history.jsonl"), `${JSON.stringify(line)}\n`);
     };
 
     // Before, the record planned again after v1 was live, refused, and the Host answered 409 as if nothing had happened.
@@ -2025,7 +2057,7 @@ describe("app directories made before the change record", () => {
     const root = app(name);
     cpSync(FIXTURE_TEMPLATE, root, { recursive: true });
     installOverlay(root, join(EXAMPLE, "overlay"), join(EXAMPLE, "bin", "appgov.mjs"));
-    const versionsDir = join(root, ".appgov", "versions");
+    const versionsDir = join(root, STATE_DIR_NAME, "versions");
     put(root, "src/server.ts", "export const version = 1;\n");
     snapshot(root, join(versionsDir, "v1"));
     put(root, "src/server.ts", v2);
@@ -2033,12 +2065,12 @@ describe("app directories made before the change record", () => {
     put(root, "src/server.ts", "export const version = 3;\n");
     snapshot(root, join(versionsDir, "v3"));
     restoreWorkingTree(join(versionsDir, "v2"), root);
-    const thread = await createFileBuildThreadStore({ workspace: root, stateDir: STATE_DIR }).startThread({ profile_id: "space-isolate", app_id: name, builder_user_id: OWNER });
+    const thread = await createFileBuildThreadStore({ workspace: root }).startThread({ profile_id: "space-isolate", app_id: name, builder_user_id: OWNER });
     put(root, ".appgov/app.json", JSON.stringify({ schema_version: 1, app_id: name, scaffold_id: "space-isolate", owner: OWNER, thread_id: thread.thread_id, created_at: "2026-11-01T00:00:00.000Z", version_counter: 3 }));
     const line = (fields: Record<string, unknown>) => JSON.stringify({ at: "2026-11-01T00:00:00.000Z", agent: "codex", control: "agent-driven", ...fields });
     put(
       root,
-      ".appgov/history.jsonl",
+      `${STATE_DIR_NAME}/history.jsonl`,
       [
         line({ change_id: "a", kind: "create", outcome: "published", intent: "create", version: "v1", agent: "host", control: "owner" }),
         line({ change_id: "b", kind: "change", outcome: "rejected", intent: "broken", base_version: "v1", reason: "verify_failed" }),
@@ -2049,17 +2081,17 @@ describe("app directories made before the change record", () => {
     );
     if (rollout) {
       const instance = (id: string) => ({ candidate_id: id, image_tag: `${name}:${id}`, status: "healthy", checks: [], created_at_ms: 1, updated_at_ms: 1 });
-      put(root, ".appgov/release-rollout.json", JSON.stringify({ active: instance("v2"), previous: instance("v3"), timeline: [], created_at_ms: 1, updated_at_ms: 1 }));
+      put(root, `${STATE_DIR_NAME}/release-rollout.json`, JSON.stringify({ active: instance("v2"), previous: instance("v3"), timeline: [], created_at_ms: 1, updated_at_ms: 1 }));
     }
     return root;
   }
 
   test("are put on the record on first open: the counter from app.json, the current version from what the address serves", async () => {
     const root = await legacyApp("todo", true);
-    await space.publish("todo", join(root, ".appgov", "versions", "v2"));
+    await space.publish("todo", join(root, STATE_DIR_NAME, "versions", "v2"));
 
     expect(await host.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", serving_version: "v2", uncommitted: [] });
-    expect(JSON.parse(readFileSync(join(root, ".appgov/record.json"), "utf8"))).toEqual({ schema_version: 1, version_counter: 3, current_version: "v2" });
+    expect(JSON.parse(readFileSync(join(root, `${STATE_DIR_NAME}/record.json`), "utf8"))).toEqual({ schema_version: 1, version_counter: 3, current_version: "v2" });
     expect(JSON.parse(readFileSync(join(root, ".appgov/app.json"), "utf8"))).not.toHaveProperty("version_counter");
     // Old lines never said what held, so they read as nothing guaranteed.
     expect(host.history("todo").map((h) => h.guarantees)).toEqual([[], [], [], [], []]);
@@ -2089,7 +2121,7 @@ describe("app directories made before the change record", () => {
   test("without a rollout state, the highest version is taken as current", async () => {
     const root = await legacyApp("todo", false);
     expect((await host.status("todo")).active_version).toBe("v3");
-    expect(JSON.parse(readFileSync(join(root, ".appgov/record.json"), "utf8"))).toMatchObject({ version_counter: 3, current_version: "v3" });
+    expect(JSON.parse(readFileSync(join(root, `${STATE_DIR_NAME}/record.json`), "utf8"))).toMatchObject({ version_counter: 3, current_version: "v3" });
   });
 });
 
@@ -2132,7 +2164,7 @@ describe("the Host records its own address in what it manages", () => {
     const moved = makeHost(join(work, "apps"), space, { hostUrl: "http://127.0.0.1:9999" });
     const status = await moved.status("todo");
     expect(read(file).url).toBe("http://127.0.0.1:9999");
-    // .appgov/ is not part of any version.
+    // The address record in .appgov/ is not part of any version.
     expect(status.uncommitted).toEqual([]);
   });
 

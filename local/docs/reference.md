@@ -76,7 +76,7 @@ An undo entry claims nothing about the version it makes current; that version's 
 
 A change that waits for the owner keeps its preview up until it is decided or the preview ends. Approving needs the preview to stand at that moment: once it has ended, approving is refused with `preview_gone` (409), and when PneumaSpace does not answer, with `preview_unknown` (502). `preview <id>`, or "Show it to me again" on the page, publishes the checked draft again with a new end. Approving or denying discards the preview. With `APPGOV_PREVIEW=off` there is no preview, approving needs none, and no entry carries `previewed`.
 
-These are never part of a version: `node_modules`, `.appgov`, `.git`, `dist`, `.work`, `.claude`, `.codex`, `.vscode` and `.idea` folders, a top-level `data` folder, and `.env`, `.env.local` and `.DS_Store` files.
+These are never part of a version: `node_modules`, `.pneuma-framework`, `.appgov`, `.git`, `dist`, `.work`, `.claude`, `.codex`, `.vscode` and `.idea` folders, the `.pneuma` folder pneuma-skills keeps, a top-level `data` folder, and `.env`, `.env.local` and `.DS_Store` files.
 
 ### When the Host cannot vouch for what the address serves
 
@@ -111,7 +111,7 @@ In `record` mode a submit is neither classified nor approved by these rules, tho
 
 ## One-way changes and undo
 
-- **Undo walks back.** Each `undo` goes to the version the current one was built on: v5, then v4, then v3. `undo --to <version>` goes straight to one of those. A version that the current one was not built on cannot be an undo target; to bring it back, submit its files again from `.appgov/versions/<version>/`. A new change after an undo gets a new number.
+- **Undo walks back.** Each `undo` goes to the version the current one was built on: v5, then v4, then v3. `undo --to <version>` goes straight to one of those. A version that the current one was not built on cannot be an undo target; to bring it back, submit its files again from `.pneuma-framework/versions/<version>/`. A new change after an undo gets a new number.
 - **Each step** publishes the older version, checks that it answers, and only then moves the history and puts the older files back in the working tree. Undo refuses to start while the working tree has edits that were never submitted. If the tree is edited while the undo runs, the version still goes out and the tree is left as it is, with a note.
 - **Which changes are one-way.** In `personal` and `review-all`, the preset decides; in `policy/personal.json` only the destructive SQL rule is one-way. In `record` mode the agent says it with `submit --one-way "<what is lost>"`; the checked modes refuse that flag. Before the owner approves a one-way change, the Host tells them what approving costs and whether it can put stored data back.
 - **Going back past a one-way change waits for the owner, in every mode.** The undo is refused (`crosses_one_way_change`; the CLI exits 2) and nothing is touched. The message lists each one-way version and why, and says which case applies: (a) the Host saved the data before that change, the data returns to that snapshot, and everything stored since is set aside and will not be in the app; or (b) only the code returns, and the older version may fail on today's data. The API answer carries `data_restore: "snapshot"` or `"none"`.
@@ -218,15 +218,17 @@ The Host answers only to the host names `localhost`, `127.0.0.1` and `[::1]`, th
 | `AGENTS.md`, `CLAUDE.md` | How to work on the app: the rules for the agent, then PneumaSpace's guide to the template |
 | `pneuma-space.json` | What the app asks PneumaSpace for (capabilities) |
 | `appgov.scaffold.json` | Which folders a change may touch, which files are protected, and the checks |
+| `.pneuma-framework/versions/vN/` | The clean source of every recorded version |
+| `.pneuma-framework/history.jsonl` | One line per attempt, with the guarantees that held |
+| `.pneuma-framework/record.json` | The version counter and the current version |
+| `.pneuma-framework/build-threads.json` | Each request, proposal and decision in order |
+| `.pneuma-framework/release-rollout.json` | Which version the address serves, and the one before |
 | `.appgov/appgov.mjs` | The CLI |
-| `.appgov/host.json` | The Host's address, written by the Host |
+| `.appgov/host.json` | The Host's address |
 | `.appgov/app.json` | The app's name, owner and creation time |
-| `.appgov/versions/vN/` | The clean source of every recorded version |
-| `.appgov/history.jsonl` | One line per attempt, with the guarantees that held |
-| `.appgov/record.json` | The version counter and the current version |
 | `.appgov/pending/`, `.appgov/drafts/` | Changes that wait for the owner, and their drafts |
-| `.appgov/build-threads.json` | Each request, proposal and decision in order |
-| `.appgov/release-rollout.json` | Which version the address serves, and the one before |
+
+The two hidden folders have different writers. pneuma-framework writes `.pneuma-framework/`: every version and the history. The Host writes `.appgov/`: its CLI, its address and the changes waiting for a decision. Neither folder is part of a version or of what the Host publishes.
 
 Copying the folder to another machine and pointing a Host at it continues the same history. It does not copy the app's stored data.
 

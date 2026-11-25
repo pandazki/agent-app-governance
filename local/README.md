@@ -36,7 +36,7 @@ The first build downloads base images and builds PneumaSpace and the Host from s
 node bin/appgov.mjs create todo
 ```
 
-A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and a `.appgov/` folder, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, how the release was approved, and the folder to open with your agent:
+A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and two hidden folders, `.pneuma-framework/` and `.appgov/`, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, how the release was approved, and the folder to open with your agent:
 
 ```
 published v1 at http://127.0.0.1:8080/apps/todo/
@@ -138,10 +138,12 @@ A **one-way change** is one that putting the old code back cannot undo, such as 
 
 | What | Where |
 | --- | --- |
-| The source, every version, the history, changes that wait | The app's folder, `apps/<name>/`, most of it under `.appgov/` |
+| The source, every version, the history, changes that wait | The app's folder, `apps/<name>/`: every version and the history in `.pneuma-framework/`, the changes that wait in `.appgov/` |
 | The owner link's token and the pictures of your apps | The Docker volume `host-state` |
 | Each app's stored data (database, files, key-value data, objects) and its published releases | PneumaSpace's Docker volumes: `gateway-data`, `runner-data`, `redis-data`, `rustfs-data`, and `postgres-data` with PostgreSQL |
 | Data snapshots (PostgreSQL option only) | Extra databases on the PostgreSQL server |
+
+An app folder has two hidden folders. `.pneuma-framework/` is written by pneuma-framework and holds every version and the history. `.appgov/` is written by the Host and holds its CLI and the changes waiting for a decision.
 
 Docker puts the compose project's name in front of each volume's name, for example `agent-app-governance_host-state`. `docker compose down` keeps the volumes. `docker compose down -v` deletes them, and with them every app's stored data and the owner link; the app folders stay. Copying an app's folder to another computer copies its source and history, not its data.
 

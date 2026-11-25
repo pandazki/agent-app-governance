@@ -1,7 +1,8 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { openChangeRecord, type ChangeRecord, type ChangeRecordEntry } from "@pneuma-framework/host-kit/change-record";
 import { copyTree, diffTrees, listFiles, treeSignature, type TreeDiff, type TreeWalkOptions } from "@pneuma-framework/host-kit/workspace";
+import { releaseRolloutFilePath } from "@pneuma-framework/core/release-rollout-store";
 import type { TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -13,14 +14,20 @@ import type { TestCoverage } from "./test-coverage";
 //   AGENTS.md / CLAUDE.md      how to work on it (read by Codex / Claude Code)
 //   pneuma-space.json          what the runtime must provide
 //   appgov.scaffold.json       what may change and which checks gate a change
-//   .appgov/app.json           identity of the app
-//   .appgov/appgov.mjs         zero-dependency CLI that talks to a Host
-//   .appgov/host.json          the Host's address, as the Host recorded it; the CLI reads it
-//   .appgov/versions/vN        the framework's change record: a clean copy of every version
-//   .appgov/history.jsonl      the change record's history: every attempt, with the guarantees that held
-//   .appgov/record.json        the change record's version counter and current version
-//   .appgov/build-threads.json framework BuildThread transcript
-//   .appgov/release-rollout.json  framework rollout state: what the address serves (active / previous)
+//
+//   written by pneuma-framework, in .pneuma-framework/ (FRAMEWORK_DIR):
+//   versions/vN                the change record: a clean copy of every version
+//   history.jsonl              the change record's history: every attempt, with the guarantees that held
+//   record.json                the change record's version counter and current version
+//   build-threads.json         the BuildThread transcript
+//   release-rollout.json       the rollout state: what the address serves (active / previous)
+//
+//   written by this Host, in .appgov/ (STATE_DIR):
+//   app.json                   identity of the app
+//   appgov.mjs                 zero-dependency CLI that talks to a Host
+//   host.json                  the Host's address, as the Host recorded it; the CLI reads it
+//   pending/<change>.json      changes waiting for the owner's decision
+//   drafts/<change>/           the copy a change is checked and previewed from, while it is open
 //
 // Source, versions, history and the current version travel with the directory; they belong to
 // `@pneuma-framework/host-kit/change-record`, and this Host writes its entries there with its own
@@ -30,16 +37,25 @@ import type { TestCoverage } from "./test-coverage";
 
 /**
  * The directory, directly under every app directory and under the directory that holds the apps, where this
- * Host keeps what is not part of any version: the change record, the app's identity, waiting changes, the
- * CLI copy and the recorded address. The framework's stores are told this name (`stateDir`). The CLI in
- * bin/ names the same directory on its own, because it runs without this code; a test checks the two agree.
+ * Host keeps its own files: the app's identity, waiting changes, drafts, the CLI copy and the recorded
+ * address. The CLI in bin/ names the same directory on its own, because it runs without this code; a test
+ * checks the two agree.
  */
 export const STATE_DIR = ".appgov";
 
 /**
- * Never part of a version: host state, installed dependencies, VCS, local secrets, the
- * directories coding agents and editors keep for themselves, and the files directory a local
- * run leaves at the top level. Claude Code writes `.claude/settings.local.json` when the user
+ * The directory, directly under every app directory, where pneuma-framework keeps the files it writes: the
+ * change record (versions, history.jsonl, record.json), the BuildThread transcript and the rollout state.
+ * The name is the framework's (`STATE_DIR_NAME` in `@pneuma-framework/core`). It is read here off a path the
+ * framework builds, because the package root that exports it also loads modules whose dependencies the
+ * Host's image does not install. A test checks it against that export.
+ */
+export const FRAMEWORK_DIR = basename(dirname(releaseRolloutFilePath("/")));
+
+/**
+ * Never part of a version: the framework's and this Host's state, installed dependencies, VCS, local
+ * secrets, the directories coding agents, editors and pneuma-skills (`.pneuma`) keep for themselves, and
+ * the files directory a local run leaves at the top level. Claude Code writes `.claude/settings.local.json` when the user
  * picks "don't ask again"; versioning that would release it and let a later undo delete it.
  * `data` is an ignored path, not an ignored directory name, because `src/data/` is source.
  *
@@ -47,7 +63,7 @@ export const STATE_DIR = ".appgov";
  * `changedPaths` and `draftSignature` cover exactly what a version holds.
  */
 export const TREE: TreeWalkOptions = {
-  ignoredDirs: new Set(["node_modules", STATE_DIR, ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea"]),
+  ignoredDirs: new Set(["node_modules", FRAMEWORK_DIR, STATE_DIR, ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea", ".pneuma"]),
   ignoredFiles: new Set([".env", ".env.local", ".DS_Store"]),
   ignoredPaths: new Set(["data"]),
 };
@@ -58,11 +74,13 @@ export const APP_NAME = /^[a-z][a-z0-9-]{0,29}$/;
 
 export interface AppPaths {
   readonly root: string;
+  /** This Host's own directory in the app (STATE_DIR). */
   readonly state: string;
   readonly drafts: string;
   readonly pending: string;
   readonly info: string;
   readonly cli: string;
+  /** The framework's rollout state, which this Host reads to know what the address serves. */
   readonly rollout: string;
 }
 
@@ -76,7 +94,7 @@ export function appPaths(appsDir: string, name: string): AppPaths {
     pending: join(state, "pending"),
     info: join(state, "app.json"),
     cli: join(state, "appgov.mjs"),
-    rollout: join(state, "release-rollout.json"),
+    rollout: releaseRolloutFilePath(root),
   };
 }
 
@@ -101,7 +119,7 @@ export function writeAppInfo(paths: AppPaths, info: AppInfo): void {
 
 /** The app's change record, with the Host's own idea of which files make up a version. */
 export function openRecord(paths: AppPaths): ChangeRecord {
-  return openChangeRecord(paths.root, { stateDir: STATE_DIR, walkOptions: TREE });
+  return openChangeRecord(paths.root, { walkOptions: TREE });
 }
 
 /**
@@ -149,7 +167,7 @@ export function nextVersionId(record: ChangeRecord): string {
 
 /** An app directory an earlier Host made: app.json still holds the version counter, and there is no record.json yet. */
 export function isLegacyRecord(paths: AppPaths): boolean {
-  if (existsSync(join(paths.state, "record.json")) || !existsSync(paths.info)) return false;
+  if (existsSync(join(paths.root, FRAMEWORK_DIR, "record.json")) || !existsSync(paths.info)) return false;
   const raw = JSON.parse(readFileSync(paths.info, "utf8")) as Record<string, unknown>;
   return typeof raw.version_counter === "number";
 }
@@ -214,7 +232,7 @@ export interface HostEntryFields {
   readonly channel?: string;
 }
 
-/** One line of `.appgov/history.jsonl`: the change record's entry plus this Host's fields. */
+/** One line of `.pneuma-framework/history.jsonl`: the change record's entry plus this Host's fields. */
 export type HistoryEntry = ChangeRecordEntry & HostEntryFields;
 
 /** The files of a tree that make up a version. */
@@ -326,7 +344,7 @@ const HOST_ADDRESS_NOTE =
 
 /**
  * Record the Host's own address under `<dir>/.appgov/host.json`, so the CLI copy there finds the Host
- * without anyone exporting APPGOV_HOST. `.appgov/` is not part of any version. Rewritten only when the
+ * without anyone exporting APPGOV_HOST. Like the framework's directory, `.appgov/` is not part of any version. Rewritten only when the
  * address or scope changed, so `recorded_at` says when this address was first recorded. Returns whether it wrote.
  */
 export function recordHostAddress(dir: string, url: string, scope: HostAddressRecord["scope"], now: Date = new Date()): boolean {
