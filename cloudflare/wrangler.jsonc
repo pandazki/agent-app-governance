@@ -1,0 +1,48 @@
+// The shape of the Worker the installer deploys. scripts/install.mjs writes the real configuration, with this
+// edition's absolute paths, the name prefix, the bucket and the PneumaSpace origin, into ~/.appgov/hosts/<prefix>/;
+// this file is what `npm run types` reads, and a reference. Nothing secret goes in either: the owner key's hash, the
+// container secret and the PneumaSpace token are Worker secrets.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "appgov-host",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "APPGOV_SPACE_ORIGIN": "https://space.example.com",
+    "APPGOV_GOVERNANCE": "personal",
+    "APPGOV_MANAGER": "appgov",
+    "APPGOV_PREVIEW_TTL": "3600",
+    "APPGOV_CONTAINER_INSTANCE": "standard-1",
+    "APPGOV_LOCATION_HINT": "wnam"
+  },
+  "secrets": { "required": ["APPGOV_OWNER_KEY_HASH", "APPGOV_CONTAINER_SECRET", "APPGOV_SPACE_TOKEN"] },
+  "r2_buckets": [{ "binding": "FOLDERS", "bucket_name": "appgov-host-folders" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "APPS", "class_name": "AppHostObject" },
+      { "name": "AUTH", "class_name": "AuthObject" }
+    ]
+  },
+  "exports": {
+    "AppHostObject": { "type": "durable-object", "storage": "sqlite" },
+    "AuthObject": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "containers": [
+    {
+      "class_name": "AppHostObject",
+      "name": "appgov-host",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "host": {
+          "dockerfile": "./container/Dockerfile",
+          "build_context": "..",
+          "build_vars": { "FRAMEWORK_COMMIT": "22d0e36eaf326a7d3fb98a44da727afb660d5bff" }
+        }
+      }
+    }
+  ],
+  "observability": { "enabled": true }
+}
