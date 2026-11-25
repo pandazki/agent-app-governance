@@ -20,6 +20,8 @@
   },
   "secrets": { "required": ["APPGOV_OWNER_KEY_HASH", "APPGOV_CONTAINER_SECRET", "APPGOV_SPACE_TOKEN"] },
   "r2_buckets": [{ "binding": "FOLDERS", "bucket_name": "appgov-host-folders" }],
+  // Which version of this Worker a Durable Object runs, shown by `appgov container <app>`.
+  "version_metadata": { "binding": "WORKER_VERSION" },
   "durable_objects": {
     "bindings": [
       { "name": "APPS", "class_name": "AppHostObject" },

@@ -32,6 +32,8 @@ node cloudflare/scripts/install.mjs https://space.example.com \
 
 如果你的 Docker 跑在别的 context 下，先设好 `DOCKER_CONTEXT`（colima 的话：`DOCKER_CONTEXT=colima`）。
 
+重跑部署了新构建之后，Durable Object 还在活动的应用会继续用之前的构建，直到它空闲下来；想让它马上换上新构建，以主人身份运行 `node cloudflare/bin/appgov.mjs container <app> stop`：它停掉这个应用的容器并重启它的 Durable Object，下一条命令就会用新构建启动 Host（`container <app>` 会显示正在用的镜像和 Worker 版本）。还在 2026-11-25 之前构建上的应用没有这个重启，只能等它空闲几分钟之后才换上。
+
 ## 登录，并给 agent 一个令牌
 
 ```sh
@@ -107,7 +109,6 @@ node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个�
 - 撤销只恢复代码；存储的数据从不放回。
 - PneumaSpace 的令牌不能彻底清除（purge）应用。Host 撤下一个应用的地址时，应用被移除，名字会一直被占用，直到 PneumaSpace 的主人在控制台里把它清除。
 - 每个应用一个容器，按需启动。一次提交在整个检查期间都占着连接，在下面的运行里约 30 秒，其中约三分之二是 PneumaSpace 先发布预览、再发布正式版本（见下面的表）。
-- 重新部署之后，Durable Object 还在活动的应用会继续用之前的构建，直到它空闲几分钟。
 - 默认规则靠匹配文本找破坏性 SQL，和本地版一样。
 
 ## 跑过什么

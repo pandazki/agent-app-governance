@@ -32,6 +32,8 @@ It checks Node, Docker, the Wrangler login and the PneumaSpace sign-in before it
 
 Set `DOCKER_CONTEXT` first if your Docker runs under another context (for colima: `DOCKER_CONTEXT=colima`).
 
+After a rerun deploys a new build, an app whose Durable Object is still active keeps the previous build until it goes idle; to move it now, run `node cloudflare/bin/appgov.mjs container <app> stop` as the owner, which stops the app's container and restarts its Durable Object, so the next command starts the Host from the new build (`container <app>` shows the image and Worker version in use). An app still on a build from before 2026-11-25 does not have this restart and moves only once it has been idle for a few minutes.
+
 ## Sign in and give your agent a token
 
 ```sh
@@ -107,7 +109,6 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - Undo restores code; stored data is never put back.
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
-- After a redeploy, an app whose Durable Object is still active keeps the previous build until it has been idle for a few minutes.
 - The default rules find destructive SQL by matching text, as in the local edition.
 
 ## What has been run

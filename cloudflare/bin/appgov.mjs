@@ -741,7 +741,11 @@ switch (command) {
   case "container": {
     const stop = args.includes("stop");
     out(await call(stop ? "POST" : "GET", `${base}/container${stop ? "/stop" : ""}`, stop ? {} : undefined, { owner: true }), (d) =>
-      console.log(stop ? (d.stopped ? `stopped the Host's container of ${app}` : `the Host's container of ${app} was not running`) : `the Host's container of ${app} is ${d.running ? "running" : "not running"}${d.image ? `; image ${d.image}` : ""}${d.build ? `; Host build ${d.build}` : ""}`),
+      console.log(
+        stop
+          ? `${d.stopped ? `stopped the Host's container of ${app}` : `the Host's container of ${app} was not running`}${d.restarting ? "; its Durable Object restarts, and the next command starts the Host from the build deployed now" : ""}`
+          : `the Host's container of ${app} is ${d.running ? "running" : "not running"}${d.image ? `; image ${d.image}` : ""}${d.build ? `; Host build ${d.build}` : ""}${d.worker ? `; Worker version ${d.worker.version} (uploaded ${d.worker.uploaded})` : ""}`,
+      ),
     );
     break;
   }

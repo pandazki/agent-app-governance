@@ -14,6 +14,8 @@ interface Env {
   APPS: DurableObjectNamespace<AppHostObject>;
   AUTH: DurableObjectNamespace<AuthObject>;
   FOLDERS: R2Bucket;
+  /** Which version of this Worker is running here. */
+  WORKER_VERSION?: WorkerVersionMetadata;
   /** SHA-256 of the owner key (secret). */
   APPGOV_OWNER_KEY_HASH: string;
   /** Shared with the container (secret). */
@@ -137,7 +139,11 @@ export class AppHostObject extends DurableObject<Env> {
       if (request.method === "POST") {
         const was = container.running;
         if (was) await container.destroy();
-        return json({ app, stopped: was, running: container.running });
+        // This object is restarted too, once the answer is out: an object that stays active keeps the Worker version
+        // and the image it started with, so after a redeploy the next request would start the old build again. A
+        // restarted object runs the Worker's current version and starts the container from that version's image.
+        setTimeout(() => this.ctx.abort("the owner stopped the Host's container; restarting on the current version"), 250);
+        return json({ app, stopped: was, running: container.running, restarting: true });
       }
       // Which image the Durable Object starts, by its digest only (the registry path names the account), and which
       // build of the Host answers in the running container.
@@ -148,7 +154,8 @@ export class AppHostObject extends DurableObject<Env> {
           build = ((await (await this.port().fetch("http://host/ready", { signal: AbortSignal.timeout(3000) })).json()) as { build?: unknown }).build ?? null;
         } catch {}
       }
-      return json({ app, running: container.running, image, build });
+      const worker = this.env.WORKER_VERSION ? { version: this.env.WORKER_VERSION.id.slice(0, 8), uploaded: this.env.WORKER_VERSION.timestamp } : null;
+      return json({ app, running: container.running, image, build, worker });
     }
     if (op !== "create" && op !== "read" && op !== "write") return json({ error: "unknown operation", reason: "bad_op" }, 400);
     const timing: Record<string, number> = {};
