@@ -1,15 +1,19 @@
-# space-all-in-one
+# agent-app-governance: the local edition
 
-A headless Creation Host on [PneumaSpace](https://github.com/pandazki/pneuma-space). One `docker compose up` gives a coding agent you already use (Claude Code, Codex) a place to publish small stateful apps on your own machine and to keep changing them under the framework's governed loop.
+A headless Creation Host on [PneumaSpace](https://github.com/pandazki/pneuma-space). One `docker compose up` gives a coding agent you already use (Claude Code, Codex) a place to publish small stateful apps on your own machine and to keep changing them under [pneuma-framework](https://github.com/pandazki/pneuma-framework)'s governed loop.
 
-[中文版](./README.zh-CN.md)
+[中文版](./README.zh-CN.md) · [Back to the repository's overview](../README.md)
 
-The example answers two questions the other examples leave to the Host author:
+This edition was `examples/space-all-in-one` in pneuma-framework's repository, taken from it at commit `c1ffce7`. It builds on pneuma-framework from source at the commit `compose.yaml` pins (its packages are not on npm; see "Tests, typecheck and the framework source" below) and on PneumaSpace at the commit pinned beside it. The Host here is an example to copy, not a package to import.
+
+The example answers two questions that [pneuma-framework's other examples](https://github.com/pandazki/pneuma-framework/tree/c1ffce726866a3b315e9714c49a5547c2426fbcf/examples) leave to the Host author:
 
 - **Where does the Published Application run?** On PneumaSpace: an app is a directory and a manifest, publishing is an upload, an idle app sleeps and its data outlives every release.
 - **Who drives the loop?** Either side. The same loop runs agent-driven (the agent edits and submits) and host-driven (the Host starts the agent), over the same app directory.
 
 ## Status
+
+Every row but the last was run while this edition lived in pneuma-framework's repository as `examples/space-all-in-one`: the paths and commands in them are from there, and PR and issue numbers without a repository name are pandazki/pneuma-framework's. The last row is the check made when it moved here.
 
 Run end to end on 2026-11-23 on macOS with colima (Docker 29.5, Compose 5.7, buildx 0.38) and again with Docker Desktop (Docker 29.9), Bun 1.4.5, Node 26 on the machine and Node 24 in the image, Claude Code 2.1.330 and codex-cli 0.167.0.
 
@@ -17,7 +21,7 @@ The rows after those cover the Host's move onto the framework's change record an
 
 | What was run | Result |
 | --- | --- |
-| `bun run typecheck` and `bun test` for the whole repository | Pass. The offline tests here use an in-memory PneumaSpace and scripted agent CLIs. |
+| `bun run typecheck` and `bun test` for the whole pneuma-framework repository | Pass. The offline tests here use an in-memory PneumaSpace and scripted agent CLIs. |
 | `docker compose up -d --build`, from the pinned commit and from a local checkout | Five services up, gateway healthy. |
 | `create` | `appctl init` in the container, `npm ci && npm test`, preview boot, release. About 14 s. |
 | Agent-driven, Claude Code (`claude -p` in the app directory) | Read `status` and `history`, edited, ran the tests, submitted. Published without being told the protocol and without calling `appctl`. |
@@ -57,6 +61,7 @@ The rows after those cover the Host's move onto the framework's change record an
 | A one-way change on a SQLite app, with the snapshot practice on and PneumaSpace's `db_backend` on `sqlite` | The column drop waited. The Host's disclosure and the page's confirmation both said the data would be saved first. Approving on the page answered `data_snapshot_failed` (the capability copies PostgreSQL databases only): nothing went live, the page said so in one sentence, and the change no longer waited. The "can't be put back" path was shown on `todo`, across its declared one-way v5 with no snapshot: the page said the data can't be put back and held "Go back" until the confirmation was ticked. It was not run. |
 | A change made in `review-all`, approved in `personal` | The Host was recreated in `review-all` for one submit and then back in `personal`. The change still waited and the page approved it, but the record named only `policy:auto` as the approver: approving reruns the standing policy of the mode the Host runs in at that moment, and in `personal` that policy approves a source change by itself. The CLI goes through the same step. Fixed since: the record also names the subject who said yes when that subject holds the owner role (`user:me`). Any other subject's yes, such as one sent through the JSON API, is not named, and the page says "you confirmed it" only when the app's owner is among the approvers. |
 | The no-context end-to-end run, 2026-11-24: pneuma-framework `5d2f1a5` with the pin at pandazki/pneuma-space@6e73538; three fresh Codex sessions (codex-cli 0.167.0, started with `env -i`), the owner page, one host-driven change. Written up in pandazki/pneuma-framework#17 | Every step ended as declared. From an empty directory to a running app with stored data in 6 min 21 s and 30 commands, with no human input; a build from the clone with no cache passed as well. A returning change opened in the app directory (2 min 16 s) put a search box live as v3 under `policy:auto` and stopped the change that drops a column and its data at `needs_approval`; the agent did not try to approve it. The owner approved it on the page: v4, `user:me`, one-way. Going back past it, on this stack with no data snapshot, did not go through: v3's code did not start on the changed data, the address went back on v4, and the record says `restore rejected (published_unhealthy)`. "How many apps do I have, and is anything waiting?" took two commands. A host-driven Codex change published v5 in 64 s, and a plain go-back returned to v4. The issue lists four frictions. Not exercised there: Claude Code, `deny` on the page, and Codex's default sandbox. |
+| Moved into agent-app-governance, 2026-11-25: a fresh clone of this repository, pneuma-framework at `c1ffce7` fetched only by the image build and by `bun run setup`, PneumaSpace at `6e73538`; colima on macOS, a second stack on other ports beside running ones, its apps directory outside the clone | `bun run setup`, then `bun run typecheck` and `bun test`: 319 pass, 2 skip, 0 fail in 10 files, the same counts as the example at that commit inside pneuma-framework. `docker compose up -d --build` built every image (the page: `app.js` 237 KB, `app.css` 41 KB) and started six services. `create` published v1 in about 16 s. A host-driven change with `--agent scripted` published v2 under `policy:auto` in about 14 s, with `verified, previewed, approved, sealed`; the app, its new file and the Host's page answered 200, and pictures of v1 and v2 were taken. `undo` went back to v1, the file answered 404, and the history recorded `restore rolled_back`. Not run in this check: a coding agent, a decision by the owner, a one-way change, the postgres profile. |
 
 Not run live: a Linux machine as a whole (only the Host side was checked, on the VM's own filesystem), and the gateway without the Docker socket. The changes made after the first-run trial in pandazki/pneuma-framework#3 were run on the stack. With the Host moved to another port, `status` worked from an app directory with nothing exported, and the unreachable message named the address it tried and where that address came from. `list`, run from the apps directory by the CLI copy the Host keeps there, summarised four apps. The overview page answered with all four and no script. A write carrying a browser's `Origin`, a `text/plain` write, and a read under another host name were each refused. A submit with markers of two agents was recorded as `unknown` with both candidates, and its history entry says that eleven SDK tests ran and none of the app's own. Not run live: a second stack beside the first (checked with `docker compose config` only), an agent answering from the `guide` block, and the page in a browser (it was fetched, not rendered). For ephemeral and managed apps, not run live: a preview ttl above PneumaSpace's maximum (tested offline), PneumaSpace not answering when the Host asks who manages an app, the `ephemeral` quota of a tenant other than `default`, a deny while another manager runs the app, and the console's prompt for the manager's name (only the admin API and `appctl` were tried). The owner page and the screenshot service that replaced that page were run on the stack on 2026-11-24 (rows above). Not run live there: going back past a one-way change confirmed on the page (the throwaway app could not take a one-way change live on that stack, and `todo` was left as it was), an approval on the page that takes a data snapshot first (that needs PneumaSpace's global `db_backend` on `postgres`, which stayed on `sqlite`), and the page's words for an unfinished undo and for an address nobody saw answer (the Host's side of both was run live before; the page's words were checked against fixtures and in tests).
 
@@ -64,10 +69,12 @@ A change takes 10 to 15 s on that machine when the standing policy approves it. 
 
 ## Run it (agent-driven)
 
-Needs Docker with a recent Compose (the Host image uses additional build contexts) and any Node 18+ on the machine for the artifact CLI.
+Needs Docker with a recent Compose (the Host image uses additional build contexts), any Node 18+ on the machine for the artifact CLI, and access to GitHub for the first build: the images take pneuma-framework and PneumaSpace from there, at the commits `compose.yaml` pins. Nothing has to be installed or fetched by hand first.
+
+From a clone of this repository:
 
 ```sh
-cd examples/space-all-in-one
+cd local
 docker compose up -d --build            # PneumaSpace + the Host; first build pulls node:24, redis, rustfs
 node bin/pneuma.mjs create todo         # copies the PneumaSpace template, verifies, previews, publishes v1
 open http://127.0.0.1:8080/apps/todo/
@@ -145,7 +152,7 @@ Before every write to an app on PneumaSpace (a submit, an approval, an undo), th
 - Nobody, though this Host's record has the app (every app created before this pin, or one someone unmanaged since): the write goes ahead, and because it names the Host it marks the app as managed by it, which is what PneumaSpace expects of a manager's next publish. The result says so in one sentence (`PneumaSpace had no manager for todo; this submit marked it as managed by pneuma-host`). The history does not: who manages an app is PneumaSpace's fact, kept in its audit log and asked for by `status`. Refusing instead would strand every app made before managers existed, and the person asking this Host for a change has chosen this Host.
 - PneumaSpace does not answer: the write goes ahead, and the publish meets the same rule at PneumaSpace.
 
-To build PneumaSpace from a local checkout instead of the pinned commit, copy `.env.example` to `.env` and set `PNEUMA_SPACE_CONTEXT` to the checkout's path.
+To build PneumaSpace from a local checkout instead of the pinned commit, copy `.env.example` to `.env` and set `PNEUMA_SPACE_CONTEXT` to the checkout's path. `PNEUMA_FRAMEWORK_CONTEXT` does the same for pneuma-framework, for instance `./vendor/pneuma-framework`, the copy `bun run setup` fetches.
 
 On Linux the Host has to write app files as you, or your agent cannot edit them. It does this by itself: started as root, it becomes whoever owns the mounted apps directory (`host-entrypoint.sh`). The repository ships an empty `apps/` so that the directory is yours before Docker mounts it. If you point `PNEUMA_APPS_DIR` somewhere else, create that directory yourself first; a directory Docker has to create belongs to root. Docker Desktop is not needed on Linux: Docker Engine with the Compose and buildx plugins is enough.
 
@@ -180,11 +187,11 @@ Then `docker compose --env-file second.env up -d --build`, and `node bin/pneuma.
 
 ## Run it (host-driven)
 
-This is the shape a desktop agent product embeds: the product owns the conversation and starts the code agent itself. It runs on your machine, not in the container, because that is where `claude` and `codex` are logged in. It needs Bun 1.4.5 (the version the repository pins in `package.json`), Node 24+, a PneumaSpace checkout for `appctl`, and the compose stack above for PneumaSpace itself.
+This is the shape a desktop agent product embeds: the product owns the conversation and starts the code agent itself. It runs on your machine, not in the container, because that is where `claude` and `codex` are logged in. It needs Bun 1.4.5 (the version `package.json` pins, as pneuma-framework does), Node 24+, a PneumaSpace checkout for `appctl` (at the commit `compose.yaml` pins), and the compose stack above for PneumaSpace itself.
 
 ```sh
-bun install --frozen-lockfile                                 # once, at the repo root
-cd examples/space-all-in-one
+cd local
+bun run setup                                                 # once: pneuma-framework into vendor/, then bun install
 export PNEUMA_SPACE_CLI=/path/to/pneuma-space/cli/appctl.ts
 
 bun run drive change todo "add a due date to each item" --agent claude-code
@@ -200,11 +207,27 @@ A host-driven change, an owner's approval and `undo` all write a version over th
 
 Nobody answers a permission prompt in the `claude-code` lane, so a tool call outside the adapter's allow-list is denied. The lane prints each denial as `[claude:denied ...]`.
 
+## Tests, typecheck and the framework source
+
+This edition uses four pneuma-framework packages: `@pneuma-framework/core`, `host-kit`, `backend-codex` and `backend-claude-code`. They are not published, so they come from source at one commit, which is set in one place: the `x-framework-context` line of `compose.yaml`, beside the PneumaSpace pin.
+
+- The Host's image takes that commit from GitHub as a build context of its own (`framework`), as it takes PneumaSpace. `docker compose up` needs nothing else.
+- On your machine, `bun run setup` (`scripts/setup.sh`) reads the same line, fetches that commit into `vendor/pneuma-framework` (git-ignored, one commit deep), and runs `bun install --frozen-lockfile`. `package.json` names the four packages as `workspace:*` dependencies and declares them, under `vendor/`, as its workspace, so Bun links them from there. `bun.lock` was seeded from pneuma-framework's lockfile at that commit, so the packages from npm are the versions the example had there.
+
+```sh
+cd local
+bun run setup         # once, and again after the pin moves
+bun run typecheck
+bun test              # the offline tests: an in-memory PneumaSpace and scripted agent CLIs; apps/ and vendor/ are left out
+```
+
+To move to another framework commit, change it in `compose.yaml` and in the READMEs' links into the framework's docs, which name it, then run `bun run setup`. If that stops because the framework's packages changed their dependencies, run `bun install` and commit the new `bun.lock`.
+
 ## The artifact
 
 The Host keeps no state about an app. Everything travels in the app directory, so copying it to another machine and pointing any Host at it continues the same history (`test/host.test.ts` does exactly that).
 
-Versions, history and the current version are the framework's change record (`@pneuma-framework/host-kit/change-record`, see [Change Record](../../docs/developer/change-record.md)). The Host writes its own fields (outcome, risks, approval, checks, address) into the same entries. An app directory made by an earlier version of this Host has `versions/` and `history.jsonl` already, under the same names. On first open the Host writes `record.json` from the counter in `app.json` and the version the rollout state says the address serves, so it goes on where it was. Its old history lines read as `guarantees: []`. Those versions never said whether they were one-way, so the Host applies the preset's one-way rules to each of them once and declares what it finds with a note. On the live run's `todo` app, that marks the column drop. A change an earlier Host left waiting for the owner is classified the same way when it is read, and its disclosure gains the cost line.
+Versions, history and the current version are the framework's change record (`@pneuma-framework/host-kit/change-record`, see [Change Record](https://github.com/pandazki/pneuma-framework/blob/c1ffce726866a3b315e9714c49a5547c2426fbcf/docs/developer/change-record.md)). The Host writes its own fields (outcome, risks, approval, checks, address) into the same entries. An app directory made by an earlier version of this Host has `versions/` and `history.jsonl` already, under the same names. On first open the Host writes `record.json` from the counter in `app.json` and the version the rollout state says the address serves, so it goes on where it was. Its old history lines read as `guarantees: []`. Those versions never said whether they were one-way, so the Host applies the preset's one-way rules to each of them once and declares what it finds with a note. On the live run's `todo` app, that marks the column drop. A change an earlier Host left waiting for the owner is classified the same way when it is read, and its disclosure gains the cost line.
 
 | Path | What it is |
 | --- | --- |

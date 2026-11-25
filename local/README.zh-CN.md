@@ -1,15 +1,19 @@
-# space-all-in-one
+# agent-app-governance：本地版
 
-一个跑在 [PneumaSpace](https://github.com/pandazki/pneuma-space) 上的无界面 Creation Host。一条 `docker compose up`，你已经在用的 coding agent（Claude Code、Codex）就有了一个在本机发布小型有状态应用的地方，并且之后的每次修改都走 framework 的受治理回路。
+一个跑在 [PneumaSpace](https://github.com/pandazki/pneuma-space) 上的无界面 Creation Host。一条 `docker compose up`，你已经在用的 coding agent（Claude Code、Codex）就有了一个在本机发布小型有状态应用的地方，并且之后的每次修改都走 [pneuma-framework](https://github.com/pandazki/pneuma-framework) 的受治理回路。
 
-[English](./README.md)
+[English](./README.md) · [回到仓库总览](../README.zh-CN.md)
 
-这个示例回答了其他示例留给 Host 作者的两个问题：
+这个版本原本是 pneuma-framework 仓库里的 `examples/space-all-in-one`，从提交 `c1ffce7` 取出。它基于 pneuma-framework 的源码，版本是 `compose.yaml` 里固定的那个提交（这些包没有发布到 npm，见下文"测试、类型检查和 framework 源码"），PneumaSpace 也用固定在它旁边的提交。这里的 Host 是一个拿去照抄的示例，不是可以直接 import 的包。
+
+这个示例回答了 [pneuma-framework 的其他示例](https://github.com/pandazki/pneuma-framework/tree/c1ffce726866a3b315e9714c49a5547c2426fbcf/examples)留给 Host 作者的两个问题：
 
 - **Published Application 跑在哪？** 跑在 PneumaSpace 上：应用是目录加清单，发布是上传，闲置休眠，数据跨版本保留。
 - **谁驱动回路？** 两边都行。同一条回路既可以由 agent 驱动（agent 改完后提交），也可以由 Host 驱动（Host 启动 agent），操作的是同一个应用目录。
 
 ## 现状
+
+除最后一行外，下表每一行都是这个版本还在 pneuma-framework 仓库里、叫 `examples/space-all-in-one` 时跑的：其中的路径和命令以那里为准，没写仓库名的 PR 和 issue 编号都是 pandazki/pneuma-framework 的。最后一行是搬到这里时做的检查。
 
 2026-11-23 在 macOS 上端到端实跑过：先用 colima（Docker 29.5、Compose 5.7、buildx 0.38），又用 Docker Desktop（Docker 29.9）跑了一遍，Bun 1.4.5，本机 Node 26、镜像内 Node 24，Claude Code 2.1.330，codex-cli 0.167.0。
 
@@ -17,7 +21,7 @@
 
 | 跑了什么 | 结果 |
 | --- | --- |
-| 全仓库的 `bun run typecheck` 和 `bun test` | 通过。这里的离线测试用的是内存版 PneumaSpace 和脚本化的 agent CLI。 |
+| pneuma-framework 全仓库的 `bun run typecheck` 和 `bun test` | 通过。这里的离线测试用的是内存版 PneumaSpace 和脚本化的 agent CLI。 |
 | `docker compose up -d --build`，固定提交和本地检出两种来源 | 五个服务都起来，gateway 为 healthy。 |
 | `create` | 容器内 `appctl init`、`npm ci && npm test`、预览启动、正式发布，约 14 秒。 |
 | agent 驱动，Claude Code（在应用目录里 `claude -p`） | 先读 `status` 和 `history`，改代码，跑测试，提交。没人告诉它协议，也没有去调 `appctl`，直接发布成功。 |
@@ -57,6 +61,7 @@
 | SQLite 应用上的单向改动，数据快照做法开着，PneumaSpace 的 `db_backend` 是 `sqlite` | 删列的改动在等待。Host 的告知和页面的确认都说会先保存数据。在页面上批准，返回 `data_snapshot_failed`（这个能力只能复制 PostgreSQL 数据库）：什么都没有上线，页面用一句话说明，改动也不再等待。“数据放不回去”这条路在 `todo` 上展示：越过它声明为单向、没有快照的 v5，页面说明数据放不回去，勾选确认之前“回退”不可点。没有真的执行。 |
 | 在 `review-all` 下做的改动，在 `personal` 下批准 | 为了一次提交把 Host 用 `review-all` 重建，之后换回 `personal`。改动仍在等待，页面批准了它，但记录里的批准者只有 `policy:auto`：批准时会按 Host 当时所在模式的常设策略重新评估，而 `personal` 的策略会自己批准源码改动。CLI 走的是同一步。此后已修正：说"批准"的主体持有 owner 角色时（`user:me`），记录里也写上它；其他主体的批准（比如通过 JSON API 发来的）不写进批准者，页面也只在批准者里有应用的 owner 时才说"你确认过"。 |
 | 无上下文的端到端实跑，2026-11-24：pneuma-framework `5d2f1a5`，pin 在 pandazki/pneuma-space@6e73538；三个全新的 Codex 会话（codex-cli 0.167.0，用 `env -i` 启动）、主人页面、一次 Host 驱动的改动。记录在 pandazki/pneuma-framework#17 | 每一步都按声明的那样结束。从空目录到一个带存储数据、正在运行的应用用了 6 分 21 秒、30 条命令，没有人工输入；从克隆出来的仓库不用缓存构建也通过了。在应用目录里打开的回访改动（2 分 16 秒）把搜索框在 `policy:auto` 下作为 v3 上线，把删掉一列及其数据的那个改动停在 `needs_approval`；agent 没有尝试批准它。主人在页面上批准了它：v4，`user:me`，单向。越过它往回走，在这个没有数据快照的栈上没有成功：v3 的代码在改过的数据上起不来，地址回到 v4，记录写着 `restore rejected (published_unhealthy)`。"我有几个应用，有没有在等我的？"用了两条命令。一次 Host 驱动的 Codex 改动在 64 秒内发布了 v5，一次普通的回退回到了 v4。issue 里列了四处摩擦。这次没有覆盖：Claude Code、页面上的 `deny`，以及 Codex 的默认沙箱。 |
+| 搬进 agent-app-governance，2026-11-25：这个仓库的全新克隆，pneuma-framework `c1ffce7` 只由镜像构建和 `bun run setup` 取得，PneumaSpace `6e73538`；macOS 上的 colima，第二个栈用别的端口跑在已有的栈旁边，应用目录在克隆之外 | `bun run setup` 之后 `bun run typecheck` 和 `bun test`：10 个文件里 319 通过、2 跳过、0 失败，与 pneuma-framework 里同一提交的示例数目相同。`docker compose up -d --build` 构建了所有镜像（页面：`app.js` 237 KB，`app.css` 41 KB），起了六个服务。`create` 约 16 秒发布 v1。一次 `--agent scripted` 的 Host 驱动改动约 14 秒在 `policy:auto` 下发布 v2，带 `verified, previewed, approved, sealed`；应用、它的新文件和 Host 的页面都应答 200，v1 和 v2 都拍了图。`undo` 回到 v1，那个文件应答 404，历史记下 `restore rolled_back`。这次检查没有跑：coding agent、主人的决定、单向改动、postgres profile。 |
 
 没有实跑的部分：一台完整的 Linux 机器（只在虚拟机自己的文件系统上验证了 Host 这一侧）；不挂 Docker socket 的网关。pandazki/pneuma-framework#3 那次首次试跑之后做的改动已经在栈上跑过。把 Host 换到另一个端口后，不设任何环境变量，在应用目录里 `status` 可以正常工作；连不上时的消息会写明尝试的地址和它的来源。在应用所在的目录里，用 Host 放在那里的那份 CLI 运行 `list`，得到四个应用的摘要。概览页列出了四个应用，页面里没有脚本。带浏览器 `Origin` 的写请求、`text/plain` 的写请求、用别的主机名发起的读请求，都被拒绝。同时带有两个 agent 标记的一次提交被记为 `unknown`，两个候选都保留；它的历史记录写明跑了 11 个 SDK 测试，应用自己的测试一个也没有。没有实跑的：与第一个栈并存的第二个栈（只用 `docker compose config` 检查过）；agent 按 `guide` 输出的说明回答问题；在浏览器里打开概览页（只抓取过，没有渲染）。临时应用和受管应用这部分没有实跑的：超过 PneumaSpace 上限的预览 ttl（离线测过）；Host 问应用由谁管理时 PneumaSpace 没有应答；`default` 之外租户的 `ephemeral` 配额；别的管理方管着应用时拒绝一个等待中的变更；控制台要求输入管理方名字的提示（只试了管理 API 和 `appctl`）。取代概览页的主人页面和截图服务在 2026-11-24 上了栈（见上面几行）。在栈上没有实跑的：在页面上确认、越过单向改动的回退（临时应用在那个栈上没法让单向改动上线，`todo` 保持原样没动）；页面上先做数据快照的批准（需要把 PneumaSpace 的全局 `db_backend` 设为 `postgres`，它一直是 `sqlite`）；页面对没做完的撤销、对没人见到地址回应这两种情况的措辞（Host 这一侧以前实跑过；页面的措辞是对着示例数据和在测试里检查的）。
 
@@ -64,10 +69,12 @@
 
 ## 跑起来（agent 驱动）
 
-需要 Docker（较新的 Compose，Host 镜像用了 additional build contexts），以及本机任意 Node 18+ 用来跑产物自带的 CLI。
+需要 Docker（较新的 Compose，Host 镜像用了 additional build contexts）、本机任意 Node 18+ 用来跑产物自带的 CLI，以及第一次构建时能访问 GitHub：镜像从那里按 `compose.yaml` 固定的提交取 pneuma-framework 和 PneumaSpace。事先不需要手动安装或下载任何东西。
+
+在这个仓库的克隆里：
 
 ```sh
-cd examples/space-all-in-one
+cd local
 docker compose up -d --build            # PneumaSpace + Host
 node bin/pneuma.mjs create todo         # 拷模板、验证、预览、发布 v1
 open http://127.0.0.1:8080/apps/todo/
@@ -145,7 +152,7 @@ PneumaSpace 控制台是 PneumaSpace 自己的管理页面，地址是 http://12
 - 没有管理方，但这个 Host 的记录里有这个应用（这次固定版本之前建的所有应用，或者后来被人取消管理的）：照常写，而因为写操作点出了 Host 的名字，它会把应用标记为由 Host 管理，这也正是 PneumaSpace 对管理方下一次发布的预期。结果里用一句话说明（`PneumaSpace had no manager for todo; this submit marked it as managed by pneuma-host`）。历史里不写：应用由谁管理是 PneumaSpace 的事实，记在它的审计日志里，`status` 每次去问。改成拒绝的话，在有管理方之前建的应用就全都动不了了；而向这个 Host 要求变更的人，已经选择了这个 Host。
 - PneumaSpace 没有应答：照常写，发布时 PneumaSpace 会按同一条规则把关。
 
-想用本地的 PneumaSpace 检出来构建，把 `.env.example` 拷成 `.env`，把 `PNEUMA_SPACE_CONTEXT` 设成检出目录的路径。
+想用本地的 PneumaSpace 检出来构建，把 `.env.example` 拷成 `.env`，把 `PNEUMA_SPACE_CONTEXT` 设成检出目录的路径。`PNEUMA_FRAMEWORK_CONTEXT` 对 pneuma-framework 做同样的事，比如设成 `./vendor/pneuma-framework`，也就是 `bun run setup` 取下来的那份。
 
 在 Linux 上，Host 必须以你的身份写应用文件，否则你的 agent 改不了它们。这一步是自动的：Host 以 root 启动后，会切换成挂载进来的应用目录的属主（`host-entrypoint.sh`）。仓库里带了一个空的 `apps/`，保证这个目录在 Docker 挂载之前就归你所有。如果把 `PNEUMA_APPS_DIR` 指到别处，请先自己建好那个目录，由 Docker 代建的目录属于 root。Linux 上不需要 Docker Desktop，Docker Engine 加 Compose 和 buildx 插件就够了。
 
@@ -180,11 +187,11 @@ PNEUMA_APPS_DIR=/path/to/second-apps    # 先自己建好，这样它归你所�
 
 ## 跑起来（Host 驱动）
 
-这是桌面版 agent 产品会嵌入的形态：产品自己持有对话，自己启动 code agent。它跑在你的机器上而不是容器里，因为 `claude` 和 `codex` 的登录态在本机。需要 Bun 1.4.5（仓库在 `package.json` 里固定的版本）、Node 24+、一份 PneumaSpace 检出（用它的 `appctl`），以及上面的 compose 栈。
+这是桌面版 agent 产品会嵌入的形态：产品自己持有对话，自己启动 code agent。它跑在你的机器上而不是容器里，因为 `claude` 和 `codex` 的登录态在本机。需要 Bun 1.4.5（`package.json` 固定的版本，与 pneuma-framework 相同）、Node 24+、一份 PneumaSpace 检出（用它的 `appctl`，版本是 `compose.yaml` 固定的提交），以及上面的 compose 栈。
 
 ```sh
-bun install --frozen-lockfile                                 # 仓库根目录执行一次
-cd examples/space-all-in-one
+cd local
+bun run setup                                                 # 执行一次：把 pneuma-framework 取到 vendor/，再 bun install
 export PNEUMA_SPACE_CLI=/path/to/pneuma-space/cli/appctl.ts
 
 bun run drive change todo "给每一项加截止日期" --agent claude-code
@@ -200,11 +207,27 @@ Host 驱动的变更、owner 的批准和 `undo` 都会把某个版本写回工�
 
 `claude-code` 通道里没有人回答权限询问，所以适配器允许列表之外的工具调用会被拒绝。通道会把每次拒绝打印成 `[claude:denied ...]`。
 
+## 测试、类型检查和 framework 源码
+
+这个版本用到 pneuma-framework 的四个包：`@pneuma-framework/core`、`host-kit`、`backend-codex` 和 `backend-claude-code`。它们没有发布，所以从源码取，版本是一个提交，只在一处设定：`compose.yaml` 里 `x-framework-context` 那一行，就在 PneumaSpace 的 pin 旁边。
+
+- Host 的镜像把这个提交当作自己的一个 build context（`framework`）从 GitHub 取，和取 PneumaSpace 一样。`docker compose up` 不需要别的准备。
+- 在你的机器上，`bun run setup`（`scripts/setup.sh`）读同一行，把这个提交取到 `vendor/pneuma-framework`（git 忽略，只取一个提交深），再跑 `bun install --frozen-lockfile`。`package.json` 把这四个包写成 `workspace:*` 依赖，并把 `vendor/` 下的它们声明为自己的 workspace，所以 Bun 从那里链接。`bun.lock` 以 pneuma-framework 在该提交的 lockfile 为起点生成，所以来自 npm 的包和示例在那里时的版本相同。
+
+```sh
+cd local
+bun run setup         # 执行一次；pin 改了之后再执行
+bun run typecheck
+bun test              # 离线测试：内存版 PneumaSpace 和脚本化的 agent CLI；不含 apps/ 和 vendor/
+```
+
+要换到 framework 的另一个提交：在 `compose.yaml` 里改，也改各个 README 里指向 framework 文档、写着这个提交的链接，然后跑 `bun run setup`。如果它因为 framework 的包改了依赖而停下，跑 `bun install` 并提交新的 `bun.lock`。
+
 ## 产物
 
 Host 不保存任何应用状态，全部跟着应用目录走。把目录拷到另一台机器、交给任何一个 Host，历史可以原样接续（`test/host.test.ts` 里有这个用例）。
 
-版本、历史和当前版本属于 framework 的变更记录（`@pneuma-framework/host-kit/change-record`，见 [Change Record](../../docs/developer/change-record.zh-CN.md)）。Host 把自己的字段（结果、风险、批准、检查、地址）写进同一批记录。这个 Host 早先版本留下的应用目录已经有同名的 `versions/` 和 `history.jsonl`。第一次打开时，Host 用 `app.json` 里的计数器和发布状态记下的地址版本写出 `record.json`，于是从原来的地方接着走。旧的历史行读作 `guarantees: []`。那些版本从未说明自己是不是单向的，所以 Host 会对每个版本应用一次预设里的单向规则，把发现的用一条 note 声明出来。在实跑留下的 `todo` 应用上，这会标出那次删列。早先的 Host 留下的、正在等 owner 决定的变更，在被读取时也按同样方式分类，它的披露会补上代价那一句。
+版本、历史和当前版本属于 framework 的变更记录（`@pneuma-framework/host-kit/change-record`，见 [Change Record](https://github.com/pandazki/pneuma-framework/blob/c1ffce726866a3b315e9714c49a5547c2426fbcf/docs/developer/change-record.zh-CN.md)）。Host 把自己的字段（结果、风险、批准、检查、地址）写进同一批记录。这个 Host 早先版本留下的应用目录已经有同名的 `versions/` 和 `history.jsonl`。第一次打开时，Host 用 `app.json` 里的计数器和发布状态记下的地址版本写出 `record.json`，于是从原来的地方接着走。旧的历史行读作 `guarantees: []`。那些版本从未说明自己是不是单向的，所以 Host 会对每个版本应用一次预设里的单向规则，把发现的用一条 note 声明出来。在实跑留下的 `todo` 应用上，这会标出那次删列。早先的 Host 留下的、正在等 owner 决定的变更，在被读取时也按同样方式分类，它的披露会补上代价那一句。
 
 | 路径 | 内容 |
 | --- | --- |
