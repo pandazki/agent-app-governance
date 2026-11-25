@@ -3,8 +3,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { ChangeRecordRefused } from "@pneuma-framework/host-kit/change-record";
-import { APP_NAME } from "./artifact";
-import { HostError, type AppHost } from "./host";
+import { APP_NAME } from "../../host/src/artifact";
+import { HostError, type AppHost } from "../../host/src/host";
 import { appModel, assetType, backModel, changeModel, homeModel, loadPageAssets, missingModel, NO_PICTURES, PAGE_ICON, pageHeaders, renderShell, unreadableModel, type PageAssets, type PageContext, type PictureLookup } from "./page";
 import type { PageModel } from "./page-model";
 import { chooseLang } from "./page-words";

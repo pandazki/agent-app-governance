@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { AGENT_KINDS, agentLane, type AgentKind } from "./agents";
 import { hostFromEnv } from "./config";
-import { HostError, type ChangeResult } from "./host";
+import { HostError, type ChangeResult } from "../../host/src/host";
 
 // ---------------------------------------------------------------------------
 // Host-driven control plane, as a command line.

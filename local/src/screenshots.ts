@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { join } from "node:path";
-import { APP_NAME, type HistoryEntry } from "./artifact";
-import type { AppStatus, AppSummary } from "./host";
+import { APP_NAME, type HistoryEntry } from "../../host/src/artifact";
+import type { AppStatus, AppSummary } from "../../host/src/host";
 
 // ---------------------------------------------------------------------------
 // Pictures of apps, for the owner page.

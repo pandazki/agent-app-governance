@@ -45,7 +45,7 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 - One trusted machine and one person. The owner is not authenticated: approving needs a terminal, or a link the Host prints in its log. That stops an honest agent from approving its own change, not another program on the same machine.
 - Undo restores code. Stored data comes back only through the optional snapshot practice, and only for apps whose database is on PostgreSQL. Apps on SQLite, and files, key-value data and objects, are not covered.
 - The preset's rules for SQL are text patterns: they stop a `DROP` written in a string that never runs, and miss a deletion built from variables.
-- The Host is code in this repository, not a package to import. The parts that publish a version, check that the app answers and put the address back are in `local/`, not in pneuma-framework.
+- The Host is code in this repository, not a package to import. The parts that publish a version, check that the app answers and put the address back are in `host/`, not in pneuma-framework.
 - What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
 
 ## Built on

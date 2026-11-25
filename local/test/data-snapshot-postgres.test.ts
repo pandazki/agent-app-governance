@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dataSnapshotFromEnv } from "../src/config";
 import { ident, literal, openBunSql, postgresTemplateSnapshot, serverOf, type SqlSession } from "../src/data-snapshot-postgres";
-import { AppHost } from "../src/host";
-import { loadRiskPolicy } from "../src/policy";
-import type { SpaceBinding } from "../src/space";
+import { AppHost } from "../../host/src/host";
+import { loadRiskPolicy } from "../../host/src/policy";
+import type { SpaceBinding } from "../../host/src/space";
 import { FakeSpace } from "./fake-space";
 
 const EXAMPLE = join(import.meta.dir, "..");

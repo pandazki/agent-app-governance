@@ -4,8 +4,8 @@ import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppHost } from "../src/host";
-import { loadRiskPolicy } from "../src/policy";
+import { AppHost } from "../../host/src/host";
+import { loadRiskPolicy } from "../../host/src/policy";
 import { createHostServer } from "../src/server";
 import { FakeSpace } from "./fake-space";
 

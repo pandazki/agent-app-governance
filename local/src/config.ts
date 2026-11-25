@@ -2,11 +2,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openBunSql, POSTGRES_TEMPLATE, postgresTemplateSnapshot, serverOf } from "./data-snapshot-postgres";
-import { AppHost, type HostDataSnapshot } from "./host";
-import { GOVERNANCE_MODES, loadRiskPolicy, type GovernanceMode } from "./policy";
-import { DEFAULT_PREVIEW_TTL_SECONDS } from "./preview";
+import { AppHost, type HostDataSnapshot } from "../../host/src/host";
+import { GOVERNANCE_MODES, loadRiskPolicy, type GovernanceMode } from "../../host/src/policy";
+import { DEFAULT_PREVIEW_TTL_SECONDS } from "../../host/src/preview";
 import { cdpScreenshotter, runtimeAddressMapper, ScreenshotKeeper, type PictureSource } from "./screenshots";
-import { DEFAULT_MANAGER, SPACE_NAME, spaceFromEnv, type SpaceRuntime } from "./space";
+import { DEFAULT_MANAGER, SPACE_NAME, spaceFromEnv, type SpaceRuntime } from "../../host/src/space";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const EXAMPLE_ROOT = resolve(here, "..");

@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { AppHost } from "../src/host";
-import { loadRiskPolicy } from "../src/policy";
+import { AppHost } from "../../host/src/host";
+import { loadRiskPolicy } from "../../host/src/policy";
 import { cdpScreenshotter, previewOf, runtimeAddressMapper, ScreenshotKeeper, type CaptureResult, type Screenshotter } from "../src/screenshots";
 import { createHostServer } from "../src/server";
 import { FakeSpace, templateTests } from "./fake-space";

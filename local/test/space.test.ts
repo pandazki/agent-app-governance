@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Space } from "../src/space";
+import { Space } from "../../host/src/space";
 
 // The real client, against a stand-in admin API and a stand-in appctl: what goes over the wire for the
 // two PneumaSpace primitives the Host now uses (ephemeral apps, managed apps). The in-memory FakeSpace

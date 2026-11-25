@@ -56,7 +56,6 @@ import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type Governanc
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
 import { runCheckCommand, testCoverage, testWarning, type CheckRun, type TestCoverage } from "./test-coverage";
-import type { Overview } from "./page";
 
 // ---------------------------------------------------------------------------
 // A headless Creation Host on PneumaSpace.
@@ -548,6 +547,23 @@ function firstTimeLive(history: readonly HistoryEntry[], top: string, serving: s
   const out: string[] = [];
   for (let at: string | null = top; at && at !== serving && !out.includes(at) && !servedBefore(history, at); at = builtOn(history, at)) out.push(at);
   return out;
+}
+
+/** What `overview()` returns: everything the owner page shows, in one read. */
+export interface Overview {
+  readonly governance: string;
+  readonly governance_note: string;
+  readonly data_snapshot: string | null;
+  /** This Host's address as the person's machine reaches it, when known. */
+  readonly host_url?: string;
+  /** PneumaSpace's console as the person's machine reaches it, when known. */
+  readonly console_url?: string;
+  /** The name this Host goes by on PneumaSpace as the manager of the apps it releases. */
+  readonly manager?: string;
+  readonly summaries: readonly AppSummary[];
+  /** `error` when the app could not be read. */
+  readonly apps: readonly ({ readonly app_id: string; readonly status: AppStatus; readonly history: readonly HistoryEntry[] } | { readonly app_id: string; readonly error: string })[];
+  readonly generated_at: string;
 }
 
 export class AppHost {

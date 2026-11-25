@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { diffTrees } from "@pneuma-framework/host-kit/workspace";
-import { readSpaceManifest, TREE } from "../src/artifact";
-import { classifyRisks, loadRiskPolicy, parseRiskPolicy } from "../src/policy";
+import { readSpaceManifest, TREE } from "../../host/src/artifact";
+import { classifyRisks, loadRiskPolicy, parseRiskPolicy } from "../../host/src/policy";
 
 const PRESET_FILE = join(import.meta.dir, "..", "policy", "personal.json");
 const PRESET = loadRiskPolicy(PRESET_FILE);

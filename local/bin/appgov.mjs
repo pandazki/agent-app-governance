@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_HOST = "http://127.0.0.1:8090";
 // The directory under each app directory, and under the apps directory, that the Host keeps for itself.
-// The Host names it in src/artifact.ts (STATE_DIR); this copy runs without that code, and a test checks the two agree.
+// The Host names it in host/src/artifact.ts (STATE_DIR); this copy runs without that code, and a test checks the two agree.
 const STATE_DIR = ".appgov";
 // The directory under each app directory where pneuma-framework keeps every version and the history.
 // The name is the framework's (STATE_DIR_NAME in @pneuma-framework/core); a test checks this copy of it.
@@ -444,7 +444,7 @@ const GUIDE_END = "<!-- appgov-apps:end -->";
 /**
  * Where the marked block is in `text`: the first end marker after a begin marker, and the begin marker nearest
  * before it. A stray marker of either kind elsewhere in the file stays where it is, with the text around it.
- * Null when there is no such block. (src/artifact.ts finds the Host's own block the same way.)
+ * Null when there is no such block. (host/src/artifact.ts finds the Host's own block the same way.)
  */
 function markedBlock(text, beginMarker, endMarker) {
   const first = text.indexOf(beginMarker);
