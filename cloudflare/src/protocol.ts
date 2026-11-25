@@ -11,6 +11,14 @@ export const PRINCIPAL_HEADER = "x-appgov-principal";
 export const FOLDER_HEADER = "x-appgov-folder-etag";
 /** The app an operation is about, set by the Worker. */
 export const APP_HEADER = "x-appgov-app";
+/**
+ * The level of the centre's API, in the `appgov-api` header of every answer the Worker gives. The CLI (bin/appgov.mjs,
+ * HOST_API_LEVEL there) refuses to work with a centre at another level, so it never misreads an answer. Raise both
+ * together when the CLI starts to rely on something new, or stops understanding something old.
+ * 1: GET /starter, the `appgov-api` header, `credential` and `author` in entries, `tree_signature` on waiting changes.
+ */
+export const API_LEVEL = 1;
+export const API_HEADER = "appgov-api";
 /** How long each step of an operation took, in ms: `container`, `load`, `op`, `save`. */
 export const TIMING_HEADER = "x-appgov-timing";
 

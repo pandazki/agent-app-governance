@@ -2,6 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
 import { APP_HEADER, SECRET_HEADER } from "../src/protocol";
+// Bundled as text (the `rules` in wrangler.jsonc): the CLI and the starter instructions this Worker was deployed with.
+import starterCli from "../bin/appgov.mjs";
+import starterAgents from "../overlay/AGENTS.start.md";
 
 // ---------------------------------------------------------------------------
 // The Cloudflare edition's Worker: the gateway in front (worker/gateway.ts),
@@ -48,6 +51,7 @@ export default {
       loginFailures: (key, now, failed) => auth.loginFailures(key, now, failed),
     };
     return handle(request, {
+      starter: { cli: starterCli, agents: starterAgents },
       ownerKeyHash: env.APPGOV_OWNER_KEY_HASH,
       auth: store,
       governance: env.APPGOV_GOVERNANCE,

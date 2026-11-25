@@ -1,4 +1,4 @@
-import { APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
+import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -13,6 +13,10 @@ import { APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/p
 //     read status and history, fetch a working copy, undo, discard and ask for
 //     a preview again. It may not approve or deny a change, confirm going back
 //     past a one-way change, or create, list or revoke tokens.
+//
+// Either may fetch the centre's own CLI and the instructions for a directory
+// an agent starts in (GET /starter), so what an agent runs matches this
+// centre. Every answer carries the centre's API level (API_HEADER).
 //
 // Sessions and tokens are kept hashed by the AuthStore (a Durable Object in
 // worker/index.ts). Requests about one app go to that app's Durable Object
@@ -47,7 +51,16 @@ export interface AppStub {
   fetch(request: Request): Promise<Response>;
 }
 
+/** What `token create` writes into the directory an agent starts in, as this centre's build holds it. */
+export interface Starter {
+  /** The CLI (bin/appgov.mjs) this centre was deployed with. */
+  readonly cli: string;
+  /** The AGENTS.md block for that directory (overlay/AGENTS.start.md); `{{CENTRE}}` stands for the centre's address. */
+  readonly agents: string;
+}
+
 export interface GatewayDeps {
+  readonly starter: Starter;
   /** SHA-256, hex, of the owner key. */
   readonly ownerKeyHash: string;
   readonly auth: AuthStore;
@@ -154,12 +167,16 @@ export function ownerOnly(rest: readonly string[], body: Record<string, unknown>
 }
 
 export async function handle(request: Request, deps: GatewayDeps): Promise<Response> {
+  let res: Response;
   try {
-    return await route(request, deps);
+    res = await route(request, deps);
   } catch (err) {
-    if (err instanceof GatewayRefusal) return refuse(err.status, err.reason, err.message);
-    return refuse(500, "internal", err instanceof Error ? err.message : String(err));
+    res = err instanceof GatewayRefusal ? refuse(err.status, err.reason, err.message) : refuse(500, "internal", err instanceof Error ? err.message : String(err));
   }
+  // Every answer, refusals included, says which level of the API this centre speaks.
+  const answer = new Response(res.body, res);
+  answer.headers.set(API_HEADER, String(API_LEVEL));
+  return answer;
 }
 
 async function route(request: Request, deps: GatewayDeps): Promise<Response> {
@@ -194,6 +211,9 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
     return json({ signed_out: owner });
   }
   if (method === "GET" && url.pathname === "/me") return json({ principal });
+  if (method === "GET" && url.pathname === "/starter") {
+    return json({ api_level: API_LEVEL, cli: deps.starter.cli, agents: deps.starter.agents.replaceAll("{{CENTRE}}", url.origin) });
+  }
 
   if (parts[0] === "tokens") {
     if (!owner) return refuse(403, "owner_required", "only the owner creates, lists and revokes agent tokens");

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
@@ -96,6 +97,20 @@ export const TREE_LIMIT_BYTES = 32 * 1024 * 1024;
  * removed; `.pneuma-framework/`, `.appgov/` and everything else a version leaves out stay as they are. A file the
  * submission names under one of those is ignored, as the Host would ignore it.
  */
+/**
+ * A tree's source files as the CLI signs a working copy (`signature` in bin/appgov.mjs): SHA-1 over each path and the
+ * SHA-1 of its bytes, in path order. The CLI compares it with its own working tree, e.g. to tell that the edits there
+ * are a change waiting for the owner. Null when `root` is not there.
+ */
+export function copySignature(root: string): string | null {
+  if (!existsSync(root)) return null;
+  const hash = createHash("sha1");
+  for (const path of [...sourceFiles(root)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    hash.update(`${path}\0${createHash("sha1").update(readFileSync(join(root, path))).digest("hex")}\n`);
+  }
+  return hash.digest("hex");
+}
+
 export function replaceWorkingTree(appRoot: string, files: unknown): string[] {
   if (!Array.isArray(files)) throw new Error("tree.files must be a list of { path, body }");
   const staging = mkdtempSync(join(tmpdir(), "appgov-tree-"));

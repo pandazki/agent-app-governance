@@ -1,10 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { collectSteps, timedSync } from "../../host/src/steps";
-import { exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
+import { dataLeftBehind } from "./data-left";
+import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
 import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -17,6 +19,12 @@ import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, t
 // trusts the principal the Worker authenticated: the owner, or an agent token.
 // The owner's subject in every app's governance is `ownerSubject`; an agent
 // token acts as `agent:token-<id>`, which holds no role.
+//
+// The record names who acted from that principal, not from what the CLI says
+// about its environment: an operation with the owner's session is the owner's
+// (`owner`, control `owner`), wherever the CLI ran; one with an agent token is
+// recorded with the agent the CLI detected (or `unknown`). Either way the entry
+// names the credential (`owner session`, or the token's label and id).
 //
 // Besides the Host's own routes, the Durable Object loads and saves the app's
 // folder here (see worker/folders.ts), and every route about an app checks that
@@ -66,6 +74,11 @@ const text = (value: unknown, field: string, fallback?: string): string => {
 };
 
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** How the record names the credential a request was authenticated with. */
+export function credentialOf(principal: Principal): string {
+  return principal.kind === "owner" ? "owner session" : `agent token ${JSON.stringify(principal.label)} (${principal.id})`;
+}
 
 /** As the local edition's server reads it (local/src/server.ts): where the submitting CLI says the agent's name came from. */
 function provenance(input: Record<string, unknown>, agent: string): AgentProvenance | undefined {
@@ -189,14 +202,28 @@ export function createContainerServer(opts: ContainerServerOptions) {
       const name = text(input.name, "name");
       if (name !== req.headers[APP_HEADER]) throw new HostError(400, "the app named in the body is not the one this request was routed for");
       checkFolder(req, name);
-      const result = await host.create(name, typeof input.intent === "string" ? input.intent : undefined);
+      const by =
+        principal.kind === "owner"
+          ? { agent: "owner", control: "owner" as const, credential: credentialOf(principal) }
+          : (() => {
+              const agent = text(input.agent, "agent", "unknown");
+              const agentProvenance = provenance(input, agent);
+              return { agent, control: "agent-driven" as const, ...(agentProvenance ? { agentProvenance } : {}), credential: credentialOf(principal) };
+            })();
+      const result = await host.create(name, typeof input.intent === "string" ? input.intent : undefined, by);
       return withCopy(name, result);
     }
     const name = parts[1] ?? "";
     if (!APP_NAME.test(name)) throw new HostError(400, `app name must match ${APP_NAME}`);
     if (name !== req.headers[APP_HEADER]) throw new HostError(400, "this request was routed for another app");
     checkFolder(req, name);
-    if (parts.length === 2 && method === "GET") return host.status(name);
+    if (parts.length === 2 && method === "GET") {
+      // Each waiting change carries its files' signature as the CLI computes one, so a working copy can tell that its
+      // edits are that change and not something still to submit.
+      const status = await host.status(name);
+      const drafts = appPaths(appsDir, name).drafts;
+      return { ...status, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
+    }
     if (parts.length === 3 && method === "GET" && parts[2] === "history") return { history: host.history(name) };
     if (parts.length === 3 && method === "GET" && parts[2] === "folder") return exportWorkingCopy(appRoot(name), name, current(name));
     if (parts.length === 3 && method === "POST") {
@@ -211,9 +238,19 @@ export function createContainerServer(opts: ContainerServerOptions) {
             throw new HostError(400, `the submitted working tree was not taken: ${err instanceof Error ? err.message : String(err)}`, "bad_tree");
           }
         }
-        const agent = text(input.agent, "agent", "unknown");
-        const agentProvenance = provenance(input, agent);
-        const result = await host.submit({ name, intent: text(input.intent, "intent"), agent, ...(agentProvenance ? { agentProvenance } : {}), ...(typeof input.one_way === "string" ? { oneWay: input.one_way } : {}) });
+        const owner = principal.kind === "owner";
+        // The owner's own change is theirs, whatever environment markers the CLI saw.
+        const agent = owner ? "owner" : text(input.agent, "agent", "unknown");
+        const agentProvenance = owner ? undefined : provenance(input, agent);
+        const result = await host.submit({
+          name,
+          intent: text(input.intent, "intent"),
+          agent,
+          ...(agentProvenance ? { agentProvenance } : {}),
+          credential: credentialOf(principal),
+          byOwner: owner,
+          ...(typeof input.one_way === "string" ? { oneWay: input.one_way } : {}),
+        });
         return withCopy(name, result);
       }
       if (parts[2] === "undo") {
@@ -222,13 +259,17 @@ export function createContainerServer(opts: ContainerServerOptions) {
         if (input.to !== undefined && typeof input.to !== "string") throw new HostError(400, "to must be a version name, e.g. v3");
         if (input.from !== undefined && typeof input.from !== "string") throw new HostError(400, "from must be the version the plan started from, e.g. v5");
         const result = await host.undo(name, text(input.reason, "reason", "undo"), {
-          actor: text(input.actor, "actor", principal.kind === "owner" ? "owner" : "unknown"),
+          actor: principal.kind === "owner" ? "owner" : text(input.actor, "actor", "unknown"),
+          credential: credentialOf(principal),
           ...(typeof input.to === "string" ? { to: input.to.trim() } : {}),
           ...(typeof input.from === "string" ? { from: input.from.trim() } : {}),
           acceptOneWay: input.accept_one_way === true,
           subject: subjectOf(principal),
         });
-        return withCopy(name, result);
+        // Stored data stays as it is; say when the versions gone back past wrote data the older code may not show.
+        const record = openRecord(appPaths(appsDir, name));
+        const left = result.data_restored ? undefined : dataLeftBehind(result.undone, result.active_version, (version) => record.versionDir(version));
+        return withCopy(name, { ...result, ...(left ? { data_left: left } : {}) });
       }
       if (parts[2] === "discard") {
         checkBase(name, input.base_version);
@@ -239,7 +280,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
     if (parts.length === 5 && method === "POST" && parts[2] === "changes" && (parts[4] === "approve" || parts[4] === "deny")) {
       requireOwner(principal, parts[4] === "approve" ? "Approving a change" : "Denying a change");
       const input = await jsonBody(req);
-      const result = await host.resolve(name, parts[3]!, parts[4] === "approve" ? "approved" : "denied", subjectOf(principal), typeof input.reason === "string" ? input.reason : undefined);
+      const result = await host.resolve(name, parts[3]!, parts[4] === "approve" ? "approved" : "denied", subjectOf(principal), typeof input.reason === "string" ? input.reason : undefined, undefined, credentialOf(principal));
       return withCopy(name, result);
     }
     throw new HostError(404, "not found");

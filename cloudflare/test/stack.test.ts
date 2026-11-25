@@ -16,9 +16,9 @@ let ownerHome: string;
 let agentHome: string;
 
 // Asynchronous: the gateway and the container run in this process, so a synchronous spawn would starve them.
-function cli(cwd: string, args: string[], { owner = false, env = {} }: { owner?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number | null; out: string }> {
+function cli(cwd: string, args: string[], { owner = false, env = {}, script = CLI }: { owner?: boolean; env?: Record<string, string>; script?: string } = {}): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn("node", [CLI, ...args], {
+    const child = spawn("node", [script, ...args], {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: root, APPGOV_HOME: owner ? ownerHome : agentHome, APPGOV_AGENT: "test-agent", ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -64,6 +64,39 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect((await cli(apps(), ["token", "list"])).code).toBe(2);
   });
 
+  test("the token's directory explains itself: the centre's own CLI, and an AGENTS.md that says the token file is a credential", async () => {
+    // The CLI written there is the one the centre serves, byte for byte.
+    expect(readFileSync(join(apps(), ".appgov", "appgov.mjs"), "utf8")).toBe(readFileSync(CLI, "utf8"));
+    const agents = readFileSync(join(apps(), "AGENTS.md"), "utf8");
+    expect(agents).toContain(`The centre is at ${stack.url}.`);
+    expect(agents).toContain("node .appgov/appgov.mjs create <name>");
+    expect(agents).toContain("node .appgov/appgov.mjs fetch <name>");
+    expect(agents).toContain("Never print it or show its contents, copy it into another file, or commit it");
+    expect(readFileSync(join(apps(), "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+    // An agent there runs that CLI, and the empty list points at a file that is there.
+    const listed = await cli(apps(), ["list"], { script: join(apps(), ".appgov", "appgov.mjs") });
+    expect(listed.code).toBe(0);
+    expect(listed.out).toContain("no apps yet. Create one with: node .appgov/appgov.mjs create <name>");
+  });
+
+  test("a CLI at another API level than the centre refuses, and update replaces it with the centre's own", async () => {
+    const dir = join(root, "older-cli");
+    mkdirSync(join(dir, ".appgov"), { recursive: true });
+    const old = join(dir, ".appgov", "appgov.mjs");
+    writeFileSync(old, readFileSync(CLI, "utf8").replace("const HOST_API_LEVEL = 1;", "const HOST_API_LEVEL = 0;"));
+    writeFileSync(join(dir, ".appgov", "centre.json"), readFileSync(join(apps(), ".appgov", "centre.json")), { mode: 0o600 });
+    const refused = await cli(dir, ["list"], { script: old });
+    expect(refused.code).toBe(3);
+    expect(refused.out).toContain("this CLI is written for API level 0, and the centre at");
+    expect(refused.out).toContain("node .appgov/appgov.mjs update");
+    const updated = await cli(dir, ["update"], { script: old });
+    expect(updated.out).toContain("replaced .appgov/appgov.mjs with the centre's own CLI");
+    expect(readFileSync(old, "utf8")).toBe(readFileSync(CLI, "utf8"));
+    expect((await cli(dir, ["list"], { script: old })).code).toBe(0);
+    // The repository's own CLI is never replaced.
+    expect((await cli(dir, ["update"])).out).toContain("the owner reruns the installer");
+  });
+
   test("create, with the agent token: a managed app on the plane, and a working copy with the agent instructions", async () => {
     const made = await cli(apps(), ["create", "todo"]);
     expect(made.out).toContain("published v1");
@@ -77,6 +110,8 @@ describe("the Cloudflare edition end to end, offline", () => {
     // The preview was an ephemeral app, and it was discarded.
     expect(stack.plane.apps.some((a) => a.expiresAt !== null && a.status === "purged")).toBe(true);
     expect(stack.bucket.objects.has(folderKey("todo"))).toBe(true);
+    // Made with the agent token: the record names the agent and the token, not the Host on the owner's behalf.
+    expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(agent token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
   });
 
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {
@@ -105,16 +140,24 @@ describe("the Cloudflare edition end to end, offline", () => {
     const refused = await cli(copy(), ["approve", id]);
     expect(refused.code).toBe(2);
     expect(refused.out).toContain("an agent token cannot do it");
-    const approved = await cli(copy(), ["approve", id], { owner: true });
+    const approved = await cli(copy(), ["approve", id], { owner: true, env: { CODEX_THREAD_ID: "x" } });
     expect(approved.out).toContain("published v3");
     expect(approved.code).toBe(0);
     expect(stack.plane.serving("todo")).not.toBeNull();
+    // The approval is the owner's, recorded as theirs; the change's author stays beside it.
+    const history = (await cli(copy(), ["history"])).out;
+    expect(history).toContain("change needs_approval by test-agent (agent token");
+    expect(history).toMatch(/decision published -> v3 by user:owner \(owner session\) \[owner\]: Let visitors in/);
+    expect(history).toContain("    the change was made by test-agent");
   });
 
-  test("undo goes back one version: the earlier files serve and history shows it", async () => {
-    const undone = await cli(copy(), ["undo", "the owner wants sign-in back"]);
+  test("undo goes back one version: the earlier files serve and history shows it; the owner's undo is the owner's", async () => {
+    // Run by the owner from inside another agent's environment: the record names the owner, not that agent.
+    const undone = await cli(root, ["--host", stack.url, "--app", "todo", "undo", "the owner wants sign-in back"], { owner: true, env: { CLAUDECODE: "1" } });
     expect(undone.code).toBe(0);
     expect(undone.out).toContain("now on v2");
+    expect((await cli(copy(), ["fetch"])).code).toBe(0);
+    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v2 by owner \(owner session\) \[owner\]: the owner wants sign-in back/);
     expect(JSON.parse(readFileSync(join(copy(), "pneuma-space.json"), "utf8")).capabilities.identity).toEqual({ required: true });
     expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v2/);
   });
@@ -193,6 +236,12 @@ describe("the Cloudflare edition end to end, offline", () => {
     const status = (await cli(copy(), ["status"])).out;
     expect(status).toContain("  tests: No tests ran.");
     expect(status).toContain("  warning: this change touched app code (app/server.mjs)");
+    // The edits in the copy are that change: status says so, and does not call them "not submitted".
+    expect(status).toMatch(/changed here: app\/server\.mjs, pneuma-space\.json\. These edits are change \S+, which was submitted and waits for the owner\. Do not submit them again/);
+    expect(status).not.toContain("not submitted");
+    // Edited further, they are no longer that change, and status says that too.
+    writeFileSync(join(copy(), "app", "server.mjs"), `${readFileSync(join(copy(), "app", "server.mjs"), "utf8")}// more\n`);
+    expect((await cli(copy(), ["status"])).out).toContain("changed here, not submitted: app/server.mjs, pneuma-space.json (they are not the change waiting for the owner as it was submitted)");
     expect((await cli(copy(), ["discard"])).code).toBe(0);
   });
 
@@ -200,5 +249,18 @@ describe("the Cloudflare edition end to end, offline", () => {
     const listed = await cli(apps(), ["list"]);
     expect(listed.code).toBe(0);
     expect(listed.out).toContain("1 app at the centre");
+  });
+
+  test("an undo past a version that ran new SQL says that data is still stored and the older code may not show it", async () => {
+    const server = join(copy(), "app", "server.mjs");
+    writeFileSync(server, `${readFileSync(server, "utf8")}\nexport const migration = "ALTER TABLE notes ADD COLUMN due TEXT";\n`);
+    const submitted = await cli(copy(), ["submit", "Notes get a due date"]);
+    expect(submitted.code).toBe(0);
+    const version = /published (v\d+)/.exec(submitted.out)![1]!;
+    const undone = await cli(copy(), ["undo", "no due dates after all"]);
+    expect(undone.code).toBe(0);
+    const before = /now on (v\d+)/.exec(undone.out)![1]!;
+    expect(undone.out).toContain("Code only; stored data was not rolled back.");
+    expect(undone.out).toContain(`Data written by the code of ${version} is still stored, and ${before}'s code may not show it: ${version} ran SQL that ${before} does not (ALTER TABLE notes ADD COLUMN due TEXT).`);
   });
 });

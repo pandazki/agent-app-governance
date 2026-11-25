@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { editionHost, TEMPLATE } from "../src/edition";
+import { EDITION, editionHost, TEMPLATE } from "../src/edition";
 import { APP_HEADER, PRINCIPAL_HEADER, SECRET_HEADER } from "../src/protocol";
 import { createContainerServer } from "../src/server";
 import { CfSpace } from "../src/space-cf";
@@ -180,6 +180,7 @@ export async function startStack(): Promise<Stack> {
     idleTimeout: 0,
     fetch: (request) =>
       handle(request, {
+        starter: { cli: readFileSync(join(EDITION, "bin", "appgov.mjs"), "utf8"), agents: readFileSync(join(EDITION, "overlay", "AGENTS.start.md"), "utf8") },
         ownerKeyHash,
         auth,
         governance: "personal",

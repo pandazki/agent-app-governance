@@ -41,14 +41,18 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev token create --label laptop --write ~/apps
 ```
 
-`login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
+`login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。它还在旁边写下这个中心部署时带的 CLI（`~/apps/.appgov/appgov.mjs`），以及一个 `AGENTS.md`（Claude Code 通过 `CLAUDE.md` 读到它），告诉在 `~/apps` 里启动的 agent：这个目录是什么，怎样列出、创建和取回应用，以及 `centre.json` 是凭据，不能打印、复制或提交。你在这个 `AGENTS.md` 里、它写的那一段之外留下的文字会保留。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
+
+历史记录按中心认证的凭据写下是谁做的，而不是按 CLI 运行时所在的环境：用主人会话做的操作记为主人的；用 agent 令牌做的操作记为 CLI 识别出的 agent（识别不出就是 `unknown`），并写上令牌的标签。一次决定会写明做决定的主人，以及那是哪个 agent 的改动。
+
+CLI 和中心会核对彼此说的 API 级别。级别不同的 CLI 会停下并说明；`node .appgov/appgov.mjs update` 会把它换成中心自己的 CLI。
 
 ## 创建应用
 
 在 `~/apps` 里：
 
 ```sh
-node /path/to/agent-app-governance/cloudflare/bin/appgov.mjs create todo
+node .appgov/appgov.mjs create todo
 ```
 
 Host 会复制这个版本自己的应用模板（PneumaSpace 的 Cloudflare 起步应用，契约 `pneuma-space.cf/1`，声明了 `identity.required`），加上写给 agent 的说明，跑一遍应用的测试，把它作为预览启动一次，然后发布为 `v1`，成为 PneumaSpace 上由 `appgov` 管理的应用。工作副本放在 `~/apps/todo/`，里面有一份 CLI（`.appgov/appgov.mjs`），中心地址和令牌在 `.appgov/centre.json`。登录了那个 PneumaSpace 的人可以在 `https://<PneumaSpace 地址>/apps/todo/` 打开这个应用。
@@ -70,7 +74,7 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<一个 age
 
 ## 做决定
 
-Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
+Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；应用不再声明一项存放数据的能力（`db`、`kv`、`files` 或 `object`；PneumaSpace 会保留数据，但应用再也读不到，所以这也是单向改动）；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
 
 `submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。以主人身份登录后，在应用的工作副本里：
 
@@ -88,7 +92,7 @@ node .appgov/appgov.mjs undo "原因"          # 退回一个版本
 node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个版本
 ```
 
-撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。退过单向改动需要主人：登录后运行 `undo --accept-one-way "原因"`。
+撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。如果被退过的版本在 `pneuma-space.json` 里声明了别的存储，或者跑了早先版本没有的 SQL，`undo` 会说明：它们写下的数据仍然存着，早先的代码可能显示不出来。退过单向改动需要主人：登录后运行 `undo --accept-one-way "原因"`。
 
 ## 东西放在哪里
 
@@ -107,6 +111,8 @@ node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个�
 - 没有做的：主人页面、截图、数据快照、由 Host 启动 Claude Code 或 Codex（`drive` 那条路），以及 `record` 和 `review-all` 模式。只跑过 `personal` 模式。
 - 只管新应用。没有办法导入已有的应用或它的数据。
 - 撤销只恢复代码；存储的数据从不放回。
+- **agent 打不开正式的应用，也打不开它的预览。** 两者只回应登录了 PneumaSpace 的人，而 agent 令牌是中心的令牌，不是 PneumaSpace 的：agent 得到的是 401。所以 agent 没法检查自己发布的结果。Host 的探测只请求首页和一个会启动 Node 的路径，所以一个弄坏了数据接口的改动照样可能通过并上线。只有你自己打开应用，才看得到它是否正常。
+- **预览从空的存储开始。** 预览是 PneumaSpace 上另一个应用，没有这个应用的数据。一个删除或改写已存数据的改动等你决定时，预览并不显示它作用在这些数据上的样子；你是根据说明来决定，而不是亲眼看到哪些已存的值会消失。
 - PneumaSpace 的令牌不能彻底清除（purge）应用。Host 撤下一个应用的地址时，应用被移除，名字会一直被占用，直到 PneumaSpace 的主人在控制台里把它清除。
 - 每个应用一个容器，按需启动。一次提交在整个检查期间都占着连接，在下面的运行里约 30 秒，其中约三分之二是 PneumaSpace 先发布预览、再发布正式版本（见下面的表）。
 - 默认规则靠匹配文本找破坏性 SQL，和本地版一样。

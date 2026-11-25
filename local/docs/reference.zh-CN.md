@@ -93,7 +93,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 | --- | --- |
 | `change` | 每个改动都带的风险，以及改动只在某些路径下时较轻的风险 |
 | `paths` | 这些路径下的改动带这个风险，比如支付代码一律要主人决定 |
-| `manifest` | `pneuma-space.json` 每种变化对应的风险：增加或去掉一项能力、换了运行时、不再要求登录 |
+| `manifest` | `pneuma-space.json` 每种变化对应的风险：增加或去掉一项能力、去掉一项存放数据的能力（`storage_removed`）、换了运行时、不再要求登录 |
 | `content` | 对改动文件做文本匹配。匹配到的内容比改动前出现得多，这条规则才算命中 |
 | `auto_approve` | `personal` 模式下常设规则可以批准的风险。其他风险都等主人决定 |
 
@@ -103,7 +103,8 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 | --- | --- | --- | --- |
 | 源码或浏览器文件有改动 | `source_code_change`；只改了 `public/` 时是 `additive_ui` | 常设规则 | 主人 |
 | `pneuma-space.json` 增加了一项能力 | `definition_additive` | 常设规则 | 主人 |
-| 去掉了一项能力（PneumaSpace 保留它的数据），或换了运行时 | `release_change` | 常设规则 | 主人 |
+| 去掉了一项能力，或换了运行时 | `release_change` | 常设规则 | 主人 |
+| 去掉了一项存放数据的能力（`db`、`kv`、`files`、`object`）：PneumaSpace 保留数据，但应用再也读不到 | `destructive_definition`，单向 | 主人 | 主人 |
 | 访客不再需要登录 | `policy_change` | 主人 | 主人 |
 | 在 `.ts`、`.js` 或 `.sql` 文件（及其变体）里新出现 `DROP TABLE/COLUMN/INDEX`、`ALTER TABLE ... DROP/RENAME`、`TRUNCATE`，或不带 `WHERE` 的 `DELETE` | `destructive_definition`，单向 | 主人 | 主人 |
 
@@ -113,7 +114,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 - **回退是一步步往回走的。** 每次 `undo` 回到当前版本所基于的那个版本：从 v5 到 v4，再到 v3。`undo --to <version>` 直接退到其中某一个。当前版本并非基于它的那些版本，不能作为回退目标；想找回这样的版本，从 `.pneuma-framework/versions/<version>/` 把它的文件重新提交一次。回退之后的新改动会得到一个新编号。
 - **每一步**都先发布旧版本，确认它有应答，然后才改动历史、把旧文件放回工作目录。工作目录里有从没提交过的编辑时，回退不会开始。如果回退进行中工作目录被改了，版本照样发出去，工作目录保持原样，并附上一条说明。
-- **哪些改动是单向的。** 在 `personal` 和 `review-all` 下由预设决定；`policy/personal.json` 里只有破坏性 SQL 那条规则是单向的。在 `record` 模式下由 agent 用 `submit --one-way "<会丢失什么>"` 自己说明；要检查的模式不接受这个参数。主人批准单向改动之前，Host 会告诉他批准的代价，以及它能不能把存储的数据放回去。
+- **哪些改动是单向的。** 在 `personal` 和 `review-all` 下由预设决定；`policy/personal.json` 里破坏性 SQL 那条规则和去掉存放数据的能力那条规则是单向的。在 `record` 模式下由 agent 用 `submit --one-way "<会丢失什么>"` 自己说明；要检查的模式不接受这个参数。主人批准单向改动之前，Host 会告诉他批准的代价，以及它能不能把存储的数据放回去。
 - **越过单向改动往回退，在任何模式下都要等主人。** 回退会被拒绝（`crosses_one_way_change`，CLI 以 2 退出），什么都不会动。提示会列出每个单向版本及其原因，并说明属于哪种情况：(a) Host 在那次改动之前存了数据，数据会回到那份快照，此后存下的一切都被搁到一边、不再出现在应用里；(b) 回去的只有代码，旧版本可能读不了现在的数据。API 的回答里带有 `data_restore: "snapshot"` 或 `"none"`。
 - **主人确认**：在终端里运行 `undo --accept-one-way "<why>"` 并输入 `accept`，或者在从主人链接打开的页面上确认。确认会带上方案开始时的版本；如果这中间又有别的版本上线，Host 返回 `plan_changed`（409），什么都不变。除主人以外，Host 对任何人都返回 403。历史条目会记下 `one_way_crossed`、`confirmed_by`，在情况 (a) 下还会记下被替换的数据去了哪里。
 

@@ -164,6 +164,9 @@ function provenanceFields(provenance: AgentProvenance | undefined): Pick<HostEnt
   };
 }
 
+/** The entry field that names the credential, when there is one. */
+const credentialField = (credential: string | undefined): Pick<HostEntryFields, "credential"> => (credential ? { credential } : {});
+
 const isText = (value: unknown): value is string => typeof value === "string";
 const isTextList = (value: unknown): value is string[] => Array.isArray(value) && value.every(isText);
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -187,6 +190,7 @@ function pendingProblem(value: unknown, id: string): string | undefined {
   if (value.one_way !== undefined && value.one_way !== null && !isText(value.one_way)) return "one_way is not text";
   if (value.agent_provenance !== undefined && !isProvenance(value.agent_provenance)) return "agent_provenance is not in the shape this Host writes";
   if (value.preview_app_id !== undefined && !isText(value.preview_app_id)) return "preview_app_id is not text";
+  if (value.credential !== undefined && !isText(value.credential)) return "credential is not text";
   return undefined;
 }
 
@@ -221,6 +225,10 @@ export interface SubmitInput {
   readonly agent: string;
   /** Where that name came from. Recorded in the entry and returned with the result. */
   readonly agentProvenance?: AgentProvenance;
+  /** The credential the request was authenticated with, where one was (`HostEntryFields.credential`). Recorded in the entry. */
+  readonly credential?: string;
+  /** The owner made this change themselves, authenticated as the owner: recorded with control `owner`, not `agent-driven`. */
+  readonly byOwner?: boolean;
   /**
    * Record mode only: the agent's own statement of why putting files back would not undo this change
    * (a dropped column, rewritten rows). Nothing classifies risk in record mode, so this is the only
@@ -238,6 +246,14 @@ export interface SubmitInput {
 /** The agent a submit recorded, as returned with its result: the name and where it came from. */
 export interface RecordedAgent extends Partial<AgentProvenance> {
   readonly name: string;
+}
+
+/** Who asked for an app to be created, when the caller knows: by default the owner, through the Host (`host`, control `owner`). */
+export interface CreateActor {
+  readonly agent: string;
+  readonly control: ControlPlane;
+  readonly agentProvenance?: AgentProvenance;
+  readonly credential?: string;
 }
 
 export type ChangeResult = ChangeOutcome & {
@@ -313,6 +329,8 @@ interface PendingChange {
   readonly one_way?: string | null;
   /** Where the agent's name came from, when the client said. */
   readonly agent_provenance?: AgentProvenance;
+  /** The credential the change was submitted with, where one was authenticated. */
+  readonly credential?: string;
   /**
    * The app id PneumaSpace returned for the change's preview, which discarding it carries, so the discard never ends
    * a later app of the same name. Absent when there was no preview or PneumaSpace printed no id: then the Host does
@@ -408,6 +426,8 @@ export interface UndoOptions {
   readonly subject?: string;
   /** Where the undo came from when not the CLI, e.g. `owner-page`; written into the entry as `channel`. */
   readonly channel?: string;
+  /** The credential the request was authenticated with, where one was (`HostEntryFields.credential`). Written into the entry. */
+  readonly credential?: string;
   /**
    * The version the plan shown before this undo started from: the current version then (`undoPlan().from`, or `from`
    * on a `crosses_one_way_change` refusal). When the current version is another one now, the undo would go back past
@@ -1090,7 +1110,7 @@ export class AppHost {
 
   // --- lifecycle -------------------------------------------------------------
 
-  async create(name: string, intent = "Create the app from the PneumaSpace template"): Promise<ChangeResult> {
+  async create(name: string, intent = "Create the app from the PneumaSpace template", actor?: CreateActor): Promise<ChangeResult> {
     if (!APP_NAME.test(name)) throw new HostError(400, `app name must match ${APP_NAME}`);
     return this.serial(name, async () => {
       const paths = appPaths(this.opts.appsDir, name);
@@ -1106,7 +1126,7 @@ export class AppHost {
 
       let result: ChangeResult | undefined;
       try {
-        result = await this.createApp(name, paths, intent);
+        result = await this.createApp(name, paths, intent, actor);
         return result;
       } finally {
         // A create that did not publish leaves nothing behind, in every mode. A half-made directory
@@ -1119,7 +1139,7 @@ export class AppHost {
     });
   }
 
-  private async createApp(name: string, paths: AppPaths, intent: string): Promise<ChangeResult> {
+  private async createApp(name: string, paths: AppPaths, intent: string, actor?: CreateActor): Promise<ChangeResult> {
     const init = await this.opts.space.init(paths.root);
     if (init.code !== 0) throw new HostError(502, `template init failed: ${init.output.slice(-400)}`);
     installOverlay(paths.root, this.opts.overlayDir, this.opts.cliSource);
@@ -1146,7 +1166,10 @@ export class AppHost {
     const draftSignature = sourceSignature(draftRoot);
     const checks: Check[] = [];
     const preview: { id?: string } = {};
-    const meta = { changeId, kind: "create", intent, agent: "host" };
+    // Who asked: by default the owner, through the Host. Where the Host's front authenticated the caller, that caller.
+    const meta = { changeId, kind: "create", intent, agent: actor?.agent ?? "host" };
+    const control: ControlPlane = actor?.control ?? "owner";
+    const who = { ...provenanceFields(actor?.agentProvenance), ...credentialField(actor?.credential) };
     let releaseRoot: string | undefined;
     try {
       let approval: HostEntryFields["approval"];
@@ -1155,7 +1178,7 @@ export class AppHost {
         const gate = await this.gate(name, changeId, draftRoot, scaffold.verify_command, checks, preview);
         if (!gate.ok) {
           const reason = gate.refused ? "preview_refused" : "verify_failed";
-          record.note<HostEntryFields>({ ...meta, guarantees: earnedByChecks(checks), extra: { outcome: "rejected", control: "owner", reason, checks } });
+          record.note<HostEntryFields>({ ...meta, guarantees: earnedByChecks(checks), extra: { outcome: "rejected", control, reason, checks, ...who } });
           return { status: "rejected", change_id: changeId, reason, detail: gate.refused ?? gate.output.slice(-2000) };
         }
         // Creating the app is the owner's own act; it is recorded as their approval.
@@ -1177,7 +1200,7 @@ export class AppHost {
         releaseRoot,
         changeId,
         intent,
-        control: "owner",
+        control,
         expectedBase: null,
         sealedSignature: governed ? draftSignature : undefined,
       });
@@ -1197,7 +1220,7 @@ export class AppHost {
         const guarantees = !governed || outcome.reason === "draft_changed_after_check" ? [] : [...earnedByChecks(checks), GUARANTEES.approved];
         const failure = outcome;
         this.recordNotReleased(failure.reason, failure.address_note, () =>
-          record.note<HostEntryFields>({ ...meta, guarantees, extra: { outcome: "rejected", control: "owner", reason: failure.reason, address_note: failure.address_note, checks } }),
+          record.note<HostEntryFields>({ ...meta, guarantees, extra: { outcome: "rejected", control, reason: failure.reason, address_note: failure.address_note, checks, ...who } }),
         );
         return { status: "rejected", change_id: changeId, reason: outcome.reason, detail: outcome.detail };
       }
@@ -1211,8 +1234,8 @@ export class AppHost {
           from: releaseRoot,
           guarantees,
           extra: governed
-            ? { outcome: "published", control: "owner", risks: ["release_change"], approval, checks, address: outcome.address }
-            : { outcome: "published", control: "owner", address: outcome.address },
+            ? { outcome: "published", control, risks: ["release_change"], approval, checks, address: outcome.address, ...who }
+            : { outcome: "published", control, address: outcome.address, ...who },
         });
       } catch (err) {
         throw await this.releasedButNotRecorded(name, record, null, err, () => {});
@@ -1282,12 +1305,12 @@ export class AppHost {
     baseVersion: string,
     workingTree: string | undefined,
   ): Promise<ChangeResult> {
-    const control: ControlPlane = input.runAgent ? "host-driven" : "agent-driven";
+    const control: ControlPlane = input.runAgent ? "host-driven" : input.byOwner ? "owner" : "agent-driven";
     const changeId = this.changeId();
     const threads = this.threads(paths);
     const oneWay = input.oneWay ? { reason: input.oneWay.trim() } : undefined;
     const meta = { changeId, kind: "change", intent: input.intent, agent: input.agent, baseVersion };
-    const who = provenanceFields(input.agentProvenance);
+    const who = { ...provenanceFields(input.agentProvenance), ...credentialField(input.credential) };
     await threads.appendTurn(info.thread_id, { kind: "user", text: input.intent });
 
     const draftRoot = join(paths.drafts, changeId);
@@ -1420,14 +1443,14 @@ export class AppHost {
     // The Host's own guardrails, not the app's copy of them: record mode does not protect appgov.scaffold.json,
     // so a version recorded there may carry a loosened one.
     const scaffold = readScaffold(this.opts.overlayDir);
-    const control: ControlPlane = input.runAgent ? "host-driven" : "agent-driven";
+    const control: ControlPlane = input.runAgent ? "host-driven" : input.byOwner ? "owner" : "agent-driven";
     const changeId = this.changeId();
     const draftRoot = join(paths.drafts, changeId);
     const threads = this.threads(paths);
     const checks: Check[] = [];
     const preview: { id?: string } = {};
     const meta = { changeId, kind: "change", intent: input.intent, agent: input.agent, baseVersion };
-    const who = provenanceFields(input.agentProvenance);
+    const who = { ...provenanceFields(input.agentProvenance), ...credentialField(input.credential) };
     const createdAt = new Date().toISOString();
     await threads.appendTurn(info.thread_id, { kind: "user", text: input.intent });
 
@@ -1531,6 +1554,7 @@ export class AppHost {
           draft_signature: draftSignature,
           one_way: oneWay ?? null,
           ...(input.agentProvenance ? { agent_provenance: input.agentProvenance } : {}),
+          ...credentialField(input.credential),
           ...(preview.id ? { preview_app_id: preview.id } : {}),
         };
         mkdirSync(paths.pending, { recursive: true });
@@ -1580,6 +1604,7 @@ export class AppHost {
           agent_note: proposal.agentNote,
           one_way: oneWay,
           agent_provenance: input.agentProvenance,
+          credential: input.credential,
         },
         workingTree,
       );
@@ -1623,6 +1648,10 @@ export class AppHost {
       readonly agent_provenance?: AgentProvenance;
       /** An owner's decision that came through somewhere other than the CLI, e.g. `owner-page`. */
       readonly channel?: string;
+      /** The credential the change (or, for a decision, the decision) was made with, where one was authenticated. */
+      readonly credential?: string;
+      /** A decision: the agent whose change it is; `agent` is then who decided. */
+      readonly author?: string;
     },
     workingTree?: string,
   ): Promise<ChangeOutcome> {
@@ -1636,6 +1665,8 @@ export class AppHost {
       checks: change.checks,
       agent_note: change.agent_note,
       ...provenanceFields(change.agent_provenance),
+      ...credentialField(change.credential),
+      ...(change.author ? { author: change.author } : {}),
       ...(change.channel ? { channel: change.channel } : {}),
     };
     // The checks it passed, and the approval record that let it through (the policy's or the owner's).
@@ -1767,7 +1798,7 @@ export class AppHost {
    * The owner's answer to a change that is waiting. `subject` must hold the owner role. `channel` names where the
    * answer came from when it was not the CLI (e.g. `owner-page`); the entry carries it, and is otherwise the same.
    */
-  resolve(name: string, changeId: string, answer: "approved" | "denied", subject: string, reason?: string, channel?: string): Promise<ChangeResult> {
+  resolve(name: string, changeId: string, answer: "approved" | "denied", subject: string, reason?: string, channel?: string, credential?: string): Promise<ChangeResult> {
     return this.serial(name, async () => {
       const { paths, info, record } = this.open(name);
       const file = join(paths.pending, `${changeId}.json`);
@@ -1807,12 +1838,15 @@ export class AppHost {
         if (this.opts.preview !== false) await this.previewStanding(name, changeId);
         workingTree = sourceSignature(paths.root);
       }
+      // A decision is the decider's act: it names them, as an owner's undo does, and keeps the change's author beside them.
       const change = {
         change_id: changeId,
         kind: "decision" as const,
         intent: pending.intent,
-        agent: pending.agent,
-        control: pending.control,
+        agent: subject,
+        control: "owner" as const,
+        author: pending.agent,
+        ...(credential ? { credential } : {}),
         base_version: pending.base_version,
         changed_paths: pending.changed_paths,
         risks: pending.risks,
@@ -1821,7 +1855,6 @@ export class AppHost {
         checks: pending.checks,
         agent_note: pending.agent_note,
         one_way: pending.one_way ?? undefined,
-        agent_provenance: pending.agent_provenance,
         channel,
       };
       await threads.appendTurn(info.thread_id, { kind: "user_decision", proposal_id: changeId, decision: answer === "approved" ? "approved" : "rejected", reason });
@@ -1845,7 +1878,8 @@ export class AppHost {
               checks: change.checks,
               agent_note: change.agent_note,
               reason: reason ?? "denied by the owner",
-              ...provenanceFields(change.agent_provenance),
+              author: change.author,
+              ...credentialField(credential),
               ...(channel ? { channel } : {}),
             },
           });
@@ -1950,6 +1984,7 @@ export class AppHost {
         address,
         ...(confirmedBy ? { confirmed_by: confirmedBy } : {}),
         ...(options.channel ? { channel: options.channel } : {}),
+        ...credentialField(options.credential),
       };
       const olderCode = `${target}'s code`;
       let setAside: string | undefined;
@@ -2057,7 +2092,7 @@ export class AppHost {
               agent: actor,
               baseVersion: current,
               guarantees: [],
-              extra: { outcome: "rejected", control: "owner", reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}) },
+              extra: { outcome: "rejected", control: "owner", reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}), ...credentialField(options.credential) },
             });
           } catch {
             // The record cannot be written to; the error is all there is.

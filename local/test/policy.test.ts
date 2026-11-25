@@ -163,6 +163,20 @@ describe("sign-in", () => {
     expect(back.reasons).toEqual(["1 file(s) changed", "declares capability identity", "declares capability static"]);
   });
 
+  test("dropping a capability that keeps stored data is a storage removal, which waits for the owner and is one-way", () => {
+    for (const kind of ["db", "kv", "files", "object"]) {
+      const result = classify(manifest({ [kind]: {}, static: { dir: "public" } }), manifest({ static: { dir: "public" } }));
+      expect(result.risks).toEqual(["source_code_change", "release_change", "destructive_definition"]);
+      expect(result.reasons).toContain(`stops declaring ${kind}, where it keeps stored data`);
+      expect(result.oneWay).toEqual([
+        `The app stops declaring ${kind}, where it keeps stored data. PneumaSpace keeps that data, but this version cannot reach it, and what the app stores from now on goes elsewhere; going back to an earlier version would not bring that along.`,
+      ]);
+    }
+    expect(PRESET.auto_approve).not.toContain("destructive_definition");
+    // Swapping one for another is not additive either.
+    expect(classify(manifest({ kv: {} }), manifest({ db: {} })).risks).toContain("destructive_definition");
+  });
+
   test("a manifest that is null does not throw", () => {
     const result = classify(signInRequired, { "pneuma-space.json": "null" });
     expect(result.risks).toContain("policy_change");
@@ -233,10 +247,10 @@ describe("one-way changes are the preset's call", () => {
     expect(classify({ "src/db.ts": migrate("SELECT 1") }, { "src/db.ts": migrate("SELECT 1", "ALTER TABLE todos ADD COLUMN note TEXT") }).oneWay).toEqual([]);
   });
 
-  test("only the destructive-SQL rule is one-way in the shipped preset", () => {
+  test("in the shipped preset, destructive SQL and dropping a capability that keeps stored data are one-way, and nothing else", () => {
     const preset = raw();
     expect(preset.content.map((rule: { id: string; one_way?: boolean }) => [rule.id, rule.one_way])).toEqual([["destructive-sql", true]]);
-    expect(preset.manifest.some((rule: { one_way?: boolean }) => rule.one_way)).toBe(false);
+    expect(preset.manifest.filter((rule: { one_way?: boolean }) => rule.one_way).map((rule: { when: string }) => rule.when)).toEqual(["storage_removed"]);
     const signInDropped = classify({ "pneuma-space.json": manifest({ identity: {} }) }, { "pneuma-space.json": manifest({}) });
     expect(signInDropped.risks).toContain("policy_change");
     expect(signInDropped.oneWay).toEqual([]);

@@ -41,14 +41,18 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev token create --label laptop --write ~/apps
 ```
 
-`login` reads the owner credentials file and keeps the session (12 hours) next to it. `token create --write ~/apps` writes the centre's address and a new agent token to `~/apps/.appgov/centre.json` (mode 0600) and never prints the token. Your agent works in `~/apps`. `token list` and `token revoke <id>` manage the tokens.
+`login` reads the owner credentials file and keeps the session (12 hours) next to it. `token create --write ~/apps` writes the centre's address and a new agent token to `~/apps/.appgov/centre.json` (mode 0600) and never prints the token. Beside it, it writes the CLI this centre was deployed with, at `~/apps/.appgov/appgov.mjs`, and an `AGENTS.md` (read by Claude Code through a `CLAUDE.md`) that tells an agent started in `~/apps` what the directory is, how to list, create and fetch apps, and that `centre.json` is a credential it must not print, copy or commit. Text you keep in that `AGENTS.md` outside the block it writes stays. Your agent works in `~/apps`. `token list` and `token revoke <id>` manage the tokens.
+
+The history names who acted from the credential the centre authenticated, not from the environment the CLI ran in: an operation with the owner's session is the owner's, and one with an agent token is recorded as the agent the CLI detected (or `unknown`), with the token's label. A decision names the owner who made it and the agent whose change it was.
+
+The CLI and the centre check that they speak the same API level. A CLI at another level stops and says so; `node .appgov/appgov.mjs update` replaces it with the centre's own.
 
 ## Create an app
 
 In `~/apps`:
 
 ```sh
-node /path/to/agent-app-governance/cloudflare/bin/appgov.mjs create todo
+node .appgov/appgov.mjs create todo
 ```
 
 The Host copies this edition's app template (PneumaSpace's Cloudflare starter, contract `pneuma-space.cf/1`, with `identity.required` declared), adds the instructions for your agent, runs the app's tests, starts it once as a preview, and publishes it as `v1`, as an app managed by `appgov` on PneumaSpace. The working copy lands in `~/apps/todo/`, with its own copy of the CLI in `.appgov/appgov.mjs` and the address and token in `.appgov/centre.json`. The app answers at `https://<PneumaSpace origin>/apps/todo/` to anyone signed in to that PneumaSpace.
@@ -70,7 +74,7 @@ A working copy that is behind the centre (someone released a version since) is r
 
 ## Decide
 
-The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
+The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, when it stops declaring a capability that keeps stored data (`db`, `kv`, `files` or `object`; PneumaSpace keeps the data, but the app no longer reaches it, so this is also one-way), or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
 
 When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. Signed in as the owner, in the app's working copy:
 
@@ -88,7 +92,7 @@ node .appgov/appgov.mjs undo "why"          # back one version
 node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
 ```
 
-Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
+Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
 
 ## Where things live
 
@@ -107,6 +111,8 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - Left out: the owner page, screenshots, the data snapshot practice, starting Claude Code or Codex from the Host (the `drive` lane), and `record` and `review-all` modes. Only `personal` mode has been run.
 - New apps only. Nothing imports an existing app or its data.
 - Undo restores code; stored data is never put back.
+- **An agent cannot open the live app or its preview.** Both answer only to people signed in to PneumaSpace, and an agent token is the centre's, not PneumaSpace's: the agent gets 401. So an agent cannot check its own release. The Host's probes only fetch the home page and one path that starts Node, so a change that breaks a data route can still pass and go live. You see it working only by opening the app yourself.
+- **A preview starts with empty storage.** It is a separate app on PneumaSpace, without the app's data. When a change that drops or rewrites stored data waits for you, the preview does not show it applied to that data; you decide from the disclosure, not from seeing which stored values would go.
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - The default rules find destructive SQL by matching text, as in the local edition.

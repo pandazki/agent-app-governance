@@ -34,8 +34,18 @@ export const AUTO_SUBJECT = "policy:auto";
 export type GovernanceMode = "record" | "personal" | "review-all";
 export const GOVERNANCE_MODES: readonly GovernanceMode[] = ["record", "personal", "review-all"];
 
-/** What a manifest rule can react to. These are facts about pneuma-space.json; the risk each one carries is the preset's choice. */
-const MANIFEST_CONDITIONS = ["capability_added", "capability_removed", "runtime_changed", "sign_in_dropped"] as const;
+/**
+ * What a manifest rule can react to. These are facts about pneuma-space.json; the risk each one carries is the preset's
+ * choice. `storage_removed` is a `capability_removed` of a capability that keeps the app's data (STORAGE_CAPABILITIES);
+ * both are found for it.
+ */
+const MANIFEST_CONDITIONS = ["capability_added", "capability_removed", "storage_removed", "runtime_changed", "sign_in_dropped"] as const;
+/**
+ * The capabilities in which PneumaSpace keeps an app's data, in both contracts (contract 1 and pneuma-space.cf/1): a
+ * database, a key-value store, files and objects. The platform keeps that data when the app stops declaring one, but
+ * the app no longer reaches it, and what it stores from then on goes elsewhere.
+ */
+const STORAGE_CAPABILITIES = new Set(["db", "kv", "files", "object"]);
 type ManifestCondition = (typeof MANIFEST_CONDITIONS)[number];
 
 interface PathRule {
@@ -51,6 +61,7 @@ interface PathRule {
 interface ManifestRule {
   readonly when: ManifestCondition;
   readonly risk: BuildChangeRisk;
+  /** Shown to the owner. `{capability}` is replaced by the capability the fact is about, for the capability conditions. */
   readonly disclosure?: string;
   /** A change this rule finds cannot be undone by putting files back. */
   readonly one_way?: boolean;
@@ -298,15 +309,17 @@ function identityRequired(manifest: SpaceManifest): boolean {
 }
 
 /** What changed in the runtime manifest, as the conditions a preset can attach a risk to. */
-function manifestFacts(before: SpaceManifest, after: SpaceManifest): { readonly when: ManifestCondition; readonly reason: string }[] {
-  const facts: { when: ManifestCondition; reason: string }[] = [];
+function manifestFacts(before: SpaceManifest, after: SpaceManifest): { readonly when: ManifestCondition; readonly reason: string; readonly capability?: string }[] {
+  const facts: { when: ManifestCondition; reason: string; capability?: string }[] = [];
   const beforeCapabilities = capabilitiesOf(before);
   const afterCapabilities = capabilitiesOf(after);
   for (const kind of Object.keys(afterCapabilities)) {
-    if (!(kind in beforeCapabilities)) facts.push({ when: "capability_added", reason: `declares capability ${kind}` });
+    if (!(kind in beforeCapabilities)) facts.push({ when: "capability_added", reason: `declares capability ${kind}`, capability: kind });
   }
   for (const kind of Object.keys(beforeCapabilities)) {
-    if (!(kind in afterCapabilities)) facts.push({ when: "capability_removed", reason: `stops using capability ${kind}; its data is kept by the platform` });
+    if (kind in afterCapabilities) continue;
+    facts.push({ when: "capability_removed", reason: `stops using capability ${kind}; its data is kept by the platform`, capability: kind });
+    if (STORAGE_CAPABILITIES.has(kind)) facts.push({ when: "storage_removed", reason: `stops declaring ${kind}, where it keeps stored data`, capability: kind });
   }
   if (runtimeOf(before) !== runtimeOf(after)) {
     facts.push({ when: "runtime_changed", reason: `runtime changes from ${String(runtimeOf(before))} to ${String(runtimeOf(after))}` });
@@ -355,8 +368,9 @@ export function classifyRisks(
       if (rule.when !== fact.when) continue;
       risks.add(rule.risk);
       reasons.push(fact.reason);
-      if (rule.disclosure && !disclosure.includes(rule.disclosure)) disclosure.push(rule.disclosure);
-      if (rule.one_way && !oneWay.includes(rule.disclosure ?? fact.reason)) oneWay.push(rule.disclosure ?? fact.reason);
+      const told = rule.disclosure?.replaceAll("{capability}", fact.capability ?? "");
+      if (told && !disclosure.includes(told)) disclosure.push(told);
+      if (rule.one_way && !oneWay.includes(told ?? fact.reason)) oneWay.push(told ?? fact.reason);
     }
   }
 
