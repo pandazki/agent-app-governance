@@ -3,11 +3,18 @@ import { fileURLToPath } from "node:url";
 import { AppHost } from "../../host/src/host";
 import { loadRiskPolicy, type GovernanceMode } from "../../host/src/policy";
 import type { SpaceRuntime } from "../../host/src/space";
-import type { CheckRun } from "../../host/src/test-coverage";
+import type { AppLayout, CheckRun } from "../../host/src/test-coverage";
 
 /** This edition's directory: its overlay, template, risk preset and CLI. */
 export const EDITION = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const TEMPLATE = join(EDITION, "template");
+
+/**
+ * Where an app made from this edition's template keeps its own code and tests: everything the platform runs is under
+ * app/, and the tests are *.test.mjs files under tests/. The template ships no vendored part, so every test that ran
+ * is the app's own.
+ */
+export const CF_LAYOUT: AppLayout = { code_roots: ["app/"], test_dir: "tests", test_file: "*.test.mjs" };
 
 export interface EditionHostOptions {
   readonly appsDir: string;
@@ -34,6 +41,7 @@ export function editionHost(opts: EditionHostOptions): AppHost {
     preview: opts.preview ?? true,
     previewTtlSeconds: opts.previewTtlSeconds,
     manager: opts.manager,
+    layout: CF_LAYOUT,
     ...(opts.runVerify ? { runVerify: opts.runVerify } : {}),
     ...(opts.log ? { log: opts.log } : {}),
   });

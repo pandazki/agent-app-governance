@@ -10,9 +10,11 @@ import { runCommand } from "./space";
 // "npm-test: passed" says nothing about which code was tested. In an app made
 // from the PneumaSpace template, `npm test` once ran only the SDK's own tests.
 // So the Host records what ran: the number of tests from the runner's summary,
-// less the skipped and todo ones, and how many of them are the app's own (files
-// outside sdk/) from a second report it asks Node's test runner for. Whatever
-// cannot be read is "unknown".
+// less the skipped and todo ones, and how many of them are the app's own from a
+// second report it asks Node's test runner for. Whatever cannot be read is
+// "unknown". Where an app's own code and tests live depends on its template, so
+// each edition gives its layout (`AppLayout`); the local edition's is
+// `TEMPLATE_LAYOUT`, PneumaSpace's TypeScript template.
 // ---------------------------------------------------------------------------
 
 /** The scaffold's verify command, run once, with what the test runner reported about it. */
@@ -32,17 +34,35 @@ export interface TestCoverage {
   readonly skipped: Count;
   /** Test files those tests were in, from the JUnit report. */
   readonly test_files: Count;
-  /** Tests in files outside `sdk/`: the app's own. */
+  /** Tests in files outside the layout's vendored directory (`sdk/` in the local template): the app's own. */
   readonly app_tests: Count;
   readonly app_test_files: Count;
-  /** Test files under src/ in what was checked (`*.test.*`), whether or not they ran. */
+  /**
+   * Test files (`*.test.*`) in the layout's test directory in what was checked, whether or not they ran. The name is
+   * from the local template, whose tests live in src/; for another layout it lists that layout's test directory.
+   */
   readonly src_test_files?: readonly string[];
   /** One plain sentence saying the above, for history. */
   readonly note: string;
 }
 
-/** Paths a change can touch that are the app's own code. A change to any of them is expected to come with a test. */
-export const APP_CODE_ROOTS = ["src/", "public/app/"] as const;
+/** Where an app made from one template keeps its own code and its own tests. */
+export interface AppLayout {
+  /** Paths a change can touch that are the app's own code. A change to any of them is expected to come with a test. */
+  readonly code_roots: readonly string[];
+  /** The directory, relative to the app, where the app's own tests go, e.g. `src`. */
+  readonly test_dir: string;
+  /** What a test file there is called, for the advice, e.g. `*.test.ts`. */
+  readonly test_file: string;
+  /** A directory whose tests are not the app's own but a part the template ships, and whose they are, e.g. `sdk` and "the SDK's". */
+  readonly vendored?: { readonly dir: string; readonly whose: string };
+}
+
+/** PneumaSpace's TypeScript app template, which the local edition creates apps from. */
+export const TEMPLATE_LAYOUT: AppLayout = { code_roots: ["src/", "public/app/"], test_dir: "src", test_file: "*.test.ts", vendored: { dir: "sdk", whose: "the SDK's" } };
+
+/** Paths a change can touch that are the app's own code, in the local template. */
+export const APP_CODE_ROOTS = TEMPLATE_LAYOUT.code_roots;
 
 /**
  * `NODE_OPTIONS` that keep the runner's usual output on stdout and add a JUnit report in `file`. Node's
@@ -153,8 +173,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 
-/** Test files under `<root>/src`, as paths relative to root. */
-function srcTestFiles(root: string): string[] {
+/** Test files under `<root>/<dir>`, as paths relative to root. */
+function testFilesIn(root: string, dir: string): string[] {
   const found: string[] = [];
   const walk = (dir: string, rel: string) => {
     let entries;
@@ -169,7 +189,7 @@ function srcTestFiles(root: string): string[] {
       else if (TEST_FILE.test(entry.name)) found.push(`${rel}/${entry.name}`);
     }
   };
-  walk(join(root, "src"), "src");
+  walk(join(root, dir), dir);
   return found.sort();
 }
 
@@ -180,19 +200,20 @@ const shortList = (items: readonly string[]) => (items.length > 3 ? `${items.sli
  * check ran in. Nothing is inferred: a count the runner did not report, or a report that does not agree with
  * the summary, is "unknown".
  */
-export function testCoverage(run: CheckRun, root: string): TestCoverage {
+export function testCoverage(run: CheckRun, root: string, layout: AppLayout = TEMPLATE_LAYOUT): TestCoverage {
   const { ran: tests, skipped } = summaryTests(run.output);
   const roots = [root, ...(existsSync(root) ? [realpathSync(root)] : [])];
   const files = run.report === undefined ? null : reportFiles(run.report, roots);
   // The report must describe the same run as the summary, case for case.
   const usable = files !== null && tests !== "unknown" && files.length === tests;
-  const app = usable ? files.filter((file) => !file.startsWith("sdk/")) : [];
+  const vendored = layout.vendored;
+  const app = usable ? files.filter((file) => !(vendored && file.startsWith(`${vendored.dir}/`))) : [];
   const test_files: Count = usable ? new Set(files).size : "unknown";
   const app_tests: Count = usable ? app.length : tests === 0 ? 0 : "unknown";
   const app_test_files: Count = usable ? new Set(app).size : tests === 0 ? 0 : "unknown";
-  const src_test_files = srcTestFiles(root);
+  const src_test_files = testFilesIn(root, layout.test_dir);
   const notRun = typeof skipped === "number" && skipped > 0 ? ` ${plural(skipped, "more test")} ${skipped === 1 ? "was" : "were"} skipped or todo.` : "";
-  const unran = app_tests === 0 && src_test_files.length ? ` src/ has test files that did not run: ${shortList(src_test_files)}.` : "";
+  const unran = app_tests === 0 && src_test_files.length ? ` ${layout.test_dir}/ has test files that did not run: ${shortList(src_test_files)}.` : "";
 
   let note: string;
   if (tests === "unknown") {
@@ -208,9 +229,13 @@ export function testCoverage(run: CheckRun, root: string): TestCoverage {
           : "the runner's per-file report does not match its summary";
     note = `${plural(tests, "test")} ran; how many of them are the app's own is unknown: ${why}.${notRun}`;
   } else if (app_tests === 0) {
-    note = `${plural(tests, "test")} ran in ${plural(test_files as number, "file")}, all of them the SDK's (sdk/); none of the app's own.${notRun}${unran}`;
+    // Only possible with a vendored directory: every test that ran was in it.
+    note = `${plural(tests, "test")} ran in ${plural(test_files as number, "file")}, all of them ${vendored!.whose} (${vendored!.dir}/); none of the app's own.${notRun}${unran}`;
+  } else if (!vendored) {
+    // Without a vendored directory every test that ran is the app's own.
+    note = `${plural(tests, "test")} ran in ${plural(test_files as number, "file")}, all of them the app's own.${notRun}`;
   } else {
-    note = `${plural(tests, "test")} ran in ${plural(test_files as number, "file")}. The app's own: ${plural(app_tests, "test")} in ${plural(app_test_files as number, "file")}; the rest are the SDK's (sdk/).${notRun}`;
+    note = `${plural(tests, "test")} ran in ${plural(test_files as number, "file")}. The app's own: ${plural(app_tests, "test")} in ${plural(app_test_files as number, "file")}; the rest are ${vendored!.whose} (${vendored!.dir}/).${notRun}`;
   }
   return { tests, skipped, test_files, app_tests, app_test_files, src_test_files, note };
 }
@@ -219,15 +244,15 @@ export function testCoverage(run: CheckRun, root: string): TestCoverage {
  * One line for the agent when a change touched the app's own code and none of the app's own tests ran, or when
  * that cannot be told. Nothing when the change touched no app code, or when app tests ran. It blocks nothing.
  */
-export function testWarning(changedPaths: readonly string[], coverage: TestCoverage | undefined): string | undefined {
-  const code = changedPaths.filter((path) => APP_CODE_ROOTS.some((root) => path.startsWith(root)));
+export function testWarning(changedPaths: readonly string[], coverage: TestCoverage | undefined, layout: AppLayout = TEMPLATE_LAYOUT): string | undefined {
+  const code = changedPaths.filter((path) => layout.code_roots.some((root) => path.startsWith(root)));
   if (!code.length || !coverage) return undefined;
   const shown = shortList(code);
   if (coverage.app_tests === 0) {
     const present = coverage.src_test_files ?? [];
     return present.length
-      ? `warning: this change touched app code (${shown}) and none of the app's own tests ran, although src/ has test files (${shortList(present)}). Check that the test script in package.json runs them and that they are not skipped.`
-      : `warning: this change touched app code (${shown}) and none of the app's own tests ran. Add a test for it as a *.test.ts file under src/.`;
+      ? `warning: this change touched app code (${shown}) and none of the app's own tests ran, although ${layout.test_dir}/ has test files (${shortList(present)}). Check that the test script in package.json runs them and that they are not skipped.`
+      : `warning: this change touched app code (${shown}) and none of the app's own tests ran. Add a test for it as a ${layout.test_file} file under ${layout.test_dir}/.`;
   }
   if (coverage.app_tests === "unknown") return `note: this change touched app code (${shown}); whether any of the app's own tests ran is unknown. ${coverage.note}`;
   return undefined;

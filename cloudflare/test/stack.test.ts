@@ -166,6 +166,31 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect((await cli(copy(), ["status"])).code).toBe(0);
   });
 
+  test("a change to app code that none of the app's own tests covered is released with the warning, and history says no tests ran", async () => {
+    const tests = join(copy(), "tests", "server.test.mjs");
+    writeFileSync(tests, readFileSync(tests, "utf8").replaceAll("test('", "test.skip('"));
+    writeFileSync(join(copy(), "app", "server.mjs"), `${readFileSync(join(copy(), "app", "server.mjs"), "utf8")}\n// untested edit\n`);
+    const submitted = await cli(copy(), ["submit", "An untested server edit"]);
+    expect(submitted.code).toBe(0);
+    expect(submitted.out).toMatch(/warning: this change touched app code \([^)]*app\/server\.mjs\) and none of the app's own tests ran, although tests\/ has test files \(tests\/server\.test\.mjs\)/);
+    const history = (await cli(copy(), ["history"])).out;
+    expect(history).toContain("No tests ran. 2 more tests were skipped or todo. tests/ has test files that did not run: tests/server.test.mjs.");
+    expect(history).toContain("all of them the app's own.");
+    expect(history).not.toContain("sdk/");
+  });
+
+  test("a waiting change shows in status what its tests covered", async () => {
+    const manifest = JSON.parse(readFileSync(join(copy(), "pneuma-space.json"), "utf8"));
+    manifest.capabilities.identity = {};
+    writeFileSync(join(copy(), "pneuma-space.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    writeFileSync(join(copy(), "app", "server.mjs"), `${readFileSync(join(copy(), "app", "server.mjs"), "utf8")}// another\n`);
+    expect((await cli(copy(), ["submit", "Drop sign-in again"])).code).toBe(2);
+    const status = (await cli(copy(), ["status"])).out;
+    expect(status).toContain("  tests: No tests ran.");
+    expect(status).toContain("  warning: this change touched app code (app/server.mjs)");
+    expect((await cli(copy(), ["discard"])).code).toBe(0);
+  });
+
   test("list is answered from the summaries in R2", async () => {
     const listed = await cli(apps(), ["list"]);
     expect(listed.code).toBe(0);

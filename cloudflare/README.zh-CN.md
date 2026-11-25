@@ -68,7 +68,7 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<一个 age
 
 ## 做决定
 
-Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
+Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
 
 `submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。以主人身份登录后，在应用的工作副本里：
 
@@ -108,7 +108,6 @@ node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个�
 - PneumaSpace 的令牌不能彻底清除（purge）应用。Host 撤下一个应用的地址时，应用被移除，名字会一直被占用，直到 PneumaSpace 的主人在控制台里把它清除。
 - 每个应用一个容器，按需启动。一次提交在整个检查期间都占着连接，在下面的运行里用了 30 到 40 秒，大部分时间花在 Host 的检查和 PneumaSpace 的发布上，而不是读写记录上。
 - 重新部署之后，Durable Object 还在活动的应用会继续用之前的构建，直到它空闲几分钟。
-- "改动碰了应用代码却没有自己的测试"的提醒，对这个模板的 `app/` 目录结构不会触发。
 - 默认规则靠匹配文本找破坏性 SQL，和本地版一样。
 
 ## 跑过什么

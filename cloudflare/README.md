@@ -68,7 +68,7 @@ A working copy that is behind the centre (someone released a version since) is r
 
 ## Decide
 
-The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
+The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
 
 When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. Signed in as the owner, in the app's working copy:
 
@@ -108,7 +108,6 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, which took 30 to 40 seconds in the runs below, most of it in the Host's checks and PneumaSpace publishes rather than in loading or saving the record.
 - After a redeploy, an app whose Durable Object is still active keeps the previous build until it has been idle for a few minutes.
-- The warning that a change touched app code without a test of its own does not fire for this template's `app/` layout.
 - The default rules find destructive SQL by matching text, as in the local edition.
 
 ## What has been run

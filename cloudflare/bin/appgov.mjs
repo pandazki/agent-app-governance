@@ -566,6 +566,8 @@ switch (command) {
       for (const p of s.pending) {
         console.log(`waiting for the owner: ${p.change_id} "${p.intent}" (${p.risks.join(", ")})`);
         for (const line of p.disclosure) console.log(`  - ${line}`);
+        if (p.tests) console.log(`  tests: ${p.tests.note}`);
+        if (p.test_warning) console.log(`  ${p.test_warning}`);
         if (p.preview) console.log(`  ${previewLine(p.preview, p.change_id)}`);
       }
       for (const line of s.malformed_pending ?? []) console.log(line);
@@ -653,6 +655,8 @@ switch (command) {
     if (!pending) fail(`no change ${args[0]} is waiting`);
     console.log(`"${pending.intent}" by ${pending.agent}\nfiles: ${pending.changed_paths.join(", ")}\nrisks: ${pending.risks.join(", ")}`);
     for (const line of pending.disclosure) console.log(`  - ${line}`);
+    if (pending.tests) console.log(`tests: ${pending.tests.note}`);
+    if (pending.test_warning) console.log(pending.test_warning);
     if (pending.preview) console.log(previewLine(pending.preview, args[0]));
     if (process.stdin.isTTY && ownerSession()) {
       const rl = createInterface({ input: process.stdin, output: process.stdout });

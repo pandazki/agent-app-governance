@@ -55,7 +55,7 @@ import {
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
-import { runCheckCommand, testCoverage, testWarning, type CheckRun, type TestCoverage } from "./test-coverage";
+import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
 // A headless Creation Host on PneumaSpace.
@@ -113,6 +113,11 @@ export interface AppHostOptions {
    * for a JUnit report beside its usual output, so the entry can say how many of the tests are the app's own.
    */
   readonly runVerify?: (draftRoot: string, command: string) => Promise<CheckRun>;
+  /**
+   * Where apps made from this Host's template keep their own code and tests: which tests count as the app's own,
+   * and which changes are expected to come with one. Default: PneumaSpace's TypeScript template (`TEMPLATE_LAYOUT`).
+   */
+  readonly layout?: AppLayout;
   /**
    * A way to save stored data and put it back, if this Host has one. When present, the Host saves the
    * data right before it releases a one-way change, and an undo past that change puts the data back.
@@ -341,7 +346,8 @@ export interface AppStatus {
   /** Files in the working tree that differ from the active version. */
   readonly uncommitted: readonly string[];
   /** With previews on, each with its preview as PneumaSpace answers for it now. */
-  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState })[];
+  /** Each change that waits for the owner, with what its test check covered and the warning when no app test covered app code. */
+  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState; readonly tests?: TestCoverage; readonly test_warning?: string })[];
   /**
    * One plain line for each file in `.appgov/pending/` that is not a waiting change in the shape this Host
    * writes, naming the file. Such a file is left out of `pending` and cannot be approved or denied, and the
@@ -505,9 +511,9 @@ function earnedByChecks(checks: readonly Check[]): string[] {
 }
 
 /** What the test check ran, and the warning for a change to app code that no app test covered, for a change's result. */
-function testFacts(checks: readonly Check[], changedPaths: readonly string[]): { tests?: TestCoverage; test_warning?: string } {
+function testFacts(checks: readonly Check[], changedPaths: readonly string[], layout: AppLayout): { tests?: TestCoverage; test_warning?: string } {
   const coverage = checks.find((check) => check.id === "npm-test")?.coverage;
-  const warning = testWarning(changedPaths, coverage);
+  const warning = testWarning(changedPaths, coverage, layout);
   return { ...(coverage ? { tests: coverage } : {}), ...(warning ? { test_warning: warning } : {}) };
 }
 
@@ -573,9 +579,12 @@ export class AppHost {
   /** This Host as PneumaSpace's manager of what it publishes: the name every write names, and where a person acts through it. */
   private readonly manager: { readonly name: string; readonly url?: string };
   private readonly previews: Previews;
+  /** Where this Host's apps keep their own code and tests. */
+  private readonly layout: AppLayout;
 
   constructor(private readonly opts: AppHostOptions) {
     this.governance = opts.governance ?? "personal";
+    this.layout = opts.layout ?? TEMPLATE_LAYOUT;
     this.log = opts.log ?? (() => {});
     this.manager = opts.manager ?? { name: DEFAULT_MANAGER };
     this.previews = new Previews({ space: opts.space, manager: this.manager, ttlSeconds: opts.previewTtlSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS, log: this.log });
@@ -835,7 +844,7 @@ export class AppHost {
       snapshot(draftRoot, checkRoot);
       tests = await this.verifyCommand(checkRoot, command);
       // Read while the copy exists: the report names files by their path in it.
-      coverage = testCoverage(tests, checkRoot);
+      coverage = testCoverage(tests, checkRoot, this.layout);
     } finally {
       rmSync(checkRoot, { recursive: true, force: true });
     }
@@ -1532,7 +1541,7 @@ export class AppHost {
         this.log(`${input.name} ${changeId} waits for ${info.owner}: ${assessment.risks.join(", ")}`);
         // The preview stays up for the owner; where it is and when it ends is PneumaSpace's answer.
         const standing = previewed() ? await this.previews.state(previewName(input.name, changeId)) : undefined;
-        const facts = { ...testFacts(checks, diff.changedPaths), ...(standing?.state === "standing" ? { preview: standing } : {}) };
+        const facts = { ...testFacts(checks, diff.changedPaths, this.layout), ...(standing?.state === "standing" ? { preview: standing } : {}) };
         return { status: "needs_approval", change_id: changeId, risks: assessment.risks, disclosure, changed_paths: diff.changedPaths, ...facts };
       }
 
@@ -1735,7 +1744,7 @@ export class AppHost {
         ...(oneWay ? { one_way: oneWay.reason } : {}),
         ...(asIs ? { released_as_is: true as const } : {}),
         note,
-        ...testFacts(change.checks, change.changed_paths),
+        ...testFacts(change.checks, change.changed_paths, this.layout),
       };
     } finally {
       rmSync(releaseRoot, { recursive: true, force: true });
@@ -2189,7 +2198,8 @@ export class AppHost {
     const { paths, info, record } = this.open(name);
     const active = record.current();
     const { pending: waiting, malformed } = this.pendingChanges(paths, record);
-    const pending = this.opts.preview === false ? waiting : await Promise.all(waiting.map(async (p) => ({ ...p, preview: await this.previews.state(previewName(name, p.change_id)) })));
+    const tested = waiting.map((p) => ({ ...p, ...testFacts(p.checks, p.changed_paths, this.layout) }));
+    const pending = this.opts.preview === false ? tested : await Promise.all(tested.map(async (p) => ({ ...p, preview: await this.previews.state(previewName(name, p.change_id)) })));
     const uncertain = servingUncertainLine(record, readServingVersion(paths));
     return {
       app_id: info.app_id,
