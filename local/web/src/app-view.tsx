@@ -108,7 +108,12 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
           <div className="mx-auto w-full max-w-[720px] overflow-hidden rounded-card bg-surface shadow-card">
             <div className="primitive-card-bar flex items-center gap-2 border-b border-line">
               <span className="min-w-0 flex-1">
-                <InlineChip mono>{model.addressText}</InlineChip>
+                {/* The chip is a flex box, which clips without an ellipsis: the text gets its own box that ends in one. */}
+                <InlineChip mono>
+                  <span className="min-w-0 truncate" title={model.addressText}>
+                    {model.addressText}
+                  </span>
+                </InlineChip>
               </span>
               {model.address && (
                 <ButtonLink href={model.address} variant="quiet" size="xs" external className="shrink-0">
