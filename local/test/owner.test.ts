@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { STATE_DIR_NAME } from "@pneuma-framework/core";
-import { AppHost } from "../src/host";
+import { AppHost } from "../../host/src/host";
 import { makeOwnerToken, OWNER_HEADER, ownerLink, ownerTokenIn, PAGE_CHANNEL } from "../src/owner";
-import { loadRiskPolicy } from "../src/policy";
+import { loadRiskPolicy } from "../../host/src/policy";
 import { createHostServer } from "../src/server";
 import { FakeSpace, templateTests } from "./fake-space";
 

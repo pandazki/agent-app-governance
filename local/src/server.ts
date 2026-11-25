@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "./host";
+import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { servePage, type PagePictures } from "./owner";
 import type { PageAssets } from "./page";
 

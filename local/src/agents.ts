@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isClaudeCodeTurnCompletionTimeout, runClaudeCodeAgent } from "@pneuma-framework/backend-claude-code";
-import { STATE_DIR } from "./artifact";
-import type { SubmitInput } from "./host";
+import { STATE_DIR } from "../../host/src/artifact";
+import type { SubmitInput } from "../../host/src/host";
 
 // ---------------------------------------------------------------------------
 // Host-driven control plane: the code agents a Host can start on a draft.

@@ -257,7 +257,7 @@ A page opened from the old link can no longer decide; open the new one.
 The Host uses four pneuma-framework packages (`@pneuma-framework/core`, `host-kit`, `backend-codex`, `backend-claude-code`). They are not published, so they come from source at one commit, set in one place: the `x-framework-context` line of `compose.yaml`, beside the PneumaSpace pin.
 
 - The Host's image takes that commit from GitHub as a build context of its own, as it takes PneumaSpace. `docker compose up` needs nothing else.
-- On your machine, `bun run setup` reads the same line, fetches that commit into `vendor/pneuma-framework` (ignored by git), and runs `bun install --frozen-lockfile`.
+- On your machine, `bun run setup` reads the same line, fetches that commit into `vendor/pneuma-framework` (ignored by git), runs `bun install --frozen-lockfile`, and links the two framework packages the shared Host code imports into `../host/node_modules` (ignored by git).
 
 ```sh
 cd local

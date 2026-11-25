@@ -152,6 +152,8 @@ services:
       dockerfile: host.Dockerfile
       additional_contexts:
         framework: *framework-context
+        # The Host code both editions share, at the top of this repository.
+        host: ../host
         space: *space-context
         # cli/ and templates/ are separate contexts because pneuma-space's .dockerignore keeps only
         # gateway/ and shared/, and BuildKit applies it to a local checkout. A subdirectory context

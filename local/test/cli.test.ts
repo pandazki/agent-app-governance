@@ -6,11 +6,11 @@ import { createServer as createTcpServer, type AddressInfo, type Server } from "
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { STATE_DIR_NAME } from "@pneuma-framework/core";
-import { FRAMEWORK_DIR, STATE_DIR } from "../src/artifact";
-import { AppHost } from "../src/host";
-import { loadRiskPolicy } from "../src/policy";
+import { FRAMEWORK_DIR, STATE_DIR } from "../../host/src/artifact";
+import { AppHost } from "../../host/src/host";
+import { loadRiskPolicy } from "../../host/src/policy";
 import { createHostServer, HOST_API_LEVEL } from "../src/server";
-import { runCommand } from "../src/space";
+import { runCommand } from "../../host/src/space";
 import { FakeSpace, templateTests } from "./fake-space";
 
 // The path a coding agent actually takes: the artifact's own CLI, over HTTP, to a served Host.

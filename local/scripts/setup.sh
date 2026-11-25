@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fetches pneuma-framework's source at the commit compose.yaml pins into vendor/pneuma-framework
-# (git-ignored), then installs this directory's dependencies from bun.lock. Run it as `bun run setup`:
+# (git-ignored), installs this directory's dependencies from bun.lock, and links the framework packages
+# the shared Host code in ../host imports into ../host/node_modules (git-ignored), as the image does. Run it as `bun run setup`:
 # once after cloning, and again whenever the pin in compose.yaml moves. The tests, the typecheck and
 # the host-driven Host need it; `docker compose up` does not, because the image build fetches the
 # same commit itself.
@@ -33,3 +34,10 @@ fi
 echo "setup: pneuma-framework is at $(git -C "$dir" rev-parse --short HEAD) in $dir"
 
 bun install --frozen-lockfile
+
+# The shared Host code (../host/src) imports two framework packages. It sits outside this directory, so it
+# does not see node_modules here; link the packages next to it, as host.Dockerfile does in the image.
+mkdir -p ../host/node_modules/@pneuma-framework
+for p in core host-kit; do
+  ln -sfn "../../../local/$dir/packages/$p" "../host/node_modules/@pneuma-framework/$p"
+done

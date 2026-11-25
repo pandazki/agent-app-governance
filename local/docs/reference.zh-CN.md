@@ -257,7 +257,7 @@ docker compose logs host | grep "owner link" | tail -1
 Host 用到四个 pneuma-framework 包（`@pneuma-framework/core`、`host-kit`、`backend-codex`、`backend-claude-code`）。它们没有发布，所以从源码取，固定在一个提交上，而这个提交只在一个地方设置：`compose.yaml` 里 `x-framework-context` 那一行，就在 PneumaSpace 的固定提交旁边。
 
 - Host 的镜像把那个提交作为单独的构建上下文从 GitHub 取来，PneumaSpace 也是这样取的。`docker compose up` 不需要别的。
-- 在你的电脑上，`bun run setup` 读同一行，把那个提交取到 `vendor/pneuma-framework`（git 会忽略它），再运行 `bun install --frozen-lockfile`。
+- 在你的电脑上，`bun run setup` 读同一行，把那个提交取到 `vendor/pneuma-framework`（git 会忽略它），运行 `bun install --frozen-lockfile`，再把共享的 Host 代码要导入的两个框架包链接到 `../host/node_modules`（git 会忽略它）。
 
 ```sh
 cd local

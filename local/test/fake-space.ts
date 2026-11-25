@@ -1,7 +1,7 @@
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { listFiles } from "@pneuma-framework/host-kit/workspace";
-import type { CommandResult, ProbeResult, PublishOptions, PublishResult, SpaceApp, SpaceBinding, SpaceRuntime, SpaceState } from "../src/space";
+import type { CommandResult, ProbeResult, PublishOptions, PublishResult, SpaceApp, SpaceBinding, SpaceRuntime, SpaceState } from "../../host/src/space";
 
 export const FIXTURE_TEMPLATE = join(import.meta.dir, "fixture-template");
 

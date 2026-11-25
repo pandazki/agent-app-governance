@@ -8,13 +8,13 @@ import type { DataSnapshotCapability } from "@pneuma-framework/host-kit/change-r
 import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { agentLane } from "../src/agents";
 import { listFiles } from "@pneuma-framework/host-kit/workspace";
-import { FRAMEWORK_DIR, installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../src/artifact";
+import { FRAMEWORK_DIR, installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../../host/src/artifact";
 import { dataSnapshotFromEnv, hostUrlFromEnv, managerFromEnv, previewTtlFromEnv } from "../src/config";
 import { print } from "../src/drive";
-import { AppHost, HostError, type AppHostOptions, type HostDataSnapshot } from "../src/host";
-import { previewName } from "../src/preview";
+import { AppHost, HostError, type AppHostOptions, type HostDataSnapshot } from "../../host/src/host";
+import { previewName } from "../../host/src/preview";
 import { appModel, changeModel, homeModel, NO_PICTURES, uncertainKind, type PageContext } from "../src/page";
-import { AUTO_SUBJECT, loadRiskPolicy } from "../src/policy";
+import { AUTO_SUBJECT, loadRiskPolicy } from "../../host/src/policy";
 import { FakeSpace, FIXTURE_TEMPLATE, templateTests } from "./fake-space";
 
 const EXAMPLE = join(import.meta.dir, "..");

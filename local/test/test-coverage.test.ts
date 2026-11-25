@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCheckCommand, testCoverage, testWarning, withJunitReport } from "../src/test-coverage";
+import { runCheckCommand, testCoverage, testWarning, withJunitReport } from "../../host/src/test-coverage";
 
 // The shapes below are what Node's test runner printed in this repository's checks (Node 22, 24 and 26):
 // the spec summary on stdout and, with a second reporter, a JUnit report. Node 24 and later name each

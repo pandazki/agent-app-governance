@@ -286,8 +286,14 @@ function runtimeOf(manifest: SpaceManifest): unknown {
   return plainObject(manifest)?.runtime ?? "isolate";
 }
 
-function identityRequired(capabilities: Record<string, unknown>): boolean {
-  const identity = plainObject(capabilities.identity);
+/**
+ * Whether the manifest says the app needs to know who the visitor is. The two contracts say it differently: on
+ * PneumaSpace's Cloudflare plane (contract pneuma-space.cf/1) only `identity.required: true` says it, since every
+ * visitor signs in to the workspace anyway; elsewhere declaring `identity` says it unless `required` is false.
+ */
+function identityRequired(manifest: SpaceManifest): boolean {
+  const identity = plainObject(capabilitiesOf(manifest).identity);
+  if (plainObject(manifest)?.contract === "pneuma-space.cf/1") return identity?.required === true;
   return identity !== undefined && identity.required !== false;
 }
 
@@ -305,7 +311,7 @@ function manifestFacts(before: SpaceManifest, after: SpaceManifest): { readonly 
   if (runtimeOf(before) !== runtimeOf(after)) {
     facts.push({ when: "runtime_changed", reason: `runtime changes from ${String(runtimeOf(before))} to ${String(runtimeOf(after))}` });
   }
-  if (identityRequired(beforeCapabilities) && !identityRequired(afterCapabilities)) facts.push({ when: "sign_in_dropped", reason: "sign-in is no longer required" });
+  if (identityRequired(before) && !identityRequired(after)) facts.push({ when: "sign_in_dropped", reason: "sign-in is no longer required" });
   return facts;
 }
 

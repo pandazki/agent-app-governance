@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { snapshot, sourceSignature } from "./artifact";
 import type { SpaceApp, SpaceManager, SpaceRuntime } from "./space";
+import { timed } from "./steps";
 
 // ---------------------------------------------------------------------------
 // Previews on PneumaSpace.
@@ -85,19 +86,19 @@ export class Previews {
    */
   async boot(app: string, root: string): Promise<Booted> {
     const { space, manager } = this.opts;
-    const published = await space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager });
+    const published = await timed("publish the preview", () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager }));
     let output = `[preview ${app}] ${published.output}`;
     if (published.code !== 0) {
       const refused = refusal(published.output, this.opts.ttlSeconds);
       return refused ? { ok: false, output, refused } : { ok: false, output };
     }
-    const probe = await space.probe(app);
+    const probe = await timed("wait until the preview answers", () => space.probe(app));
     output += `\n[preview ${app}] GET / -> ${probe.status} ${probe.detail}`;
     if (!probe.ok) {
       await this.drop(app, published.app);
       return { ok: false, output };
     }
-    const { state: preview, listed } = await this.read(app);
+    const { state: preview, listed } = await timed("read the preview's state", () => this.read(app));
     if (listed && listed.expiresAt === null) {
       await space.takeDown(app, manager.name);
       return { ok: false, output: `${output}\n[preview ${app}] PneumaSpace kept the preview as a durable app, so it does not know ephemeral apps (its ADR 0038) and the preview would never end; it was taken down again. Use the PneumaSpace this Host is pinned to, or APPGOV_PREVIEW=off.` };
@@ -183,7 +184,11 @@ export class Previews {
    * could end a later app that took the name. Never throws: a leftover preview serves a throwaway name, blocks
    * nothing and ends itself, so it is only logged.
    */
-  async drop(app: string, id: string | undefined): Promise<void> {
+  drop(app: string, id: string | undefined): Promise<void> {
+    return timed("discard the preview", () => this.discardPreview(app, id));
+  }
+
+  private async discardPreview(app: string, id: string | undefined): Promise<void> {
     const { manager, ttlSeconds, space, log } = this.opts;
     if (!id) {
       log(`preview ${app} was not discarded: this Host has no app id for it and discards a preview only by its id; it ends itself within ${ttlSeconds} s of its publish`);

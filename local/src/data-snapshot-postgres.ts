@@ -1,7 +1,7 @@
 import { basename, resolve } from "node:path";
 import { SQL } from "bun";
-import type { HostDataSnapshot } from "./host";
-import type { SpaceBinding, SpaceRuntime } from "./space";
+import type { HostDataSnapshot } from "../../host/src/host";
+import type { SpaceBinding, SpaceRuntime } from "../../host/src/space";
 
 // ---------------------------------------------------------------------------
 // A practice, not a promise: a data snapshot capability for apps whose database

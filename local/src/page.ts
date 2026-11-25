@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { STATE_DIR, type HistoryEntry } from "./artifact";
-import { RUN_UNDO, type AppStatus, type AppSummary } from "./host";
+import { STATE_DIR, type HistoryEntry } from "../../host/src/artifact";
+import { RUN_UNDO, type AppStatus, type AppSummary, type Overview } from "../../host/src/host";
 import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, WORDS, type Lang, type Words } from "./page-words";
 import { previewOf, type Picture, type PictureMiss } from "./screenshots";
 import type {
@@ -32,6 +32,9 @@ import type {
 } from "./page-model";
 import { UI_KEYS } from "./page-model";
 
+// The Host defines what `overview()` returns; the page reads it.
+export type { Overview };
+
 // ---------------------------------------------------------------------------
 // The owner page: what a person, not a developer, sees of the apps their agents
 // built. Four views: my apps, one app with its history, a change waiting for
@@ -49,21 +52,6 @@ import { UI_KEYS } from "./page-model";
 export type { AppState } from "./page-model";
 
 /** What `AppHost.overview()` returns: the summaries `GET /apps` returns, and per app what `status` and `history` return. */
-export interface Overview {
-  readonly governance: string;
-  readonly governance_note: string;
-  readonly data_snapshot: string | null;
-  /** This Host's address as the person's machine reaches it, when known. */
-  readonly host_url?: string;
-  /** PneumaSpace's console as the person's machine reaches it, when known. */
-  readonly console_url?: string;
-  /** The name this Host goes by on PneumaSpace as the manager of the apps it releases. */
-  readonly manager?: string;
-  readonly summaries: readonly AppSummary[];
-  /** `error` when the app could not be read. */
-  readonly apps: readonly ({ readonly app_id: string; readonly status: AppStatus; readonly history: readonly HistoryEntry[] } | { readonly app_id: string; readonly error: string })[];
-  readonly generated_at: string;
-}
 
 const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -515,7 +503,7 @@ export function timeline(history: readonly HistoryEntry[], pendingIds: ReadonlyS
   return out.sort((a, b) => b.order - a.order);
 }
 
-/** The version `version` was built on, by the rule undo follows (src/host.ts `builtOn`). */
+/** The version `version` was built on, by the rule undo follows (host/src/host.ts `builtOn`). */
 function builtOn(history: readonly HistoryEntry[], version: string): string | null {
   const base = history.find((entry) => entry?.version === version && entry.kind !== "restore")?.base_version;
   return typeof base === "string" ? base : null;

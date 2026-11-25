@@ -55,8 +55,8 @@ import {
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
-import { runCheckCommand, testCoverage, testWarning, type CheckRun, type TestCoverage } from "./test-coverage";
-import type { Overview } from "./page";
+import { timed, timedSync } from "./steps";
+import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
 // A headless Creation Host on PneumaSpace.
@@ -114,6 +114,11 @@ export interface AppHostOptions {
    * for a JUnit report beside its usual output, so the entry can say how many of the tests are the app's own.
    */
   readonly runVerify?: (draftRoot: string, command: string) => Promise<CheckRun>;
+  /**
+   * Where apps made from this Host's template keep their own code and tests: which tests count as the app's own,
+   * and which changes are expected to come with one. Default: PneumaSpace's TypeScript template (`TEMPLATE_LAYOUT`).
+   */
+  readonly layout?: AppLayout;
   /**
    * A way to save stored data and put it back, if this Host has one. When present, the Host saves the
    * data right before it releases a one-way change, and an undo past that change puts the data back.
@@ -342,7 +347,8 @@ export interface AppStatus {
   /** Files in the working tree that differ from the active version. */
   readonly uncommitted: readonly string[];
   /** With previews on, each with its preview as PneumaSpace answers for it now. */
-  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState })[];
+  /** Each change that waits for the owner, with what its test check covered and the warning when no app test covered app code. */
+  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState; readonly tests?: TestCoverage; readonly test_warning?: string })[];
   /**
    * One plain line for each file in `.appgov/pending/` that is not a waiting change in the shape this Host
    * writes, naming the file. Such a file is left out of `pending` and cannot be approved or denied, and the
@@ -506,9 +512,9 @@ function earnedByChecks(checks: readonly Check[]): string[] {
 }
 
 /** What the test check ran, and the warning for a change to app code that no app test covered, for a change's result. */
-function testFacts(checks: readonly Check[], changedPaths: readonly string[]): { tests?: TestCoverage; test_warning?: string } {
+function testFacts(checks: readonly Check[], changedPaths: readonly string[], layout: AppLayout): { tests?: TestCoverage; test_warning?: string } {
   const coverage = checks.find((check) => check.id === "npm-test")?.coverage;
-  const warning = testWarning(changedPaths, coverage);
+  const warning = testWarning(changedPaths, coverage, layout);
   return { ...(coverage ? { tests: coverage } : {}), ...(warning ? { test_warning: warning } : {}) };
 }
 
@@ -550,6 +556,23 @@ function firstTimeLive(history: readonly HistoryEntry[], top: string, serving: s
   return out;
 }
 
+/** What `overview()` returns: everything the owner page shows, in one read. */
+export interface Overview {
+  readonly governance: string;
+  readonly governance_note: string;
+  readonly data_snapshot: string | null;
+  /** This Host's address as the person's machine reaches it, when known. */
+  readonly host_url?: string;
+  /** PneumaSpace's console as the person's machine reaches it, when known. */
+  readonly console_url?: string;
+  /** The name this Host goes by on PneumaSpace as the manager of the apps it releases. */
+  readonly manager?: string;
+  readonly summaries: readonly AppSummary[];
+  /** `error` when the app could not be read. */
+  readonly apps: readonly ({ readonly app_id: string; readonly status: AppStatus; readonly history: readonly HistoryEntry[] } | { readonly app_id: string; readonly error: string })[];
+  readonly generated_at: string;
+}
+
 export class AppHost {
   private readonly locks = new Map<string, Promise<unknown>>();
   private readonly governance: GovernanceMode;
@@ -557,9 +580,12 @@ export class AppHost {
   /** This Host as PneumaSpace's manager of what it publishes: the name every write names, and where a person acts through it. */
   private readonly manager: { readonly name: string; readonly url?: string };
   private readonly previews: Previews;
+  /** Where this Host's apps keep their own code and tests. */
+  private readonly layout: AppLayout;
 
   constructor(private readonly opts: AppHostOptions) {
     this.governance = opts.governance ?? "personal";
+    this.layout = opts.layout ?? TEMPLATE_LAYOUT;
     this.log = opts.log ?? (() => {});
     this.manager = opts.manager ?? { name: DEFAULT_MANAGER };
     this.previews = new Previews({ space: opts.space, manager: this.manager, ttlSeconds: opts.previewTtlSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS, log: this.log });
@@ -816,10 +842,12 @@ export class AppHost {
     let tests: CheckRun;
     let coverage: TestCoverage;
     try {
-      snapshot(draftRoot, checkRoot);
-      tests = await this.verifyCommand(checkRoot, command);
-      // Read while the copy exists: the report names files by their path in it.
-      coverage = testCoverage(tests, checkRoot);
+      [tests, coverage] = await timed("tests", async () => {
+        timedSync("copy the draft for the tests", () => snapshot(draftRoot, checkRoot));
+        const run = await this.verifyCommand(checkRoot, command);
+        // Read while the copy exists: the report names files by their path in it.
+        return [run, testCoverage(run, checkRoot, this.layout)] as const;
+      });
     } finally {
       rmSync(checkRoot, { recursive: true, force: true });
     }
@@ -1036,8 +1064,8 @@ export class AppHost {
       }
     }
 
-    const published = await this.opts.space.publish(name, releaseRoot, { manager: this.manager });
-    const probe = published.code === 0 ? await this.opts.space.probe(name) : NOT_PROBED;
+    const published = await timed("publish the release", () => this.opts.space.publish(name, releaseRoot, { manager: this.manager }));
+    const probe = published.code === 0 ? await timed("wait until the release answers", () => this.opts.space.probe(name)) : NOT_PROBED;
     if (published.code !== 0 || !probe.ok) {
       // A refused publish never reached an existing address. Everything else did: a build that went up
       // and did not come up, and any attempt on a name this create had just claimed.
@@ -1405,14 +1433,16 @@ export class AppHost {
 
     // Agent-driven: the working tree the agent just edited is the draft.
     // Host-driven: the draft starts as the active version and the agent edits it.
-    snapshot(input.runAgent ? baseRoot : paths.root, draftRoot);
+    timedSync("copy the working tree into a draft", () => snapshot(input.runAgent ? baseRoot : paths.root, draftRoot));
 
     let keepDraft = false;
     const previewed = () => earnedByChecks(checks).includes(GUARANTEES.previewed);
+    /** The preview's discard, once it has started. */
+    let dropping: Promise<void> | undefined;
     try {
       let proposal;
       try {
-        proposal = await buildGovernedProposal({
+        proposal = await timed("check the draft (diff, boundaries, seal, checks)", () => buildGovernedProposal({
           draftId: changeId,
           activeRoot: liveRoot,
           draftRoot,
@@ -1441,7 +1471,7 @@ export class AppHost {
             });
           },
           observe: (root) => this.observe(root),
-        });
+        }));
       } catch (err) {
         const rejected = err instanceof GovernedProposalRejected;
         const refused = err instanceof ChangeRefused;
@@ -1516,11 +1546,18 @@ export class AppHost {
         this.log(`${input.name} ${changeId} waits for ${info.owner}: ${assessment.risks.join(", ")}`);
         // The preview stays up for the owner; where it is and when it ends is PneumaSpace's answer.
         const standing = previewed() ? await this.previews.state(previewName(input.name, changeId)) : undefined;
-        const facts = { ...testFacts(checks, diff.changedPaths), ...(standing?.state === "standing" ? { preview: standing } : {}) };
+        const facts = { ...testFacts(checks, diff.changedPaths, this.layout), ...(standing?.state === "standing" ? { preview: standing } : {}) };
         return { status: "needs_approval", change_id: changeId, risks: assessment.risks, disclosure, changed_paths: diff.changedPaths, ...facts };
       }
 
       await threads.appendTurn(info.thread_id, { kind: "host_event", label: "policy_approval", payload: decision });
+      // The preview has done its part, and it goes whether or not the release works. Where the release does not draw
+      // on the preview's upload, it is discarded while the release goes out instead of after it; the change still
+      // answers only once the discard is over (see below).
+      if (previewed() && this.opts.space.releaseUsesPreviewUpload === false) {
+        dropping = this.previews.drop(previewName(input.name, changeId), preview.id);
+        dropping.catch(() => {});
+      }
       return await this.finish(
         input.name,
         paths,
@@ -1548,7 +1585,7 @@ export class AppHost {
       );
     } finally {
       // A change that waits for the owner keeps its draft and its preview (discarded when they decide, or it ends itself).
-      if (!keepDraft && previewed()) await this.previews.drop(previewName(input.name, changeId), preview.id);
+      if (!keepDraft && previewed()) await (dropping ?? this.previews.drop(previewName(input.name, changeId), preview.id));
       if (!keepDraft) rmSync(draftRoot, { recursive: true, force: true });
     }
   }
@@ -1607,7 +1644,7 @@ export class AppHost {
     const asIs = record.versions().includes(change.base_version) && sourceSignature(record.versionDir(change.base_version)) === draftSignature;
     // What the address serves before this release, and what goes back on it if the release fails.
     const servingBefore = this.serving(paths, record);
-    const releaseRoot = this.privateCopy(draftRoot);
+    const releaseRoot = timedSync("copy the draft for release", () => this.privateCopy(draftRoot));
     try {
       let released = await this.publishRelease({
         name,
@@ -1681,7 +1718,7 @@ export class AppHost {
             extra,
           });
         } else {
-          record.record<HostEntryFields>({ changeId: change.change_id, kind: change.kind, intent: change.intent, agent: change.agent, from: releaseRoot, guarantees, oneWay, extra });
+          timedSync("record the version", () => record.record<HostEntryFields>({ changeId: change.change_id, kind: change.kind, intent: change.intent, agent: change.agent, from: releaseRoot, guarantees, oneWay, extra }));
         }
       } catch (err) {
         throw await this.releasedButNotRecorded(name, record, servingBefore, err, (address_note) =>
@@ -1719,7 +1756,7 @@ export class AppHost {
         ...(oneWay ? { one_way: oneWay.reason } : {}),
         ...(asIs ? { released_as_is: true as const } : {}),
         note,
-        ...testFacts(change.checks, change.changed_paths),
+        ...testFacts(change.checks, change.changed_paths, this.layout),
       };
     } finally {
       rmSync(releaseRoot, { recursive: true, force: true });
@@ -2173,7 +2210,8 @@ export class AppHost {
     const { paths, info, record } = this.open(name);
     const active = record.current();
     const { pending: waiting, malformed } = this.pendingChanges(paths, record);
-    const pending = this.opts.preview === false ? waiting : await Promise.all(waiting.map(async (p) => ({ ...p, preview: await this.previews.state(previewName(name, p.change_id)) })));
+    const tested = waiting.map((p) => ({ ...p, ...testFacts(p.checks, p.changed_paths, this.layout) }));
+    const pending = this.opts.preview === false ? tested : await Promise.all(tested.map(async (p) => ({ ...p, preview: await this.previews.state(previewName(name, p.change_id)) })));
     const uncertain = servingUncertainLine(record, readServingVersion(paths));
     return {
       app_id: info.app_id,

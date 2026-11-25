@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "scaffold_id": "space-cf-node-app",
+  "version": "0.1.0",
+  "display_name": "PneumaSpace Cloudflare app (pneuma-space.cf/1)",
+  "materialization": {
+    "strategy": "copy",
+    "source_roots": ["."],
+    "exclude": ["node_modules", "data", ".pneuma-framework", ".appgov", ".pneuma", ".git", ".env"]
+  },
+  "artifact_boundary": {
+    "writable_roots": ["app", "tests", "pneuma-space.json", "package.json", "package-lock.json", "AGENTS.md", "PRODUCT.md", "DESIGN.md"],
+    "protected_paths": ["appgov.scaffold.json", "CLAUDE.md", ".gitignore"],
+    "generated_roots": ["node_modules"],
+    "share_include": ["app", "tests", "pneuma-space.json", "appgov.scaffold.json", "package.json", "package-lock.json", "AGENTS.md", "CLAUDE.md", "PRODUCT.md", "DESIGN.md", ".gitignore"],
+    "share_exclude": [".env", "node_modules", "data", ".pneuma-framework/versions", ".appgov"]
+  },
+  "agent_contract": {
+    "allowed_tasks": [
+      "Change the app's server and page under app/",
+      "Add tests for the app as *.test.mjs files under tests/",
+      "Declare or drop native capabilities in pneuma-space.json",
+      "Bundle pure-JavaScript dependencies into app/"
+    ],
+    "forbidden_tasks": [
+      "Edit appgov.scaffold.json, CLAUDE.md or .gitignore",
+      "Publish to PneumaSpace directly instead of submitting the change",
+      "Approve a change that is waiting for the owner"
+    ],
+    "system_prompt_fragments": [
+      "You are changing a PneumaSpace app on Cloudflare (contract pneuma-space.cf/1). AGENTS.md in the working directory is the full guide; read it first.",
+      "Edit files in place, add a test under tests/ (a *.test.mjs file) for every change in behaviour, keep `npm test` passing, and do not touch appgov.scaffold.json, CLAUDE.md or .gitignore.",
+      "State lives only in the native services (kv, db, files, object). Create tables with CREATE TABLE IF NOT EXISTS; never drop or rewrite existing columns."
+    ],
+    "tool_policy": "draft-workspace-only"
+  },
+  "guardrails": {
+    "pre_proposal": [
+      { "id": "protected-paths", "kind": "framework", "framework_check": "protected-paths-unchanged", "description": "The change leaves every protected path untouched." },
+      { "id": "npm-test", "kind": "command", "command": "npm ci --ignore-scripts && npm test", "description": "Dependencies install from the lockfile and npm test passes, as a separate unix user in the Host's container." },
+      { "id": "space-preview", "kind": "framework", "framework_check": "preview-health", "description": "The draft is released on PneumaSpace as an ephemeral app under a throwaway name, and its home page and its Node process answer." }
+    ],
+    "pre_apply": [
+      { "id": "base-unchanged", "kind": "framework", "framework_check": "base-snapshot-unchanged", "description": "The active version is still the one the draft was diffed against." }
+    ],
+    "post_apply": [
+      { "id": "published-health", "kind": "framework", "framework_check": "preview-health", "description": "The published address answers after the release." }
+    ]
+  },
+  "lifecycle": {
+    "preview": { "command": "node .appgov/appgov.mjs submit" },
+    "build": { "command": "npm ci --ignore-scripts" },
+    "test": [{ "command": "npm test" }],
+    "publish": { "command": "node .appgov/appgov.mjs submit" }
+  },
+  "evidence": { "diff": true, "checks": true, "changed_files": true, "preview_url": true }
+}

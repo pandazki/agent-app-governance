@@ -1,6 +1,6 @@
 # The served (agent-driven) Host. Build context is this directory (local/). pneuma-framework arrives as the
 # additional build context "framework": its source at the commit compose.yaml pins, or a local checkout
-# (APPGOV_FRAMEWORK_CONTEXT). PneumaSpace arrives as three more: "space" (gateway/src and shared),
+# (APPGOV_FRAMEWORK_CONTEXT). The Host code both editions share arrives as "host" (../host). PneumaSpace arrives as three more: "space" (gateway/src and shared),
 # "space-cli" and "space-templates" (see compose.yaml for why they are separate).
 #
 # Node 24 runs PneumaSpace's CLI (appctl) and the apps' own `npm ci && npm test`.
@@ -18,6 +18,7 @@ COPY --from=framework packages vendor/pneuma-framework/packages
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
+COPY --from=host src /host/src
 RUN bun run web/build.ts
 
 FROM node:24-bookworm-slim
@@ -47,6 +48,8 @@ COPY --from=framework packages/backend-codex packages/backend-codex
 COPY --from=framework packages/backend-claude-code packages/backend-claude-code
 COPY package.json agent-app-governance/package.json
 COPY src agent-app-governance/src
+# Beside agent-app-governance/, so that src/'s ../../host/src imports resolve, and /framework/node_modules serves both.
+COPY --from=host src host/src
 COPY bin agent-app-governance/bin
 COPY overlay agent-app-governance/overlay
 COPY policy agent-app-governance/policy

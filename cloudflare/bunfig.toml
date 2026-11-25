@@ -1,0 +1,3 @@
+[test]
+# The app template has its own Node test runner suite (`npm test` inside an app); it is not part of these tests.
+pathIgnorePatterns = ["template/**", "node_modules/**"]
