@@ -27,7 +27,7 @@ Claude Code、Codex 这样的 coding agent，几分钟就能做出一个带存�
 | 版本 | 状态 | 应用跑在哪里 |
 | --- | --- | --- |
 | [本地版](./local/README.zh-CN.md) | 能跑 | 你的机器：一条 `docker compose up` 启动 PneumaSpace 和 Host，只监听回环端口 |
-| [Cloudflare 版](./cloudflare/README.md) | 正在构建 | Cloudflare |
+| [Cloudflare 版](./cloudflare/README.zh-CN.md) | 能跑，只有 `personal` 模式，没有主人页面 | Cloudflare：Host 跑在 Worker 后面的 Container 里，每个应用的记录在 R2，应用跑在部署于 Cloudflare 的 PneumaSpace 上。主人要登录；agent 用主人创建的令牌 |
 
 本地版假定只用在一台你信任的机器上，127.0.0.1 上有四个空闲端口，装有 Docker（它的 gateway 容器会挂载 Docker socket）和 Node.js 24。开始前需要什么，见 [local/README.zh-CN.md](./local/README.zh-CN.md)。准备好以后：
 
@@ -42,7 +42,7 @@ node bin/appgov.mjs create todo
 ## 限度
 
 - 它管的是在这里用 PneumaSpace 模板新建的应用，没有导入已有应用或其数据的办法。
-- 一台信任的机器，一个人用。主人没有经过认证：批准需要一个终端，或者 Host 打印在日志里的一个链接。这能挡住诚实的 agent 批准自己的改动，挡不住同一台机器上的其他程序。
+- 本地版：一台信任的机器，一个人用。主人没有经过认证：批准需要一个终端，或者 Host 打印在日志里的一个链接。这能挡住诚实的 agent 批准自己的改动，挡不住同一台机器上的其他程序。
 - 撤销恢复的是代码。存储的数据只有通过可选的快照做法才能回来，而且只适用于数据库在 PostgreSQL 上的应用。SQLite 上的应用，以及文件、键值数据和对象，都不在范围内。
 - 预设里针对 SQL 的规则是文本匹配：写在字符串里、根本不会执行的 `DROP` 也会被拦下，用变量拼出来的删除却拦不住。
 - Host 是这个仓库里的代码，不是可以直接 import 的包。发布版本、确认应用有应答、把地址放回去的那部分代码在 `host/` 里，不在 pneuma-framework 里。

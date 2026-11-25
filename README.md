@@ -27,7 +27,7 @@ This repository gives such apps one way to go live. You create an app here from 
 | Edition | State | Where the apps run |
 | --- | --- | --- |
 | [local](./local/README.md) | Runs | Your machine: one `docker compose up` starts PneumaSpace and the Host, on loopback ports |
-| [cloudflare](./cloudflare/README.md) | Being built | Cloudflare |
+| [cloudflare](./cloudflare/README.md) | Runs, `personal` mode only, no owner page | Cloudflare: the Host in a Container behind a Worker, each app's record in R2, the apps on a PneumaSpace deployment on Cloudflare. The owner signs in; agents use tokens the owner creates |
 
 The local edition assumes one trusted machine, four free ports on 127.0.0.1, Docker (its gateway container mounts the Docker socket) and Node.js 24. [local/README.md](./local/README.md) lists what it needs before you start. With that in place:
 
@@ -42,7 +42,7 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 ## Limits
 
 - It covers new apps created here from PneumaSpace's template. Nothing imports an existing app or its data.
-- One trusted machine and one person. The owner is not authenticated: approving needs a terminal, or a link the Host prints in its log. That stops an honest agent from approving its own change, not another program on the same machine.
+- The local edition: one trusted machine and one person. The owner is not authenticated: approving needs a terminal, or a link the Host prints in its log. That stops an honest agent from approving its own change, not another program on the same machine.
 - Undo restores code. Stored data comes back only through the optional snapshot practice, and only for apps whose database is on PostgreSQL. Apps on SQLite, and files, key-value data and objects, are not covered.
 - The preset's rules for SQL are text patterns: they stop a `DROP` written in a string that never runs, and miss a deletion built from variables.
 - The Host is code in this repository, not a package to import. The parts that publish a version, check that the app answers and put the address back are in `host/`, not in pneuma-framework.
