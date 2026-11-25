@@ -392,6 +392,7 @@ function common(ctx: PageContext, title: string) {
     ...(ctx.done ? { done: w[DONE_WORDS[ctx.done]] } : {}),
     ownerOff: Boolean(ctx.ownerOff),
     picturesOn: ctx.pictures.enabled,
+    picturesNever: Boolean(ctx.pictures.never),
     access: ctx.access ?? OWNER_LINK,
     opensElsewhere: ctx.appsSignIn ? w.opens_elsewhere : null,
   };

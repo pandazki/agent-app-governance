@@ -4,7 +4,7 @@ import { ValuePill } from "../beautifui/atoms/ValuePill";
 import { Meter } from "../beautifui/primitives/Recommendation";
 import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
 import { Section, Surface } from "../beautifui/site";
-import { fill, hue, useUi } from "./lib";
+import { fill, hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
 import { AppMark, Details, DetailsBlock, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
 
@@ -50,6 +50,8 @@ export function WaitingChange({ card, showApp = true }: { card: WaitingCard; sho
 /** One app, as a ContextCards card: a bar with its name and state, its stored picture, and where it runs. */
 function AppTile({ app, index }: { app: AppCard; index: number }) {
   const ui = useUi();
+  // Where no picture is ever taken, the tile is its bar and its state: an empty frame would read as a picture that failed.
+  const { picturesNever } = usePage();
   return (
     <div className="group/app flex flex-col overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 400ms cubic-bezier(0.23,1,0.32,1) ${Math.min(index, 8) * 70}ms both` }}>
       <div className="primitive-card-bar flex h-11 items-center gap-2.5 border-b border-line">
@@ -63,9 +65,11 @@ function AppTile({ app, index }: { app: AppCard; index: number }) {
           </span>
         )}
       </div>
-      <a href={app.href} aria-label={app.title} className="block border-b border-line">
-        <Picture shot={app.shot} name={app.name} className="transition-[filter] duration-200 group-hover/app:brightness-[0.98]" />
-      </a>
+      {!picturesNever && (
+        <a href={app.href} aria-label={app.title} className="block border-b border-line">
+          <Picture shot={app.shot} name={app.name} className="transition-[filter] duration-200 group-hover/app:brightness-[0.98]" />
+        </a>
+      )}
       <div className="flex flex-1 items-end gap-2 px-3 pt-2.5 pb-3">
         <div className="min-w-0 flex-1">
           <StatePill tone={app.tone}>{app.stateLabel}</StatePill>

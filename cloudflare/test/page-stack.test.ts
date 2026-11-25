@@ -106,6 +106,8 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     // The preview opens on PneumaSpace, behind its own sign-in, and this Host takes no pictures.
     expect(model.after.open).toMatch(/^https:\/\/plane\.test\/apps\/journal-pv[a-z0-9]+\/$/);
     expect(model.opensElsewhere).toBe("The app and its previews open on PneumaSpace, where you sign in separately.");
+    // No picture is ever taken here, so the views leave out the frames one would fill.
+    expect(model.picturesNever).toBe(true);
     expect(model.before.shot?.caption).toBe("No pictures on this Host. Use Open to see the app.");
     expect(model.facts.find((fact) => fact.label === "Credential")?.value).toMatch(/^agent token "laptop" \(t[0-9a-f]+\)$/);
     expect(model.access.kind).toBe("session");

@@ -99,6 +99,8 @@ interface Common {
   readonly ownerOff: boolean;
   /** Whether the Host takes pictures at all (for "Details"). */
   readonly picturesOn: boolean;
+  /** The Host never takes pictures (the Cloudflare edition): the views leave out the frames a picture would fill. */
+  readonly picturesNever: boolean;
   readonly access: OwnerAccess;
   /** Where the page links to the app or a preview: that they open on a runtime with a sign-in of its own, when they do. */
   readonly opensElsewhere: string | null;

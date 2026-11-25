@@ -106,7 +106,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
       <Section number={number()} title={ui.running_now} note={model.shot.taken ? <RichText rich={model.shot.taken} /> : undefined} index={2}>
         <Surface className="flex flex-col gap-3">
           <div className="mx-auto w-full max-w-[720px] overflow-hidden rounded-card bg-surface shadow-card">
-            <div className="primitive-card-bar flex items-center gap-2 border-b border-line">
+            <div className={`primitive-card-bar flex items-center gap-2 ${model.picturesNever ? "" : "border-b border-line"}`}>
               <span className="min-w-0 flex-1">
                 {/* The chip is a flex box, which clips without an ellipsis: the text gets its own box that ends in one. */}
                 <InlineChip mono>
@@ -122,7 +122,8 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
                 </ButtonLink>
               )}
             </div>
-            {model.address ? (
+            {/* Where no picture is ever taken, the bar with the address is the whole card. */}
+            {model.picturesNever ? null : model.address ? (
               <a href={model.address} target="_blank" rel="noopener noreferrer" aria-label={ui.open_new} className="block">
                 <Picture shot={model.shot} name={model.name} />
               </a>
