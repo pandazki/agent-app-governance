@@ -52,6 +52,7 @@ import {
   type HistoryEntry,
   type HostEntryFields,
 } from "./artifact";
+import { RUN_UNDO } from "./constants";
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
 import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
@@ -2407,6 +2408,5 @@ function servingUncertainLine(record: ChangeRecord, serving: string | null): str
   return uncertain ? `${uncertain.why}. ${uncertain.undoUnfinished ? RUN_UNDO : NEXT_ANSWER_SETTLES}` : undefined;
 }
 
-/** What to do in each case, said the same way by status and by the refusal. The owner page tells the two cases apart by it. */
-export const RUN_UNDO = "Submit and approve are refused until an undo puts a version on the address and sees it answer: run undo.";
+export { RUN_UNDO };
 const NEXT_ANSWER_SETTLES = "The next release or undo that answers settles it.";

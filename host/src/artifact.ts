@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { openChangeRecord, type ChangeRecord, type ChangeRecordEntry } from "@pneuma-framework/host-kit/change-record";
 import { copyTree, diffTrees, listFiles, treeSignature, type TreeDiff, type TreeWalkOptions } from "@pneuma-framework/host-kit/workspace";
 import { releaseRolloutFilePath } from "@pneuma-framework/core/release-rollout-store";
+import { STATE_DIR } from "./constants";
 import type { TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -35,13 +36,8 @@ import type { TestCoverage } from "./test-coverage";
 // state (pictures of apps and the owner token, in APPGOV_HOST_STATE).
 // ---------------------------------------------------------------------------
 
-/**
- * The directory, directly under every app directory and under the directory that holds the apps, where this
- * Host keeps its own files: the app's identity, waiting changes, drafts, the CLI copy and the recorded
- * address. The CLI in bin/ names the same directory on its own, because it runs without this code; a test
- * checks the two agree.
- */
-export const STATE_DIR = ".appgov";
+// The Host's own directory in each app (host/src/constants.ts).
+export { STATE_DIR };
 
 /**
  * The directory, directly under every app directory, where pneuma-framework keeps the files it writes: the
