@@ -1047,12 +1047,19 @@ describe("record mode: the zero position of the dial", () => {
     expect(withData.history("todo").at(-1)).toMatchObject({ one_way_crossed: { by: "data_restored" }, confirmed_by: OWNER, guarantees: [] });
   });
 
-  test("one_way is refused in the governed modes: there the preset decides", async () => {
+  test("the entry of a version the agent marked one-way says the words were declared, not found", async () => {
+    await recording.create("todo");
+    edit("todo", "src/server.ts", "export const changed = true;\n");
+    await recording.submit({ name: "todo", intent: "wipe dates", agent: "codex", oneWay: "deletes every stored due date" });
+    expect(recording.history("todo").at(-1)).toMatchObject({ version: "v2", one_way: { reason: "deletes every stored due date" }, declared_one_way: "deletes every stored due date" });
+  });
+
+  test("an empty declaration is refused in every mode", async () => {
     await host.create("todo");
     edit("todo", "src/server.ts", "export const changed = true;\n");
-    const err = await hostError(host.submit({ name: "todo", intent: "tweak", agent: "codex", oneWay: "drops data" }));
+    const err = await hostError(host.submit({ name: "todo", intent: "tweak", agent: "codex", oneWay: "  " }));
     expect(err.status).toBe(400);
-    expect(err.message).toContain("one_way is for record mode only");
+    expect(err.message).toContain("one_way must say, in words");
   });
 
   test("a host-driven change in record mode is recorded and brings the working tree up to it", async () => {
@@ -1441,6 +1448,98 @@ describe("one-way changes", () => {
     expect(err.message).toContain("v2's code was not put back: it must not run on the restored data");
     expect(err.message).toContain("Do not submit before that");
     expect(published).toEqual(["v1"]);
+  });
+});
+
+describe("a change its submitter declares one-way", () => {
+  // Key-value data deleted in code the rules read as an ordinary edit: only the agent knows what is lost.
+  const SWEEP = "export const sweep = async (kv: { list(): Promise<string[]>; delete(key: string): Promise<void> }) => { for (const key of await kv.list()) await kv.delete(key); };\n";
+  const WIPE = "deletes the due date from every stored to-do list";
+  const DECLARED = `The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "${WIPE}"`;
+  const declaredReason = (found?: string) => `${found ? `${found}; ` : ""}declared one-way when it was submitted: "${WIPE}"`;
+
+  beforeEach(async () => void (await host.create("todo")));
+
+  async function declare(h: AppHost = host) {
+    edit("todo", "src/server.ts", SWEEP);
+    const result = await h.submit({ name: "todo", intent: "remove due dates", agent: "codex", oneWay: WIPE });
+    if (result.status !== "needs_approval") throw new Error(`expected needs_approval, got ${result.status}`);
+    return result;
+  }
+
+  test("in personal mode it waits for the owner, although the rules find only an ordinary change", async () => {
+    const result = await declare();
+    expect(result).toMatchObject({ risks: ["source_code_change"], declared_one_way: WIPE });
+    expect(await host.status("todo")).toMatchObject({ active_version: "v1", serving_version: "v1" });
+    expect(host.history("todo").at(-1)).toMatchObject({ outcome: "needs_approval", declared_one_way: WIPE, risk_reasons: ["1 file(s) changed", "declared one-way when it was submitted"] });
+  });
+
+  test("the owner reads the agent's words as its declaration, apart from what the rules found, with what approving costs", async () => {
+    const result = await declare();
+    expect(result.disclosure[0]).toBe(DECLARED);
+    expect(result.disclosure[1]).toStartWith("What approving costs: after this change, going back to an earlier version is refused unless the owner confirms it.");
+    expect((await host.status("todo")).pending[0]).toMatchObject({ declared_one_way: WIPE, one_way: declaredReason(), disclosure: result.disclosure });
+  });
+
+  test("nobody but the owner approves it: not the standing policy, not the agent", async () => {
+    const { change_id } = await declare();
+    for (const subject of [AUTO_SUBJECT, "agent:codex"]) {
+      expect(await hostError(host.resolve("todo", change_id, "approved", subject))).toMatchObject({ status: 403 });
+    }
+    expect((await host.status("todo")).pending).toHaveLength(1);
+  });
+
+  test("approved by the owner, it is recorded one-way with the declaration", async () => {
+    const { change_id } = await declare();
+    const approved = await host.resolve("todo", change_id, "approved", OWNER);
+    expect(approved).toMatchObject({ status: "published", version: "v2", approved_by: [OWNER], one_way: declaredReason() });
+    expect(host.history("todo").at(-1)).toMatchObject({
+      kind: "decision",
+      version: "v2",
+      one_way: { reason: declaredReason() },
+      declared_one_way: WIPE,
+      approval: { route: "declared-one-way", by: [OWNER] },
+    });
+  });
+
+  test("it cannot lower what the rules found: a declared column drop keeps its risk, its disclosure and its one-way reason", async () => {
+    edit("todo", "src/server.ts", DROP_NOTE);
+    const result = await host.submit({ name: "todo", intent: "remove notes", agent: "codex", oneWay: WIPE });
+    if (result.status !== "needs_approval") throw new Error(`expected needs_approval, got ${result.status}`);
+    expect(result.risks).toEqual(["source_code_change", "destructive_definition"]);
+    expect(result.disclosure.slice(0, 2)).toEqual([DROP_REASON, DECLARED]);
+    expect(await host.resolve("todo", result.change_id, "approved", OWNER)).toMatchObject({ status: "published", one_way: declaredReason(DROP_REASON) });
+  });
+
+  test("it still needs the owner when the Host restarts in another mode", async () => {
+    const reviewing = makeHost(join(work, "apps"), space, { governance: "review-all" });
+    const { change_id } = await declare(reviewing);
+    // A change that waited in review-all for no other reason would go out on the standing policy now; this one does not.
+    expect(await hostError(host.resolve("todo", change_id, "approved", "agent:codex"))).toMatchObject({ status: 403 });
+    expect(await host.resolve("todo", change_id, "approved", OWNER)).toMatchObject({ status: "published", version: "v2" });
+  });
+
+  test("in review-all the owner reads the declaration, not only that every change waits", async () => {
+    const reviewing = makeHost(join(work, "apps"), space, { governance: "review-all" });
+    const result = await declare(reviewing);
+    expect(result.disclosure[0]).toBe(DECLARED);
+    expect(result.disclosure).not.toContain("This Host is set to have the owner review every change.");
+  });
+
+  test("going back past it needs the owner's confirmation, and the undo names what was declared", async () => {
+    const { change_id } = await declare();
+    await host.resolve("todo", change_id, "approved", OWNER);
+    const refused = await hostError(host.undo("todo", "back"));
+    expect(refused).toMatchObject({ status: 409, reason: "crosses_one_way_change" });
+    expect(refused.message).toContain(`  - v2: ${declaredReason()}`);
+    const undone = await host.undo("todo", "back", { acceptOneWay: true, subject: OWNER });
+    expect(undone).toMatchObject({ active_version: "v1", confirmed_by: OWNER, declared_one_way: [{ version: "v2", reason: WIPE }] });
+  });
+
+  test("an undo past versions nobody declared says nothing of declarations", async () => {
+    edit("todo", "src/server.ts", "export const version = 2;\n");
+    await host.submit({ name: "todo", intent: "v2", agent: "codex" });
+    expect(await host.undo("todo", "back")).not.toHaveProperty("declared_one_way");
   });
 });
 

@@ -15,19 +15,48 @@ let root: string;
 let ownerHome: string;
 let agentHome: string;
 
-// Asynchronous: the gateway and the container run in this process, so a synchronous spawn would starve them.
-function cli(cwd: string, args: string[], { owner = false, env = {}, script = CLI }: { owner?: boolean; env?: Record<string, string>; script?: string } = {}): Promise<{ code: number | null; out: string }> {
+interface Run {
+  /** The owner's machine: APPGOV_HOME holds the owner credentials file and, once signed in, the session. */
+  owner?: boolean;
+  env?: Record<string, string>;
+  script?: string;
+}
+
+const runEnv = ({ owner = false, env = {} }: Run) => ({ PATH: process.env.PATH ?? "", HOME: root, APPGOV_HOME: owner ? ownerHome : agentHome, APPGOV_AGENT: "test-agent", ...env });
+
+// Asynchronous: the gateway and the container run in this process, so a synchronous spawn would starve them. No
+// terminal, as a coding agent runs a command.
+function cli(cwd: string, args: string[], run: Run = {}): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn("node", [script, ...args], {
-      cwd,
-      env: { PATH: process.env.PATH ?? "", HOME: root, APPGOV_HOME: owner ? ownerHome : agentHome, APPGOV_AGENT: "test-agent", ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn("node", [run.script ?? CLI, ...args], { cwd, env: runEnv(run), stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.stderr.on("data", (chunk) => (out += chunk));
     child.on("close", (code) => resolve({ code, out }));
   });
+}
+
+/** The CLI in an interactive terminal, as a person runs it: each prompt to type a word is answered with the next of `answers`. */
+async function inTerminal(cwd: string, args: string[], run: Run & { answers?: string[] } = {}): Promise<{ code: number | null; out: string }> {
+  const answers = run.answers ?? [];
+  let out = "";
+  let answered = 0;
+  const child = Bun.spawn(["node", run.script ?? CLI, ...args], {
+    cwd,
+    env: runEnv(run),
+    terminal: {
+      cols: 400,
+      rows: 50,
+      data(terminal, chunk) {
+        out += new TextDecoder().decode(chunk);
+        const asked = out.split('Type "').length - 1;
+        while (answered < asked && answered < answers.length) terminal.write(`${answers[answered++]}\r`);
+      },
+    },
+  });
+  const code = await child.exited;
+  // What a person reads: without the terminal's control sequences and carriage returns.
+  return { code, out: out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r/g, "") };
 }
 
 const apps = () => join(root, "apps");
@@ -51,10 +80,18 @@ afterAll(async () => {
 
 describe("the Cloudflare edition end to end, offline", () => {
   test("the owner signs in and writes an agent token for the agent's directory; the token is never printed", async () => {
-    const login = await cli(root, ["--host", stack.url, "login"], { owner: true });
+    // Signing in is a person's act: without a terminal it is refused, even with the owner credentials file at hand.
+    const agentLogin = await cli(root, ["--host", stack.url, "login"], { owner: true });
+    expect(agentLogin.code).toBe(2);
+    expect(agentLogin.out).toContain("login is the owner's to do, by a person in a terminal");
+    expect(existsSync(join(ownerHome, "hosts", "test", "session.json"))).toBe(false);
+    const login = await inTerminal(root, ["--host", stack.url, "login"], { owner: true });
     expect(login.code).toBe(0);
     expect(login.out).toContain("signed in");
-    const made = await cli(root, ["--host", stack.url, "token", "create", "--label", "laptop", "--write", apps()], { owner: true });
+    // Signed in, creating a token still needs the terminal and the typed word.
+    expect((await cli(root, ["--host", stack.url, "token", "create", "--label", "laptop", "--write", apps()], { owner: true })).code).toBe(2);
+    expect(existsSync(join(apps(), ".appgov", "centre.json"))).toBe(false);
+    const made = await inTerminal(root, ["--host", stack.url, "token", "create", "--label", "laptop", "--write", apps()], { owner: true, answers: ["create"] });
     expect(made.code).toBe(0);
     const centre = JSON.parse(readFileSync(join(apps(), ".appgov", "centre.json"), "utf8"));
     expect(centre.url).toBe(stack.url);
@@ -137,10 +174,28 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(submitted.code).toBe(2);
     expect(submitted.out).toContain("needs_approval");
     const id = /needs_approval (\S+):/.exec(submitted.out)![1]!;
+    expect(submitted.out).toMatch(new RegExp(`signed in as the owner, in their own terminal, with: node \\S+ approve ${id}`));
+    // An agent: no terminal, no session. Refused before anything is sent.
     const refused = await cli(copy(), ["approve", id]);
     expect(refused.code).toBe(2);
-    expect(refused.out).toContain("an agent token cannot do it");
-    const approved = await cli(copy(), ["approve", id], { owner: true, env: { CODEX_THREAD_ID: "x" } });
+    expect(refused.out).toContain("is the owner's to do, by a person in a terminal; this command has none, so nothing was sent");
+    // An agent on the owner's machine, where the owner's session file is: still refused, for want of a terminal.
+    for (const args of [["approve", id], ["deny", id, "no"]]) {
+      const onOwnersMachine = await cli(copy(), args, { owner: true });
+      expect(onOwnersMachine.code).toBe(2);
+      expect(onOwnersMachine.out).toContain("this command has none, so nothing was sent");
+    }
+    expect((await cli(copy(), ["status"])).out).toContain(`waiting for the owner: ${id}`);
+    // The Worker refuses the agent token on its own.
+    const token = JSON.parse(readFileSync(join(copy(), ".appgov", "centre.json"), "utf8")).token as string;
+    const direct = await fetch(`${stack.url}/apps/todo/changes/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+    expect(direct.status).toBe(403);
+    // A word other than the one asked for changes nothing.
+    const mistyped = await inTerminal(copy(), ["approve", id], { owner: true, answers: ["yes"] });
+    expect(mistyped.out).toContain("not confirmed; nothing changed");
+    expect((await cli(copy(), ["status"])).out).toContain(`waiting for the owner: ${id}`);
+    const approved = await inTerminal(copy(), ["approve", id], { owner: true, env: { CODEX_THREAD_ID: "x" }, answers: ["approve"] });
+    expect(approved.out).toContain('Type "approve" to confirm, as the owner:');
     expect(approved.out).toContain("published v3");
     expect(approved.code).toBe(0);
     expect(stack.plane.serving("todo")).not.toBeNull();
@@ -152,8 +207,13 @@ describe("the Cloudflare edition end to end, offline", () => {
   });
 
   test("undo goes back one version: the earlier files serve and history shows it; the owner's undo is the owner's", async () => {
+    // Where there is no agent token, a write does not fall back to the owner's session: that takes --owner and a terminal.
+    const noToken = await cli(root, ["--host", stack.url, "--app", "todo", "undo", "the owner wants sign-in back"], { owner: true });
+    expect(noToken.code).toBe(3);
+    expect(noToken.out).toContain("no agent token for the centre");
+    expect((await cli(root, ["--host", stack.url, "--app", "todo", "undo", "--owner", "back"], { owner: true })).code).toBe(2);
     // Run by the owner from inside another agent's environment: the record names the owner, not that agent.
-    const undone = await cli(root, ["--host", stack.url, "--app", "todo", "undo", "the owner wants sign-in back"], { owner: true, env: { CLAUDECODE: "1" } });
+    const undone = await inTerminal(root, ["--host", stack.url, "--app", "todo", "undo", "--owner", "the owner wants sign-in back"], { owner: true, env: { CLAUDECODE: "1" }, answers: ["undo"] });
     expect(undone.code).toBe(0);
     expect(undone.out).toContain("now on v2");
     expect((await cli(copy(), ["fetch"])).code).toBe(0);
@@ -187,7 +247,8 @@ describe("the Cloudflare edition end to end, offline", () => {
 
   test("a container that is gone takes nothing with it: the next operation works from R2 alone", async () => {
     const before = stack.starts();
-    const stopped = await cli(copy(), ["container", "stop"], { owner: true });
+    expect((await cli(copy(), ["container", "stop"], { owner: true })).code).toBe(2);
+    const stopped = await inTerminal(copy(), ["container", "stop"], { owner: true, answers: ["stop"] });
     expect(stopped.out).toContain("stopped the Host's container");
     const status = await cli(copy(), ["status", "--timing"]);
     expect(status.code).toBe(0);
@@ -262,5 +323,89 @@ describe("the Cloudflare edition end to end, offline", () => {
     const before = /now on (v\d+)/.exec(undone.out)![1]!;
     expect(undone.out).toContain("Code only; stored data was not rolled back.");
     expect(undone.out).toContain(`Data written by the code of ${version} is still stored, and ${before}'s code may not show it: ${version} ran SQL that ${before} does not (ALTER TABLE notes ADD COLUMN due TEXT).`);
+  });
+
+  test("a change the agent declares one-way waits for the owner with the agent's words, and the agent token cannot approve it", async () => {
+    // Key-value data swept in code the rules read as an ordinary edit.
+    const server = join(copy(), "app", "server.mjs");
+    writeFileSync(server, `${readFileSync(server, "utf8")}\nexport const sweep = (items) => items.map(({ due, ...rest }) => rest);\n`);
+    const submitted = await cli(copy(), ["submit", "Remove due dates", "--one-way", "deletes the due date from every stored list"]);
+    expect(submitted.code).toBe(2);
+    expect(submitted.out).toContain("needs_approval");
+    expect(submitted.out).toContain("risks: source_code_change");
+    expect(submitted.out).toContain('  - The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "deletes the due date from every stored list"');
+    const id = /needs_approval (\S+):/.exec(submitted.out)![1]!;
+    // Straight to the Worker with the agent's token: refused there, whatever the CLI does.
+    const token = JSON.parse(readFileSync(join(copy(), ".appgov", "centre.json"), "utf8")).token as string;
+    const approve = await fetch(`${stack.url}/apps/todo/changes/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+    expect(approve.status).toBe(403);
+    const status = (await cli(copy(), ["status"])).out;
+    expect(status).toContain(`waiting for the owner: ${id} "Remove due dates" (source_code_change)`);
+    expect(status).toContain('add --one-way "<what is lost>": the owner then decides it');
+  });
+
+  test("the owner approves the declared change in a terminal; going back past it is theirs to confirm, and undo repeats the agent's words", async () => {
+    const id = /waiting for the owner: (\S+) "Remove due dates"/.exec((await cli(copy(), ["status"])).out)![1]!;
+    const approved = await inTerminal(copy(), ["approve", id], { owner: true, answers: ["approve"] });
+    expect(approved.out).toContain('The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "deletes the due date from every stored list"');
+    expect(approved.out).toContain('ONE-WAY: declared one-way when it was submitted: "deletes the due date from every stored list". Going back past this version needs the owner\'s confirmation.');
+    const version = /published (v\d+)/.exec(approved.out)![1]!;
+    expect((await cli(copy(), ["history"])).out).toMatch(new RegExp(`decision published -> ${version} by user:owner \\(owner session\\) \\[owner\\]: Remove due dates`));
+
+    // The agent's undo is refused at the crossing; confirming it without a terminal is refused on the owner's machine too.
+    const plain = await cli(copy(), ["undo", "bring the dates back"]);
+    expect(plain.code).toBe(2);
+    expect(plain.out).toContain(`  - ${version}: declared one-way when it was submitted: "deletes the due date from every stored list"`);
+    expect(plain.out).toContain("they run in their own terminal: node");
+    expect((await cli(copy(), ["undo", "--accept-one-way", "bring the dates back"], { owner: true })).code).toBe(2);
+    expect((await cli(copy(), ["status"])).out).toContain(`todo: ${version}`);
+
+    const undone = await inTerminal(copy(), ["undo", "--accept-one-way", "bring the dates back"], { owner: true, answers: ["undo", "accept"] });
+    expect(undone.code).toBe(0);
+    expect(undone.out).toContain(`${version} was declared one-way when it was submitted: "deletes the due date from every stored list". Going back put back its code, not what it did to stored data.`);
+    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v\d+ by owner \(owner session\) \[owner\]: bring the dates back/);
+  });
+
+  test("in a working copy, an undo without --owner goes with the agent token and is recorded as the agent's, even on the owner's machine", async () => {
+    const server = join(copy(), "app", "server.mjs");
+    writeFileSync(server, `${readFileSync(server, "utf8")}// one more line\n`);
+    expect((await cli(copy(), ["submit", "One more line"])).code).toBe(0);
+    expect((await cli(copy(), ["undo", "not that line"], { owner: true })).code).toBe(0);
+    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v\d+ by test-agent \(agent token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]: not that line/);
+    // Submitting as the owner takes the terminal and the word as well.
+    writeFileSync(server, `${readFileSync(server, "utf8")}// the owner's own line\n`);
+    expect((await cli(copy(), ["submit", "--owner", "The owner's line"], { owner: true })).code).toBe(2);
+    const own = await inTerminal(copy(), ["submit", "--owner", "The owner's line"], { owner: true, answers: ["submit"] });
+    expect(own.out).toMatch(/published v\d+/);
+    expect((await cli(copy(), ["history"])).out).toMatch(/change published -> v\d+ by owner \(owner session\) \[owner\]: The owner's line/);
+  });
+
+  test("status in a working copy that is behind says how far, and does not call that version's files edits", async () => {
+    const second = join(root, "elsewhere", "todo");
+    expect((await cli(second, ["fetch"])).code).toBe(0);
+    const held = /todo: (v\d+)/.exec((await cli(second, ["status"])).out)![1]!;
+
+    // The centre releases one version from the first copy.
+    const style = join(copy(), "app", "public", "style.css");
+    writeFileSync(style, `${readFileSync(style, "utf8")}\nh1 { letter-spacing: 0.01em; }\n`);
+    const next = /published (v\d+)/.exec((await cli(copy(), ["submit", "Wider headings"])).out)![1]!;
+    let status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`this working copy is behind the centre: it holds ${held}, and the centre is on ${next}. Since this copy was last brought up to date, the centre released ${next} (1 version behind). Run fetch before changing anything.`);
+    expect(status).toContain(`changed here, not submitted: none (the files here are ${held}'s, the version this copy holds)`);
+    const json = JSON.parse((await cli(second, ["status", "--json"])).out);
+    expect(json).toMatchObject({ behind: { holds: held, centre: next, released: [next], went_back_past: [] }, uncommitted_here: [] });
+
+    // The other way: this copy is brought up to date, and the centre goes back past what it holds.
+    expect((await cli(second, ["fetch"])).code).toBe(0);
+    expect((await cli(copy(), ["undo", "narrower headings after all"])).code).toBe(0);
+    status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`this working copy is behind the centre: it holds ${next}, and the centre is on ${held}. Since this copy was last brought up to date, the centre went back past ${next}. Run fetch before changing anything.`);
+    expect(status).toContain(`changed here, not submitted: none (the files here are ${next}'s, the version this copy holds)`);
+
+    // Edits made here on the older version are listed as edits, against that version.
+    writeFileSync(join(second, "app", "public", "app.js"), "// edited on the copy that is behind\n");
+    status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`changed here, not submitted: app/public/app.js (edited here on ${next}, the version this copy holds, so fetch refuses while they are here`);
+    expect((await cli(second, ["discard"])).code).toBe(0);
   });
 });

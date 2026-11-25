@@ -28,14 +28,36 @@ if (!response.ok) throw Object.assign(new Error(value.error.message), { status: 
 
 ## Native services
 
-Declare each in `pneuma-space.json` under `capabilities` before using it.
+Declare each in `pneuma-space.json` under `capabilities` before using it: `kv` (JSON state), `db` (SQLite), `files` (small documents), `object` (large files), `rtc`. Each call is one command, posted as above. These are the commands and what each answers on success, as PneumaSpace's Cloudflare plane sends them:
 
-- `kv` (JSON state): `{type:'kv.get',key}` returns `{value,revision,expiresAt}` or null. `{type:'kv.put',key,value,expected}` returns a new revision; `expected: null` creates only, a number compares and swaps, and 409 means reload before retrying. `{type:'kv.delete',key,expected?}`, `{type:'kv.list',prefix?}`, `{type:'kv.increment',key,amount}`.
-- `db` (SQLite): `{type:'db.query',sql,params:[]}` returns rows, columns and row counts; `{type:'db.batch',statements:[{sql,params:[]}]}` is atomic. One statement per query, parameters for values, small results. Create tables with `CREATE TABLE IF NOT EXISTS`; never drop or rewrite existing columns.
-- `files` (small documents): `{type:'files.put',path,body,expected?}` stores base64 up to 64 KiB; `{type:'files.get',path}` reads it.
-- `object` (large files): upload and download tickets; bytes go directly between the browser and storage.
+| Command | Fields | Answer |
+| --- | --- | --- |
+| `kv.get` | `key` | `{key, value, revision, expiresAt}`, or `null` when there is no such key (or it expired) |
+| `kv.put` | `key`, `value` (any JSON), `expected?`, `ttl?` (seconds, 1 to a year) | `{value, revision}` |
+| `kv.delete` | `key`, `expected?` (a revision) | `{deleted: true}` or `{deleted: false}` |
+| `kv.list` | `prefix?`, `cursor?` | `{items: [{key, value, revision, expiresAt}, ...], nextCursor?}`: the values are included, keys in order, expired ones left out |
+| `kv.increment` | `key`, `amount` (an integer; required) | `{value, revision}`; a missing key counts from 0 |
+| `kv.publish` | `channel`, `value` | `{subscribers}`: how many live subscribers got it |
+| `db.query` | `sql` (one statement), `params` (a list; required, `[]` when empty) | `{rows: [{<column>: <value>}, ...], columns: [...], rowsRead, rowsWritten}` |
+| `db.batch` | `statements: [{sql, params}, ...]` (1 to 32, all or nothing) | `{results: [<one db.query answer per statement>]}` |
+| `files.put` | `path`, `body` (base64, at most 64 KiB decoded), `expected?` | `{path, body, revision, bytes}` |
+| `files.get` | `path` | `{path, body, revision, bytes}`, or `null` |
+| `files.list` | `prefix?`, `cursor?` | `{items: [{path, body, revision, bytes}, ...], nextCursor?}` |
+| `files.delete` | `path`, `expected?` (a revision) | `{deleted: true}` or `{deleted: false}` |
+| `object.upload` | `key`, `bytes` (at most 100 MiB), `contentType` | `{id, url, headers, expiresAt}`: the browser PUTs the bytes to `url` with `headers` within 300 s |
+| `object.complete` | `id` (from `object.upload`) | `{key, bytes, contentType, etag, uploadedAt}`, once the bytes are there |
+| `object.download` | `key` | `{id, url, headers, expiresAt}`: the browser GETs the bytes from `url` |
+| `object.list` | `prefix?`, `cursor?` | `{items: [{key, bytes, contentType, etag, uploadedAt}, ...], nextCursor?}` |
+| `object.delete` | `key` | `{deleted: true}` or `{deleted: false}` |
+| `rtc.credentials` | none | `{iceServers: [{urls, username?, credential?}, ...], expiresAt}` |
+
+- `expected` compares and swaps: a number writes only while the revision is still that one, and on `kv.put` and `files.put` `null` writes only when nothing is there yet. A mismatch answers 409 with code `revision`: read again before retrying.
+- A list answers at most 100 items or 256 KiB at a time. While `nextCursor` is in the answer, send the same command again with `cursor: nextCursor` (and the same `prefix`) for the rest; the last page has none.
+- A `key` is 1 to 300 characters without control characters. A `path` and an object `key` are relative paths without `.` or `..` parts.
+- A refusal answers an HTTP status with `{"error": {"code", "message"}}`: 400 `input` (a field is wrong), 400 `command` (no such command), 403 `capability` (not declared in the manifest), 404 for an object or upload that is not there, 409 `revision`, 413 `body_limit` or `result_limit`, 429 `storage_quota`. A 500 adds `requestId`.
+- `db`: one statement per query, parameters for values, small results. Create tables with `CREATE TABLE IF NOT EXISTS`; never drop or rewrite existing columns.
 - `static`: `{"dir": "public"}` names the page shell's directory inside `app/`. A GET for a file there is answered without starting Node, even while the app sleeps; a path ending in `/` serves that directory's `index.html`.
-- `ws`, `cron` and `rtc` exist too; see PneumaSpace's Cloudflare application contract.
+- `ws` and `cron` have no broker command; the server subscribes to what `kv.publish` sends with a WebSocket to `ws://pneuma-space.internal/subscribe/<channel>`. See PneumaSpace's Cloudflare application contract.
 
 ## Testing
 

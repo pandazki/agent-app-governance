@@ -201,16 +201,34 @@ export function holdsOwnerRole(policy: BuildChangeGovernancePolicy, subject: str
   return policy.role_assignments.some((held) => held.subject === subject && held.role === "owner");
 }
 
-/** In record mode nothing is approved, so only the role assignments matter: they say who the owner is. */
-export function governancePolicy(appId: string, owner: string, mode: GovernanceMode, policy: RiskPolicy): BuildChangeGovernancePolicy {
+/** The route a change takes when whoever submitted it declared it one-way: every risk needs the owner. */
+export const DECLARED_ONE_WAY_ROUTE = "declared-one-way";
+
+/**
+ * In record mode nothing is approved, so only the role assignments matter: they say who the owner is.
+ *
+ * `ownerDecides`: whoever submitted the change declared it one-way. The preset sets the least a change needs, and a
+ * declaration can only raise that: with it, every risk needs the owner, whatever the preset hands to the standing
+ * policy. A declaration never lowers anything, since the risks themselves still come from the rules alone.
+ */
+export function governancePolicy(appId: string, owner: string, mode: GovernanceMode, policy: RiskPolicy, options: { readonly ownerDecides?: boolean } = {}): BuildChangeGovernancePolicy {
   const auto = new Set<BuildChangeRisk>(policy.auto_approve);
+  const roleAssignments = [
+    { subject: AUTO_SUBJECT, role: "reviewer" as const },
+    { subject: owner, role: "owner" as const },
+  ];
+  if (options.ownerDecides) {
+    return {
+      policy_id: `${policy.preset_id}:${mode}`,
+      app_id: appId,
+      role_assignments: roleAssignments,
+      routes: [{ route_id: DECLARED_ONE_WAY_ROUTE, risks: [...BUILD_CHANGE_RISK_KINDS], required_roles: ["owner"] }],
+    };
+  }
   return {
     policy_id: `${policy.preset_id}:${mode}`,
     app_id: appId,
-    role_assignments: [
-      { subject: AUTO_SUBJECT, role: "reviewer" },
-      { subject: owner, role: "owner" },
-    ],
+    role_assignments: roleAssignments,
     routes: [
       { route_id: "low-risk", risks: [...auto], required_roles: [mode === "personal" ? "reviewer" : "owner"] },
       // Every risk the preset does not hand to the standing policy, including ones no rule of it emits.

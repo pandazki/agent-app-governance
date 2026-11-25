@@ -32,6 +32,27 @@ function cli(cwd: string, args: string[], owner = false): Promise<{ code: number
   });
 }
 
+/** The CLI in an interactive terminal, as the owner runs it: each prompt to type a word is answered with the next of `answers`. */
+async function inTerminal(cwd: string, args: string[], answers: string[] = []): Promise<{ code: number | null; out: string }> {
+  let out = "";
+  let answered = 0;
+  const child = Bun.spawn(["node", CLI, ...args], {
+    cwd,
+    env: { PATH: process.env.PATH ?? "", HOME: root, APPGOV_HOME: ownerHome, APPGOV_AGENT: "codex" },
+    terminal: {
+      cols: 400,
+      rows: 50,
+      data(terminal, chunk) {
+        out += new TextDecoder().decode(chunk);
+        const asked = out.split('Type "').length - 1;
+        while (answered < asked && answered < answers.length) terminal.write(`${answers[answered++]}\r`);
+      },
+    },
+  });
+  const code = await child.exited;
+  return { code, out: out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r/g, "") };
+}
+
 const apps = () => join(root, "apps");
 const copy = () => join(apps(), "journal");
 const edit = (rel: string, change: (text: string) => string) => writeFileSync(join(copy(), rel), change(readFileSync(join(copy(), rel), "utf8")));
@@ -70,8 +91,9 @@ beforeAll(async () => {
   mkdirSync(join(root, "agent-home"), { recursive: true });
   mkdirSync(apps(), { recursive: true });
   writeFileSync(join(ownerHome, "hosts", "test", "owner.json"), JSON.stringify({ url: stack.url, key: stack.ownerKey }), { mode: 0o600 });
-  expect((await cli(root, ["--host", stack.url, "login"], true)).code).toBe(0);
-  expect((await cli(root, ["--host", stack.url, "token", "create", "--label", "laptop", "--write", apps()], true)).code).toBe(0);
+  // Signing in and making a token are the owner's, by a person in a terminal.
+  expect((await inTerminal(root, ["--host", stack.url, "login"])).code).toBe(0);
+  expect((await inTerminal(root, ["--host", stack.url, "token", "create", "--label", "laptop", "--write", apps()], ["create"])).code).toBe(0);
   expect((await cli(apps(), ["create", "journal"])).code).toBe(0);
   const res = await fetch(`${stack.url}/owner/signin`, { method: "POST", headers: { origin: stack.url, "content-type": "application/json" }, body: JSON.stringify({ key: stack.ownerKey }) });
   const cookie = /__Host-appgov-page=([^;]*)/.exec(res.headers.get("set-cookie") ?? "")![1]!;

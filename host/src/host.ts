@@ -189,6 +189,7 @@ function pendingProblem(value: unknown, id: string): string | undefined {
   if (!Array.isArray(value.checks) || !value.checks.every(isObject)) return "checks is missing or not a list of checks";
   if (value.agent_note !== undefined && !isText(value.agent_note)) return "agent_note is not text";
   if (value.one_way !== undefined && value.one_way !== null && !isText(value.one_way)) return "one_way is not text";
+  if (value.declared_one_way !== undefined && !isText(value.declared_one_way)) return "declared_one_way is not text";
   if (value.agent_provenance !== undefined && !isProvenance(value.agent_provenance)) return "agent_provenance is not in the shape this Host writes";
   if (value.preview_app_id !== undefined && !isText(value.preview_app_id)) return "preview_app_id is not text";
   if (value.credential !== undefined && !isText(value.credential)) return "credential is not text";
@@ -231,9 +232,11 @@ export interface SubmitInput {
   /** The owner made this change themselves, authenticated as the owner: recorded with control `owner`, not `agent-driven`. */
   readonly byOwner?: boolean;
   /**
-   * Record mode only: the agent's own statement of why putting files back would not undo this change
-   * (a dropped column, rewritten rows). Nothing classifies risk in record mode, so this is the only
-   * way such a change is marked one-way. In the governed modes the risk preset decides.
+   * The submitter's own statement that putting files back would not undo this change, and what is lost (stored
+   * values deleted or rewritten, in any kind of storage). Taken in every mode. The rules read only SQL text and the
+   * manifest, so this is how the one who knows says so. In record mode it marks the version one-way. In the governed
+   * modes it raises what the change needs, never lowers it: the change waits for the owner, who reads these words as
+   * the submitter's declaration beside what the rules found, and it is recorded one-way once released.
    */
   readonly oneWay?: string;
   /**
@@ -298,6 +301,8 @@ type ChangeOutcome =
       readonly test_warning?: string;
       /** The preview the owner can open before deciding, standing until they do or until it ends itself. */
       readonly preview?: StandingPreview;
+      /** What the submitter declared lost, in its own words, when it submitted the change as one-way. */
+      readonly declared_one_way?: string;
     }
   | {
       /** Record mode: the version was recorded, because the record is all this mode promises, but it did not go live. */
@@ -326,8 +331,10 @@ interface PendingChange {
   readonly created_at: string;
   /** The backbone's `draftSignature`: the draft as it was diffed. Approval releases the draft only if it still matches. */
   readonly draft_signature: string;
-  /** Why the change is one-way, by the preset, or null. Absent only in a file an earlier Host wrote. */
+  /** Why the change is one-way, by the preset and by the submitter's declaration, or null. Absent only in a file an earlier Host wrote. */
   readonly one_way?: string | null;
+  /** The submitter's own words when it declared the change one-way. Such a change needs the owner, whatever its risks. */
+  readonly declared_one_way?: string;
   /** Where the agent's name came from, when the client said. */
   readonly agent_provenance?: AgentProvenance;
   /** The credential the change was submitted with, where one was authenticated. */
@@ -417,6 +424,11 @@ export type AppSummary =
 export interface UndoOptions {
   /** Who asked, e.g. claude-code or owner. Labels the entry. */
   readonly actor?: string;
+  /**
+   * The entry's `control`: `owner` (the default) or `agent-driven`, where the front can tell an agent's undo from the
+   * owner's (the Cloudflare edition, by the credential). An undo is recorded as the owner's only when the owner made it.
+   */
+  readonly control?: ControlPlane;
   /** Go straight to this earlier version instead of one step back. It must be one the current version was built on. */
   readonly to?: string;
   /**
@@ -449,6 +461,11 @@ export interface UndoResult {
   readonly data_restored: boolean;
   /** The owner who confirmed going back past a one-way change, with its data put back or without. */
   readonly confirmed_by?: string;
+  /**
+   * The versions this undo went back past that were declared one-way when they were submitted, newest first, each with
+   * the submitter's words. Going back puts their code back, not what they did to stored data.
+   */
+  readonly declared_one_way?: readonly { readonly version: string; readonly reason: string }[];
   /** Where the data that was in use before the restore is kept, when the capability says. */
   readonly set_aside?: string;
   /** Set when the working tree was edited while the undo ran and was therefore left as it is, or when this undo marked the app as this Host's on PneumaSpace. */
@@ -518,6 +535,10 @@ const andNote = (note: string | undefined, more: string | undefined): string | u
 
 const NOT_TOUCHED = "the address was not touched";
 
+/** What `status` tells whoever submits in a governed mode about declaring a change one-way. */
+const DECLARE =
+  'If a change deletes or rewrites data the app has already stored, in any kind of storage, add --one-way "<what is lost>": the owner then decides it. The rules see only SQL text and the manifest.';
+
 /** Names what still serves only when the Host can say it: not while nobody has seen the address answer (see `cannotVouch`). */
 function untouched(record: ChangeRecord, serving: string | null): string {
   return serving && cannotVouch(record, serving)?.undoUnfinished !== false ? `${NOT_TOUCHED} and still serves ${serving}` : NOT_TOUCHED;
@@ -566,6 +587,32 @@ function servedBefore(history: readonly HistoryEntry[], version: string): boolea
 /** Some entry about `version`, other than a restore, says it is one-way: the rule `planRestore` reads. */
 function declaredOneWay(history: readonly ChangeRecordEntry[], version: string): boolean {
   return history.some((entry) => entry.kind !== "restore" && entry.version === version && entry.one_way !== undefined);
+}
+
+/**
+ * Why a governed change is one-way, as its record says it: what the rules found, then what the submitter declared,
+ * marked as theirs. Undefined when neither says it is.
+ */
+function oneWayReason(found: readonly string[], declared: string | undefined): string | undefined {
+  const parts = [...found, ...(declared ? [`declared one-way when it was submitted: "${declared}"`] : [])];
+  return parts.length ? parts.join("; ") : undefined;
+}
+
+/** The line the owner reads for a declaration: the submitter's own words, said to be theirs and not a finding of the rules. */
+function declarationLine(declared: string, byOwner: boolean | undefined): string {
+  return byOwner
+    ? `The owner declared this change one-way when submitting it: "${declared}"`
+    : `The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "${declared}"`;
+}
+
+/** The versions in `undone` (newest first) that were declared one-way when they were submitted, with the submitter's words. */
+function declaredVersions(history: readonly HistoryEntry[], undone: readonly string[]): { version: string; reason: string }[] {
+  const out: { version: string; reason: string }[] = [];
+  for (const version of undone) {
+    const said = history.find((entry) => entry.kind !== "restore" && entry.version === version && typeof entry.declared_one_way === "string" && entry.declared_one_way)?.declared_one_way;
+    if (said) out.push({ version, reason: said });
+  }
+  return out;
 }
 
 /**
@@ -725,8 +772,9 @@ export class AppHost {
     return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   }
 
-  private ownerPolicy(name: string, info: AppInfo) {
-    return governancePolicy(name, info.owner, this.governance, this.opts.policy);
+  /** `declared`: the submitter declared the change one-way, so every risk of it needs the owner. */
+  private ownerPolicy(name: string, info: AppInfo, declared = false) {
+    return governancePolicy(name, info.owner, this.governance, this.opts.policy, { ownerDecides: declared });
   }
 
   /** What the address serves. Falls back to the record's current version when the rollout state says nothing, so a failed step never takes a live app down. */
@@ -841,9 +889,9 @@ export class AppHost {
       case "record":
         return 'record mode: submit records the working tree as the next version and publishes it. Nothing checks or approves it. If a change drops or rewrites stored data, add --one-way "<what is lost>".';
       case "personal":
-        return `personal mode: submit runs ${checks}; the standing policy approves ordinary changes and the owner decides risky ones.`;
+        return `personal mode: submit runs ${checks}; the standing policy approves ordinary changes and the owner decides risky ones. ${DECLARE}`;
       case "review-all":
-        return `review-all mode: submit runs ${checks}, and the owner approves every change.`;
+        return `review-all mode: submit runs ${checks}, and the owner approves every change. ${DECLARE}`;
     }
   }
 
@@ -1267,9 +1315,7 @@ export class AppHost {
       const { paths, info, record } = this.open(input.name);
       const baseVersion = record.current();
       if (!baseVersion) throw new HostError(409, `${input.name} has no active version`);
-      if (input.oneWay !== undefined && this.governance !== "record") {
-        throw new HostError(400, `this Host runs in ${this.governance} mode, where the risk preset decides which changes are one-way; one_way is for record mode only`);
-      }
+      // Taken in every mode: the preset sets the least a change needs, and whoever submits it can raise that.
       if (input.oneWay !== undefined && !input.oneWay.trim()) throw new HostError(400, "one_way must say, in words, what putting files back would not undo");
       this.refuseUnfinishedUndo(paths, record);
       // Refused before anything is checked or recorded when another manager runs the app on PneumaSpace.
@@ -1313,7 +1359,8 @@ export class AppHost {
     const threads = this.threads(paths);
     const oneWay = input.oneWay ? { reason: input.oneWay.trim() } : undefined;
     const meta = { changeId, kind: "change", intent: input.intent, agent: input.agent, baseVersion };
-    const who = { ...provenanceFields(input.agentProvenance), ...credentialField(input.credential) };
+    // Nothing else marks a version one-way in this mode, so the reason is the submitter's words as they are; the entry also says they were declared.
+    const who = { ...provenanceFields(input.agentProvenance), ...credentialField(input.credential), ...(oneWay ? { declared_one_way: oneWay.reason } : {}) };
     await threads.appendTurn(info.thread_id, { kind: "user", text: input.intent });
 
     const draftRoot = join(paths.drafts, changeId);
@@ -1522,16 +1569,20 @@ export class AppHost {
         before: readSpaceManifest(liveRoot),
         after: readSpaceManifest(draftRoot),
       });
-      const oneWay = assessment.oneWay.length ? assessment.oneWay.join("; ") : undefined;
+      // The submitter's declaration adds to what the rules found and takes nothing away: the risks stay the rules' own,
+      // and the change needs the owner.
+      const declared = input.oneWay?.trim() || undefined;
+      const oneWay = oneWayReason(assessment.oneWay, declared);
+      const reasons = declared ? [...assessment.reasons, "declared one-way when it was submitted"] : assessment.reasons;
       await threads.appendTurn(info.thread_id, {
         kind: "agent_proposal",
         proposal_id: changeId,
         summary: input.intent,
-        rationale: assessment.reasons.join("; "),
+        rationale: reasons.join("; "),
         tool_calls: [],
       });
       const decision = decide({
-        policy: this.ownerPolicy(input.name, info),
+        policy: this.ownerPolicy(input.name, info, declared !== undefined),
         change_id: changeId,
         builder_subject: `agent:${input.agent}`,
         risks: assessment.risks,
@@ -1539,7 +1590,8 @@ export class AppHost {
       const approval = { preset: this.opts.policy.preset_id, route: decision.route_id, by: decision.satisfied_by_subjects, reason_code: decision.reason_code };
 
       if (!decision.allowed) {
-        const disclosure = assessment.disclosure.length ? [...assessment.disclosure] : ["This Host is set to have the owner review every change."];
+        const disclosure = [...assessment.disclosure, ...(declared ? [declarationLine(declared, input.byOwner)] : [])];
+        if (!disclosure.length) disclosure.push("This Host is set to have the owner review every change.");
         if (oneWay) disclosure.push(this.oneWayCost());
         const pending: PendingChange = {
           change_id: changeId,
@@ -1549,13 +1601,14 @@ export class AppHost {
           base_version: baseVersion,
           changed_paths: diff.changedPaths,
           risks: assessment.risks,
-          risk_reasons: assessment.reasons,
+          risk_reasons: reasons,
           disclosure,
           checks,
           agent_note: proposal.agentNote,
           created_at: createdAt,
           draft_signature: draftSignature,
           one_way: oneWay ?? null,
+          ...(declared ? { declared_one_way: declared } : {}),
           ...(input.agentProvenance ? { agent_provenance: input.agentProvenance } : {}),
           ...credentialField(input.credential),
           ...(preview.id ? { preview_app_id: preview.id } : {}),
@@ -1568,13 +1621,13 @@ export class AppHost {
           changedPaths: diff.changedPaths,
           // What held so far: the checks it passed. No approval record exists yet, and nothing is recorded to be sealed.
           guarantees: earnedByChecks(checks),
-          extra: { outcome: "needs_approval", control, risks: assessment.risks, risk_reasons: assessment.reasons, approval, checks, ...who },
+          extra: { outcome: "needs_approval", control, risks: assessment.risks, risk_reasons: reasons, approval, checks, ...(declared ? { declared_one_way: declared } : {}), ...who },
         });
-        this.log(`${input.name} ${changeId} waits for ${info.owner}: ${assessment.risks.join(", ")}`);
+        this.log(`${input.name} ${changeId} waits for ${info.owner}: ${assessment.risks.join(", ")}${declared ? ", declared one-way" : ""}`);
         // The preview stays up for the owner; where it is and when it ends is PneumaSpace's answer.
         const standing = previewed() ? await this.previews.state(previewName(input.name, changeId)) : undefined;
         const facts = { ...testFacts(checks, diff.changedPaths, this.layout), ...(standing?.state === "standing" ? { preview: standing } : {}) };
-        return { status: "needs_approval", change_id: changeId, risks: assessment.risks, disclosure, changed_paths: diff.changedPaths, ...facts };
+        return { status: "needs_approval", change_id: changeId, risks: assessment.risks, disclosure, changed_paths: diff.changedPaths, ...facts, ...(declared ? { declared_one_way: declared } : {}) };
       }
 
       await threads.appendTurn(info.thread_id, { kind: "host_event", label: "policy_approval", payload: decision });
@@ -1601,11 +1654,12 @@ export class AppHost {
           base_version: baseVersion,
           changed_paths: diff.changedPaths,
           risks: assessment.risks,
-          risk_reasons: assessment.reasons,
+          risk_reasons: reasons,
           approval,
           checks,
           agent_note: proposal.agentNote,
           one_way: oneWay,
+          declared_one_way: declared,
           agent_provenance: input.agentProvenance,
           credential: input.credential,
         },
@@ -1648,6 +1702,8 @@ export class AppHost {
       readonly checks: readonly Check[];
       readonly agent_note: string;
       readonly one_way?: string;
+      /** The submitter's words, when it declared the change one-way; written into the entry beside `one_way`. */
+      readonly declared_one_way?: string;
       readonly agent_provenance?: AgentProvenance;
       /** An owner's decision that came through somewhere other than the CLI, e.g. `owner-page`. */
       readonly channel?: string;
@@ -1667,6 +1723,7 @@ export class AppHost {
       approval: change.approval,
       checks: change.checks,
       agent_note: change.agent_note,
+      ...(change.declared_one_way ? { declared_one_way: change.declared_one_way } : {}),
       ...provenanceFields(change.agent_provenance),
       ...credentialField(change.credential),
       ...(change.author ? { author: change.author } : {}),
@@ -1811,7 +1868,8 @@ export class AppHost {
       if ("problem" in pending) throw new HostError(409, malformedPendingLine(`${changeId}.json`, pending.problem), "malformed_pending");
       const draftRoot = join(paths.drafts, changeId);
       const threads = this.threads(paths);
-      const policy = this.ownerPolicy(name, info);
+      // A change declared one-way needs the owner whatever mode the Host runs in now and whatever its risks.
+      const policy = this.ownerPolicy(name, info, pending.declared_one_way !== undefined);
       const decision = decide({
         policy,
         change_id: changeId,
@@ -1858,6 +1916,7 @@ export class AppHost {
         checks: pending.checks,
         agent_note: pending.agent_note,
         one_way: pending.one_way ?? undefined,
+        declared_one_way: pending.declared_one_way,
         channel,
       };
       await threads.appendTurn(info.thread_id, { kind: "user_decision", proposal_id: changeId, decision: answer === "approved" ? "approved" : "rejected", reason });
@@ -1882,6 +1941,7 @@ export class AppHost {
               agent_note: change.agent_note,
               reason: reason ?? "denied by the owner",
               author: change.author,
+              ...(change.declared_one_way ? { declared_one_way: change.declared_one_way } : {}),
               ...credentialField(credential),
               ...(channel ? { channel } : {}),
             },
@@ -1913,6 +1973,7 @@ export class AppHost {
     return this.serial(name, async () => {
       const { paths, info, record } = this.open(name);
       const actor = options.actor ?? "owner";
+      const control: ControlPlane = options.control ?? "owner";
       const current = record.current();
       if (!current) throw new HostError(409, `${name} has no version to go back from`);
       if (options.from !== undefined && options.from !== current) {
@@ -1982,7 +2043,7 @@ export class AppHost {
       // Filled in by the steps below, before the record writes the entry: where the replaced data went, and a failed second look.
       const extra: { -readonly [K in keyof HostEntryFields]: HostEntryFields[K] } = {
         outcome: "rolled_back",
-        control: "owner",
+        control,
         reason: stored,
         address,
         ...(confirmedBy ? { confirmed_by: confirmedBy } : {}),
@@ -2095,7 +2156,7 @@ export class AppHost {
               agent: actor,
               baseVersion: current,
               guarantees: [],
-              extra: { outcome: "rejected", control: "owner", reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}), ...credentialField(options.credential) },
+              extra: { outcome: "rejected", control, reason: why, target_version: target, address_note: addressNote, ...(options.channel ? { channel: options.channel } : {}), ...credentialField(options.credential) },
             });
           } catch {
             // The record cannot be written to; the error is all there is.
@@ -2160,6 +2221,8 @@ export class AppHost {
         payload: { change_id: changeId, from: current, to: target, undone: plan.undone, reason, data_restored: dataRestored, confirmed_by: confirmedBy, set_aside: setAside },
       });
       this.log(`${name} went back ${current} -> ${target}${note ? `; ${note}` : ""}`);
+      // What the submitters of the versions gone back past said they did to stored data: the rules see only SQL and the manifest.
+      const declared = declaredVersions(record.history<HostEntryFields>(), plan.undone);
       return {
         active_version: target,
         undone_version: current,
@@ -2167,6 +2230,7 @@ export class AppHost {
         address,
         data_restored: dataRestored,
         ...(confirmedBy ? { confirmed_by: confirmedBy } : {}),
+        ...(declared.length ? { declared_one_way: declared } : {}),
         ...(setAside ? { set_aside: setAside } : {}),
         note,
       };
