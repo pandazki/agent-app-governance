@@ -8,7 +8,7 @@ This edition runs on your own computer, in Docker. It starts PneumaSpace, a smal
 
 - **Apps you create here.** `create` makes a new app from PneumaSpace's app template: a small web app in TypeScript that can ask for a database, file storage, key-value storage and object storage. There is no way to bring in an app you already have, or its data.
 - **Changes that go through the Host.** A change is recorded when your agent submits it. An app changed another way, for example from the PneumaSpace console, no longer matches its history.
-- **Code, not data.** Going back puts an earlier version's code back on the app's address; the app's stored data stays as it is. This is not a backup of your data. An optional setup for PostgreSQL databases saves a copy before a change that deletes data ([reference](./docs/reference.md#data-snapshots-for-postgresql)).
+- **Code, not data.** Going back puts an earlier version's code back on the app's address; the app's stored data stays as it is. This is not a backup of your data. An optional setup for PostgreSQL databases saves a copy before a change the rules mark as destroying data ([reference](./docs/reference.md#data-snapshots-for-postgresql)).
 
 ## Before you start
 
@@ -36,14 +36,17 @@ The first build downloads base images and builds PneumaSpace and the Host from s
 node bin/pneuma.mjs create todo
 ```
 
-A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and a `.pneuma/` folder, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, and then the folder to open with your agent:
+A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and a `.pneuma/` folder, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, how the release was approved, and the folder to open with your agent:
 
 ```
 published v1 at http://127.0.0.1:8080/apps/todo/
 risks: release_change; approved by: policy:auto
+The app directory is /path/to/agent-app-governance/local/apps/todo. Open it with your coding agent.
 ```
 
-`policy:auto` is the standing rule that approves ordinary changes. Creating an app never waits for you, in any mode.
+`release_change` is the risk name the Host gives an app's first release, and `policy:auto` is the standing rule that approves ordinary changes. Creating an app never waits for you, in any mode.
+
+`create todo` gives you the template's starter app under the name `todo`: one page that says "Hello, guest" and has a sign-in button. It is not a to-do list yet; ask your agent for one.
 
 ## Open the two pages
 
@@ -56,7 +59,7 @@ Anyone can view the apps page. To decide on it (let a change go live, say no, go
 docker compose logs host | grep "owner link"
 ```
 
-The line ends with `http://127.0.0.1:8090/#owner=` followed by a token. Open that link in your browser yourself, and do not give it to your agent. It stays the same when the Host restarts. To replace it, run `docker compose exec host rm /state/owner-token` and `docker compose restart host`, then read the log again.
+The line ends with `http://127.0.0.1:8090/#owner=` followed by a token. Open that link in your browser yourself, and do not give it to your agent. It stays the same when the Host restarts; to replace it, see [replacing the owner link](./docs/reference.md#replacing-the-owner-link).
 
 The PneumaSpace console at http://127.0.0.1:8081/ is the platform's own admin page, without a login. Changing an app there goes around the Host, and the app's history then no longer matches what is live.
 
@@ -90,8 +93,8 @@ The Host runs in one of three modes. Set it with `PNEUMA_GOVERNANCE` in `local/.
 | Mode | What happens to a change |
 | --- | --- |
 | `record` | It is recorded and published. Nothing checks or approves it. |
-| `personal` (the default) | The app's tests must pass, and the app must start in a preview unless previews are switched off. A standing rule approves ordinary changes; a change the rules call risky waits for you. With the default rules, a change is risky when visitors no longer have to sign in, or when new SQL deletes or rewrites stored data. |
-| `review-all` | The same checks, and every change waits for you. |
+| `personal` (the default) | The app's tests must pass, and the app must start in a preview unless previews are switched off. A standing rule approves ordinary changes; a change the rules call risky waits for you. With the default rules, a change is risky when visitors no longer have to sign in, or when new SQL in a code or `.sql` file drops a table, column or index, uses `ALTER TABLE` to drop or rename a column or the table, empties a table with `TRUNCATE`, or runs `DELETE` without `WHERE`. An `UPDATE` that changes stored rows is not caught. |
+| `review-all` | The same checks, and every change after `create` waits for you. |
 
 `submit` gives one of four answers:
 
@@ -118,14 +121,14 @@ In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>`
 
 `undo` goes back along the versions the current one was built on. It publishes the older version's code, checks that the app answers, and only then moves the history. It refuses while the folder has edits that were never submitted; submit them, or drop them with `discard`. On the apps page, every version the current one was built on has a "Go back to this" button (the page is in English or Chinese, following your browser's language).
 
-A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, new SQL that deletes or rewrites stored data). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .pneuma/pneuma.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
+A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .pneuma/pneuma.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
 
 ## When something looks wrong
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | The agent says it is done, nothing new is live, and `status` lists files under `uncommitted` | The agent edited files and never submitted, or its sandbox stopped `submit`. | Ask it to submit, or drop the edits with `discard`. |
-| `preview: none standing`, or the page says the preview isn't running, and approving is refused | A preview ends itself after an hour (`PNEUMA_PREVIEW_TTL`), and the Host does not let a change go live that nobody could look at. | Run `node .pneuma/pneuma.mjs preview <id>` or press "Show it to me again", look at it, then decide. |
+| `preview: none standing`, or the page says the preview isn't running, and approving is refused | A preview ends itself after an hour (`PNEUMA_PREVIEW_TTL`), and approving needs the change's preview to be still running. The Host checks that it runs, not that anyone opened it. | Run `node .pneuma/pneuma.mjs preview <id>` or press "Show it to me again", look at it, then decide. |
 | `recorded vN, but it did not go live`, or `status` says `the address serves vM, not vN` | `record` mode: version N is recorded, and the address still serves M. | Fix the cause and submit again (with no new edits, N goes out as it is), or go back. |
 | `the Host cannot vouch for what the address serves` | The Host does not know which version the address serves: after a failed release or undo it could not put the address back, or an undo went out and could not be recorded. | Do what the line says. In the first case, the next release or undo that answers settles it. In the second, submitting and approving are refused until you run `undo`. |
 | `undo` refuses, saying the way back crosses a change "that putting files back cannot undo" | A one-way change is in the way. | You decide: `undo --accept-one-way "why"` in your terminal, or go back on the page. |
@@ -150,6 +153,6 @@ Docker puts the compose project's name in front of each volume's name, for examp
 - The default rules find destructive SQL by matching text. They flag a `DROP` inside a string that never runs, and they miss a deletion built from variables.
 - The preview starts with empty storage. It shows that the app starts and answers its home page without a server error, not that it works with your data or for a signed-in visitor. A change can pass when none of the app's own tests ran; `submit` and `history` then say so.
 - While the `screenshot` service takes a picture of an app, the app's scripts can still send requests to the other services on the compose network, a preview's scripts included. To switch pictures off, put `PNEUMA_SCREENSHOT_CDP=` in `.env`.
-- What has been run: this edition on macOS, with colima and with Docker Desktop, including real Claude Code and Codex sessions, before it moved into this repository. Since the move: its tests, and one scripted create, change and undo. Not run: a whole Linux machine, several users, a hosted setup.
+- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
 
 [docs/reference.md](./docs/reference.md) covers the CLI, the modes and what each recorded guarantee means, the risk rules, one-way changes and undo, the PostgreSQL option, starting Claude Code or Codex from the Host (`bun run drive`), running beside other services, and the tests.

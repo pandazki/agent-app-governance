@@ -23,7 +23,7 @@
 
 在应用目录里，命令作用于这个应用；在别处，用 `--app <name>` 指明（`status` 和 `history` 也可以直接把名字写在后面）。`--json` 会把 Host 的回答原样以 JSON 打印出来。
 
-CLI 按这个顺序找 Host：`--host <url>`、`PNEUMA_HOST`、Host 在 `.pneuma/host.json` 里记下的地址（当前目录或上层目录），最后是 `http://127.0.0.1:8090`。连不上时，它会说明试的是哪个地址、这个地址从哪里来。
+CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <url>` 参数；`PNEUMA_HOST`；Host 写下的 `.pneuma/host.json`，依次在当前目录和它上面的每一层目录里找，然后在 CLI 文件旁边找，再到 CLI 所在目录旁边的 `apps/.pneuma/host.json` 里找（`local/bin/pneuma.mjs` 就是这样找到 `local/apps/.pneuma/host.json` 的）；最后是 `http://127.0.0.1:8090`。连不上时，它会说明试的是哪个地址、这个地址从哪里来。
 
 历史里记下的 agent 名字来自 `--agent <name>`、`PNEUMA_AGENT`，或者 agent 在自己 shell 里设置的环境变量：Claude Code 是 `CLAUDECODE` 或 `CLAUDE_CODE_ENTRYPOINT`，Codex 是 `CODEX_THREAD_ID` 或 `CODEX_TOOL_CALL_ID`。如果两家的变量同时存在、又没有指明名字，就记为 `unknown`，同时保留两个候选，并给出警告。
 
@@ -107,7 +107,7 @@ CLI 按这个顺序找 Host：`--host <url>`、`PNEUMA_HOST`、Host 在 `.pneuma
 | 访客不再需要登录 | `policy_change` | 主人 | 主人 |
 | 在 `.ts`、`.js` 或 `.sql` 文件（及其变体）里新出现 `DROP TABLE/COLUMN/INDEX`、`ALTER TABLE ... DROP/RENAME`、`TRUNCATE`，或不带 `WHERE` 的 `DELETE` | `destructive_definition`，单向 | 主人 | 主人 |
 
-`record` 模式不读这些规则。SQL 规则是文本匹配：写在字符串里、根本不会执行的 `DROP` 会被标出来，用变量拼出来的删除却会漏掉。请把这个文件当作写自己规则的起点。
+在 `record` 模式下，提交的改动不经这些规则分类，也不由它们批准；不过 Host 启动时仍会读取并检查这个文件。SQL 规则是文本匹配。它们不匹配 `UPDATE`，也不匹配带 `WHERE` 的 `DELETE`，所以在 `personal` 下，改写或删除部分已存数据行的改动不经主人就会上线。写在字符串里、根本不会执行的 `DROP` 会被标出来，用变量拼出来的删除却会漏掉。请把这个文件当作写自己规则的起点。
 
 ## 单向改动与回退
 
@@ -157,12 +157,17 @@ CLI 按这个顺序找 Host：`--host <url>`、`PNEUMA_HOST`、Host 在 `.pneuma
 
 除了在应用目录里打开 agent，也可以让 Host 在应用的一份拷贝上启动 Claude Code 或 Codex，再让结果走同样的检查。自己管理对话的产品会用这种方式。它运行在你的电脑上（`claude` 和 `codex` 在这里登录），连接正在运行的那套服务。
 
-需要：Bun 1.4.5，Node 24 或更新版本，`compose.yaml` 固定的那个提交的 PneumaSpace 源码（为了用它的 CLI `appctl`），以及正在运行的 compose 服务。
+需要：Bun 1.4.5，Node 24 或更新版本，`compose.yaml` 固定的那个提交的 PneumaSpace 源码（为了用它的 CLI `appctl`），以及正在运行的 compose 服务。取这份源码的办法：克隆 PneumaSpace，检出 `compose.yaml` 里 `x-space-context` 那一行的提交；`appctl` 不用安装：
+
+```sh
+git clone https://github.com/pandazki/pneuma-space.git "$HOME/pneuma-space"
+git -C "$HOME/pneuma-space" checkout 6e7353809338901a604973e9fe90d1cafe4cb3cc
+```
 
 ```sh
 cd local
 bun run setup                                       # 一次即可：把 pneuma-framework 取到 vendor/，然后 bun install
-export PNEUMA_SPACE_CLI=/path/to/pneuma-space/cli/appctl.ts
+export PNEUMA_SPACE_CLI="$HOME/pneuma-space/cli/appctl.ts"
 
 bun run drive change todo "add a due date to each item" --agent claude-code
 bun run drive change todo "sort by due date" --agent codex
@@ -186,7 +191,7 @@ bun run drive change todo "leave a note" --agent scripted
 | `PNEUMA_SPACE_OBJECT_PORT` | 9000 | 对象存储 |
 | `PNEUMA_HOST_PORT` | 8090 | Host：你的应用页面，以及 CLI 调用的 API |
 
-Host 启动时、创建或打开应用时，会把自己的地址记在应用总目录和每个应用的 `.pneuma/host.json` 里，所以那里的 CLI 副本在任何端口都能找到它。在 `local/` 里运行 `node bin/pneuma.mjs` 会读 `local/apps/` 里的记录；应用总目录在别处时，运行那个目录里的副本，或者加上 `--host`。
+Host 启动时、创建或打开应用时，会把自己的地址记在应用总目录和每个应用的 `.pneuma/host.json` 里，所以那里的 CLI 副本在任何端口都能找到它。CLI 怎么选地址，见[CLI](#cli)一节。应用总目录不在 `local/` 下时，`node bin/pneuma.mjs` 看不到那份记录：运行那个目录里的副本，或者加上 `--host`。
 
 在第一套旁边再跑一套，需要它自己的 compose 项目名、Docker 网络名、端口和应用总目录。`PNEUMA_SPACE_NETWORK` 设置网络名，并把同一个名字告诉 gateway。如果用的是仓库的第二个克隆，把下面几行写进那个克隆的 `.env`。如果用的是同一个克隆，就写进另一个文件，并在这套服务的每条 `docker compose` 命令里用 `--env-file` 指定它；这个文件会代替 `.env`，所以 `.env` 里你依赖的设置要再写一遍。
 
@@ -232,6 +237,18 @@ Host 只接受这些主机名：`localhost`、`127.0.0.1`、`[::1]`、`PNEUMA_HO
 - Host 的 JSON API 拒绝只有浏览器才会发的请求：会改动东西的请求不能带 `Origin` 或 `Sec-Fetch-Site`，而且必须声明 `content-type: application/json`。这能防止网页通过 API 做事，但不是认证。
 - 截图：`screenshot` 服务是一个无界面的 Chrome。某个版本上线时、等待中的改动有预览时，以及隔 `PNEUMA_SCREENSHOT_REFRESH_HOURS` 小时（默认 24）之后，Host 会请它给应用拍一张截图。每次拍照都不带 cookie，所以要求访客登录的应用拍不到截图。被拍的页面自己发出的请求只能去它自己的地址或走 https，但 WebSocket，以及来自其他站点的框架发出的任何请求，都不受限制，所以页面的脚本（包括预览的脚本）能向 compose 网络里的每个服务发请求。那里的 PneumaSpace 管理 API 有一些写操作不需要登录，比如停掉一个应用。在意这一点的话，设置 `PNEUMA_SCREENSHOT_CDP=` 关掉截图，其他一切照旧。
 - PneumaSpace 上的管理者：Host 发布的每个应用和每个预览，都把 Host 登记为管理者（`PNEUMA_MANAGER`，默认 `pneuma-host`）。对这类应用的写操作，不带这个名字 PneumaSpace 就拒绝，它的控制台也会先要你输入这个名字。这个名字不是秘密，所以只能防止失误。每次写之前，Host 都会问 PneumaSpace 这个应用由谁管理。是别的名字：写操作以 `managed_elsewhere`（409）拒绝，提示会说明怎么处理；拒绝一个等待中的改动仍然可以。没有管理者：写操作照常进行，并把应用标记为由这个 Host 管理，结果里会说明。
+
+### 更换主人链接
+
+Host 重启后链接不变。要作废它、换一个新的，删掉令牌再重启 Host；之后日志里最后一行 "owner link" 就是新链接：
+
+```sh
+docker compose exec host rm /state/owner-token
+docker compose restart host
+docker compose logs host | grep "owner link" | tail -1
+```
+
+用旧链接打开的页面不能再做决定，请打开新链接。
 
 ## 测试与框架源码
 

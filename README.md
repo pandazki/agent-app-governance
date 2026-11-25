@@ -14,12 +14,12 @@ This repository gives such apps one way to go live. You create an app here from 
 
 - **One setting for how strict it is.** The Host runs in one of three modes:
   - `record`: every change is recorded and the Host publishes it. Nothing checks or approves it. A change that fails to start stays recorded but not live.
-  - `personal` (the default): a change has to pass the app's tests and, unless previews are switched off, start in a preview. A standing rule lets ordinary changes go live; risky ones, such as dropping sign-in or deleting stored data, wait for you.
-  - `review-all`: the same checks, and you decide every change.
+  - `personal` (the default): a change has to pass the app's tests and, unless previews are switched off, start in a preview. A standing rule lets ordinary changes go live; risky ones wait for you. With the default preset, a change is risky when visitors no longer have to sign in, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row. An `UPDATE` that changes stored rows is not caught.
+  - `review-all`: the same checks, and you decide every change after the app is created. Creating an app never waits for you.
 
   Which change counts as risky is set in a preset file, not in code.
 - **Every change recorded.** Each version is kept in the app's folder with what was asked, which agent made it, and which guarantees held: checked, previewed, approved, unchanged since the check. A version that was only recorded says so. Copy the folder to another machine and its source and history go with it; the app's stored data does not.
-- **Undo, with its limits stated.** Undo puts back the code of an earlier version. Stored data stays as it is, unless you set up the optional data snapshots for apps on PostgreSQL; they are off by default, and `status` says so. Going back past a one-way change, such as one that deletes stored data, needs your confirmation. In `personal` and `review-all` the preset marks such changes; in `record` mode only the agent can, when it submits with `--one-way`.
+- **Undo, with its limits stated.** Undo puts back the code of an earlier version. Stored data stays as it is, unless you set up the optional data snapshots for apps on PostgreSQL; they are off by default, and `status` says so. A one-way change is one that putting the old code back cannot undo, such as dropping a column. Going back past one needs your confirmation. In `personal` and `review-all` the preset marks such changes; in `record` mode only the agent can, when it submits with `--one-way`.
 - **Any agent, or a product that starts one.** An agent edits the app in place and submits with a small CLI kept in the app's folder. A program can also have the Host start Claude Code or Codex itself. Both write to the same history. A page lists your apps and what waits for you, and lets you decide and go back.
 
 ## Editions
@@ -46,7 +46,7 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 - Undo restores code. Stored data comes back only through the optional snapshot practice, and only for apps whose database is on PostgreSQL. Apps on SQLite, and files, key-value data and objects, are not covered.
 - The preset's rules for SQL are text patterns: they stop a `DROP` written in a string that never runs, and miss a deletion built from variables.
 - The Host is code in this repository, not a package to import. The parts that publish a version, check that the app answers and put the address back are in `local/`, not in pneuma-framework.
-- What has been run: the local edition on macOS, with colima and with Docker Desktop, including real Claude Code and Codex sessions. A whole Linux machine, several users and hosted operation have not been run.
+- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
 
 ## Built on
 

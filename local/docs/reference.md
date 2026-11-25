@@ -23,7 +23,7 @@ Every app has a copy of the CLI at `.pneuma/pneuma.mjs`, the apps folder has one
 
 In an app's folder, commands act on that app; elsewhere, name it with `--app <name>` (or as a word, for `status` and `history`). `--json` prints the Host's answer as JSON.
 
-The CLI finds the Host at, in this order: `--host <url>`, `PNEUMA_HOST`, the address the Host recorded in `.pneuma/host.json` (in this folder or one above), and `http://127.0.0.1:8090`. When it cannot reach the Host, it says which address it tried and where that address came from.
+The CLI takes the Host's address from the first of these that has one: the `--host <url>` flag; `PNEUMA_HOST`; a `.pneuma/host.json` written by a Host, looked for in the current folder and each folder above it, then next to the CLI file itself, then in `apps/.pneuma/host.json` beside the folder that holds the CLI (which is how `local/bin/pneuma.mjs` finds `local/apps/.pneuma/host.json`); and last `http://127.0.0.1:8090`. When it cannot reach the Host, it says which address it tried and where that address came from.
 
 The history names the agent from `--agent <name>`, `PNEUMA_AGENT`, or the variables the agent sets in its shells: `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` for Claude Code, `CODEX_THREAD_ID` or `CODEX_TOOL_CALL_ID` for Codex. With variables of both present and nothing naming the agent, it records `unknown` with both candidates and warns.
 
@@ -107,7 +107,7 @@ A `paths`, `manifest` or `content` rule can carry `one_way: true`, which marks a
 | Visitors no longer have to sign in | `policy_change` | owner | owner |
 | New `DROP TABLE/COLUMN/INDEX`, `ALTER TABLE ... DROP/RENAME`, `TRUNCATE`, or `DELETE` without `WHERE`, in a `.ts`, `.js` or `.sql` file (and their variants) | `destructive_definition`, one-way | owner | owner |
 
-`record` mode reads none of these rules. The SQL rules are text patterns: they flag a `DROP` in a string that never runs, and miss a deletion built from variables. Treat the file as a starting point for your own.
+In `record` mode a submit is neither classified nor approved by these rules, though the Host still loads and checks the file when it starts. The SQL rules are text patterns. They do not match an `UPDATE`, or a `DELETE` with a `WHERE`, so in `personal` a change that rewrites or deletes some stored rows goes live without the owner. They flag a `DROP` in a string that never runs, and miss a deletion built from variables. Treat the file as a starting point for your own.
 
 ## One-way changes and undo
 
@@ -157,12 +157,17 @@ Limits:
 
 Instead of opening an agent in the app's folder, you can have the Host start Claude Code or Codex on a copy of the app and take the result through the same checks. This is the shape a product that runs its own conversation would use. It runs on your machine, where `claude` and `codex` are signed in, against the running stack.
 
-It needs Bun 1.4.5, Node 24 or newer, the PneumaSpace source at the commit `compose.yaml` pins (for its CLI, `appctl`), and the compose stack running.
+It needs Bun 1.4.5, Node 24 or newer, the PneumaSpace source at the commit `compose.yaml` pins (for its CLI, `appctl`), and the compose stack running. To get that source, clone PneumaSpace and check out the commit in the `x-space-context` line of `compose.yaml`; `appctl` needs no install:
+
+```sh
+git clone https://github.com/pandazki/pneuma-space.git "$HOME/pneuma-space"
+git -C "$HOME/pneuma-space" checkout 6e7353809338901a604973e9fe90d1cafe4cb3cc
+```
 
 ```sh
 cd local
 bun run setup                                       # once: pneuma-framework into vendor/, then bun install
-export PNEUMA_SPACE_CLI=/path/to/pneuma-space/cli/appctl.ts
+export PNEUMA_SPACE_CLI="$HOME/pneuma-space/cli/appctl.ts"
 
 bun run drive change todo "add a due date to each item" --agent claude-code
 bun run drive change todo "sort by due date" --agent codex
@@ -186,7 +191,7 @@ The stack listens on four ports, all on 127.0.0.1. When one is taken, set anothe
 | `PNEUMA_SPACE_OBJECT_PORT` | 9000 | The object store |
 | `PNEUMA_HOST_PORT` | 8090 | The Host: your apps page and the API the CLI calls |
 
-The Host records its address in `.pneuma/host.json`, in the apps folder and in every app, when it starts and when it creates or opens an app, so the CLI copies there find it on any port. `node bin/pneuma.mjs` in `local/` reads the record in `local/apps/`; with the apps folder elsewhere, run the copy in that folder, or pass `--host`.
+The Host records its address in `.pneuma/host.json`, in the apps folder and in every app, when it starts and when it creates or opens an app, so the CLI copies there find it on any port. How the CLI picks an address is under [The CLI](#the-cli). With the apps folder outside `local/`, `node bin/pneuma.mjs` does not see the record: run the copy in that folder, or pass `--host`.
 
 A second stack beside the first needs its own compose project name, Docker network name, ports and apps folder. `PNEUMA_SPACE_NETWORK` sets the network's name and tells the gateway the same name. From a second clone of the repository, put these lines in that clone's `.env`. From the same clone, put them in another file and pass it to every `docker compose` command for that stack with `--env-file`; that file replaces `.env` for the command, so repeat any line of `.env` you rely on.
 
@@ -232,6 +237,18 @@ Copying the folder to another machine and pointing a Host at it continues the sa
 - The Host's JSON API refuses what only a browser would send: a request that changes something must not carry `Origin` or `Sec-Fetch-Site` and must say `content-type: application/json`. This keeps a web page from acting through the API; it is not authentication.
 - Pictures: the `screenshot` service is a headless Chrome. The Host asks it for a picture of an app when a version goes live, when a waiting change has a preview, and again after `PNEUMA_SCREENSHOT_REFRESH_HOURS` (default 24). Each picture is taken with no cookie, so an app that asks visitors to sign in gets no picture. A pictured page's own requests may go only to its own address or over https, but a WebSocket and anything a frame from another site requests are not filtered, so a page's scripts, a preview's included, can send requests to every service on the compose network. PneumaSpace's admin API there takes some writes without a login, such as stopping an app. Where that matters, set `PNEUMA_SCREENSHOT_CDP=` to switch pictures off; nothing else changes.
 - Managers on PneumaSpace: every app the Host releases, and every preview, names the Host as its manager (`PNEUMA_MANAGER`, default `pneuma-host`). PneumaSpace refuses a write to such an app that does not carry that name, and its console asks you to type the name first. The name is not a secret, so this guards against mistakes only. Before each write, the Host asks PneumaSpace who manages the app. Another name: the write is refused with `managed_elsewhere` (409) and the message says how to settle it; saying no to a waiting change still works. No manager: the write goes ahead and marks the app as this Host's, and the result says so.
+
+### Replacing the owner link
+
+The link stays the same when the Host restarts. To retire it and make a new one, delete the token and restart the Host; the last "owner link" line in the log is then the new link:
+
+```sh
+docker compose exec host rm /state/owner-token
+docker compose restart host
+docker compose logs host | grep "owner link" | tail -1
+```
+
+A page opened from the old link can no longer decide; open the new one.
 
 ## Tests and the framework source
 
