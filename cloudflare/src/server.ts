@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { collectSteps, timedSync } from "../../host/src/steps";
+import { dataLeftBehind } from "./data-left";
 import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
 import { APP_HEADER, APP_NAME, FOLDER_HEADER, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
 
@@ -265,7 +266,10 @@ export function createContainerServer(opts: ContainerServerOptions) {
           acceptOneWay: input.accept_one_way === true,
           subject: subjectOf(principal),
         });
-        return withCopy(name, result);
+        // Stored data stays as it is; say when the versions gone back past wrote data the older code may not show.
+        const record = openRecord(appPaths(appsDir, name));
+        const left = result.data_restored ? undefined : dataLeftBehind(result.undone, result.active_version, (version) => record.versionDir(version));
+        return withCopy(name, { ...result, ...(left ? { data_left: left } : {}) });
       }
       if (parts[2] === "discard") {
         checkBase(name, input.base_version);

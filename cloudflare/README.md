@@ -92,7 +92,7 @@ node .appgov/appgov.mjs undo "why"          # back one version
 node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
 ```
 
-Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
+Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
 
 ## Where things live
 

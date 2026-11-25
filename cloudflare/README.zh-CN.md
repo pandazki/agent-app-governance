@@ -92,7 +92,7 @@ node .appgov/appgov.mjs undo "原因"          # 退回一个版本
 node .appgov/appgov.mjs undo --to v2 "原因"  # 直接退回到更早的某个版本
 ```
 
-撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。退过单向改动需要主人：登录后运行 `undo --accept-one-way "原因"`。
+撤销把早先版本的代码放回去。如果 PneumaSpace 上还有一个文件完全相同的发布，Host 用它的类型化操作 `rollback`；否则重新上传那些文件。存储的数据保持原样。如果被退过的版本在 `pneuma-space.json` 里声明了别的存储，或者跑了早先版本没有的 SQL，`undo` 会说明：它们写下的数据仍然存着，早先的代码可能显示不出来。退过单向改动需要主人：登录后运行 `undo --accept-one-way "原因"`。
 
 ## 东西放在哪里
 

@@ -795,6 +795,7 @@ switch (command) {
       console.log(`now on ${d.active_version} (was ${d.undone_version}) at ${d.address}.${d.undone.length > 1 ? ` Went back past ${d.undone.join(", ")}.` : ""}`);
       if (d.confirmed_by) console.log(`Code only; stored data was not put back, as ${d.confirmed_by} confirmed. This version may fail on it.`);
       else console.log("Code only; stored data was not rolled back.");
+      if (d.data_left) console.log(d.data_left);
       if (d.note) console.log(d.note);
     });
     break;

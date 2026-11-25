@@ -250,4 +250,17 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(listed.code).toBe(0);
     expect(listed.out).toContain("1 app at the centre");
   });
+
+  test("an undo past a version that ran new SQL says that data is still stored and the older code may not show it", async () => {
+    const server = join(copy(), "app", "server.mjs");
+    writeFileSync(server, `${readFileSync(server, "utf8")}\nexport const migration = "ALTER TABLE notes ADD COLUMN due TEXT";\n`);
+    const submitted = await cli(copy(), ["submit", "Notes get a due date"]);
+    expect(submitted.code).toBe(0);
+    const version = /published (v\d+)/.exec(submitted.out)![1]!;
+    const undone = await cli(copy(), ["undo", "no due dates after all"]);
+    expect(undone.code).toBe(0);
+    const before = /now on (v\d+)/.exec(undone.out)![1]!;
+    expect(undone.out).toContain("Code only; stored data was not rolled back.");
+    expect(undone.out).toContain(`Data written by the code of ${version} is still stored, and ${before}'s code may not show it: ${version} ran SQL that ${before} does not (ALTER TABLE notes ADD COLUMN due TEXT).`);
+  });
 });
