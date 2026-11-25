@@ -74,7 +74,7 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<一个 age
 
 ## 做决定
 
-Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
+Host 以 `personal` 模式运行。改动必须通过应用的测试（在 Host 的容器里跑；`submit` 和 `history` 会说其中有多少是应用自己的测试，改了 `app/` 却一个都没跑时会提醒），并且能在预览里启动；预览是 PneumaSpace 上的一个临时应用，用完就丢弃。常设规则放行常规改动。按这个版本的预设（`policy/personal.json`），以下改动要等你决定：应用不再声明 `identity.required`；应用不再声明一项存放数据的能力（`db`、`kv`、`files` 或 `object`；PneumaSpace 会保留数据，但应用再也读不到，所以这也是单向改动）；或者新的 SQL 删除或重命名表或列、删除索引、清空表、删除所有行。
 
 `submit` 回答 `needs_approval <id>` 时，agent 会停下来，把它打印的内容给你看，其中有预览的地址。以主人身份登录后，在应用的工作副本里：
 

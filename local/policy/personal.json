@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "preset_id": "space-isolate-personal",
-  "description": "Example preset for one person's apps on a trusted machine. The standing policy approves ordinary edits; the owner decides what widens access or destroys stored data. Copy it and change the rules: none of them is built into the Host.",
+  "description": "Example preset for one person's apps on a trusted machine. The standing policy approves ordinary edits; the owner decides what widens access, stops declaring a capability that keeps stored data, or destroys stored data. Copy it and change the rules: none of them is built into the Host.",
   "auto_approve": [
     "additive_ui",
     "source_code_change",
@@ -29,6 +29,12 @@
     {
       "when": "capability_removed",
       "risk": "release_change"
+    },
+    {
+      "when": "storage_removed",
+      "risk": "destructive_definition",
+      "one_way": true,
+      "disclosure": "The app stops declaring {capability}, where it keeps stored data. PneumaSpace keeps that data, but this version cannot reach it, and what the app stores from now on goes elsewhere; going back to an earlier version would not bring that along."
     },
     {
       "when": "runtime_changed",

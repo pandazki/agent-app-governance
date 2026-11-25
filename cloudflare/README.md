@@ -74,7 +74,7 @@ A working copy that is behind the centre (someone released a version since) is r
 
 ## Decide
 
-The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
+The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, when it stops declaring a capability that keeps stored data (`db`, `kv`, `files` or `object`; PneumaSpace keeps the data, but the app no longer reaches it, so this is also one-way), or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
 
 When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. Signed in as the owner, in the app's working copy:
 

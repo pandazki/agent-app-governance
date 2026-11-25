@@ -93,7 +93,7 @@ The Host runs in one of three modes. Set it with `APPGOV_GOVERNANCE` in `local/.
 | Mode | What happens to a change |
 | --- | --- |
 | `record` | It is recorded and published. Nothing checks or approves it. |
-| `personal` (the default) | The app's tests must pass, and the app must start in a preview unless previews are switched off. A standing rule approves ordinary changes; a change the rules call risky waits for you. With the default rules, a change is risky when visitors no longer have to sign in, or when new SQL in a code or `.sql` file drops a table, column or index, uses `ALTER TABLE` to drop or rename a column or the table, empties a table with `TRUNCATE`, or runs `DELETE` without `WHERE`. An `UPDATE` that changes stored rows is not caught. |
+| `personal` (the default) | The app's tests must pass, and the app must start in a preview unless previews are switched off. A standing rule approves ordinary changes; a change the rules call risky waits for you. With the default rules, a change is risky when visitors no longer have to sign in, when `pneuma-space.json` stops declaring a capability that keeps stored data (`db`, `kv`, `files` or `object`), or when new SQL in a code or `.sql` file drops a table, column or index, uses `ALTER TABLE` to drop or rename a column or the table, empties a table with `TRUNCATE`, or runs `DELETE` without `WHERE`. An `UPDATE` that changes stored rows is not caught. |
 | `review-all` | The same checks, and every change after `create` waits for you. |
 
 `submit` gives one of four answers:
@@ -121,7 +121,7 @@ In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>`
 
 `undo` goes back along the versions the current one was built on. It publishes the older version's code, checks that the app answers, and only then moves the history. It refuses while the folder has edits that were never submitted; submit them, or drop them with `discard`. On the apps page, every version the current one was built on has a "Go back to this" button (the page is in English or Chinese, following your browser's language).
 
-A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .appgov/appgov.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
+A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above, and dropping a capability that keeps stored data). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .appgov/appgov.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
 
 ## When something looks wrong
 

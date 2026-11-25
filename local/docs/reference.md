@@ -93,7 +93,7 @@ Which change carries which risk is set in a JSON file, not in code. The Host rea
 | --- | --- |
 | `change` | The risk every change carries, and a lighter one when a change stays under given paths |
 | `paths` | Changes under these paths carry this risk, for example payment code that always needs the owner |
-| `manifest` | The risk for each fact about `pneuma-space.json`: a capability added or removed, the runtime changed, sign-in no longer required |
+| `manifest` | The risk for each fact about `pneuma-space.json`: a capability added or removed, a capability that keeps stored data removed (`storage_removed`), the runtime changed, sign-in no longer required |
 | `content` | Text patterns over changed files. A pattern counts when what it matches occurs more often than before the change |
 | `auto_approve` | The risks the standing policy may approve in `personal` mode. Every other risk waits for the owner |
 
@@ -103,7 +103,8 @@ A `paths`, `manifest` or `content` rule can carry `one_way: true`, which marks a
 | --- | --- | --- | --- |
 | Source or browser files changed | `source_code_change`, or `additive_ui` when only `public/` changed | standing policy | owner |
 | A capability added to `pneuma-space.json` | `definition_additive` | standing policy | owner |
-| A capability removed (PneumaSpace keeps its data), or the runtime changed | `release_change` | standing policy | owner |
+| A capability removed, or the runtime changed | `release_change` | standing policy | owner |
+| A capability that keeps stored data (`db`, `kv`, `files`, `object`) removed: PneumaSpace keeps the data, but the app no longer reaches it | `destructive_definition`, one-way | owner | owner |
 | Visitors no longer have to sign in | `policy_change` | owner | owner |
 | New `DROP TABLE/COLUMN/INDEX`, `ALTER TABLE ... DROP/RENAME`, `TRUNCATE`, or `DELETE` without `WHERE`, in a `.ts`, `.js` or `.sql` file (and their variants) | `destructive_definition`, one-way | owner | owner |
 
@@ -113,7 +114,7 @@ In `record` mode a submit is neither classified nor approved by these rules, tho
 
 - **Undo walks back.** Each `undo` goes to the version the current one was built on: v5, then v4, then v3. `undo --to <version>` goes straight to one of those. A version that the current one was not built on cannot be an undo target; to bring it back, submit its files again from `.pneuma-framework/versions/<version>/`. A new change after an undo gets a new number.
 - **Each step** publishes the older version, checks that it answers, and only then moves the history and puts the older files back in the working tree. Undo refuses to start while the working tree has edits that were never submitted. If the tree is edited while the undo runs, the version still goes out and the tree is left as it is, with a note.
-- **Which changes are one-way.** In `personal` and `review-all`, the preset decides; in `policy/personal.json` only the destructive SQL rule is one-way. In `record` mode the agent says it with `submit --one-way "<what is lost>"`; the checked modes refuse that flag. Before the owner approves a one-way change, the Host tells them what approving costs and whether it can put stored data back.
+- **Which changes are one-way.** In `personal` and `review-all`, the preset decides; in `policy/personal.json` the destructive SQL rule and the rule for dropping a capability that keeps stored data are one-way. In `record` mode the agent says it with `submit --one-way "<what is lost>"`; the checked modes refuse that flag. Before the owner approves a one-way change, the Host tells them what approving costs and whether it can put stored data back.
 - **Going back past a one-way change waits for the owner, in every mode.** The undo is refused (`crosses_one_way_change`; the CLI exits 2) and nothing is touched. The message lists each one-way version and why, and says which case applies: (a) the Host saved the data before that change, the data returns to that snapshot, and everything stored since is set aside and will not be in the app; or (b) only the code returns, and the older version may fail on today's data. The API answer carries `data_restore: "snapshot"` or `"none"`.
 - **The owner confirms** with `undo --accept-one-way "<why>"` in a terminal, typing `accept`, or on the page from the owner link. The confirmation carries the version the plan started from; if another version went live in between, the Host answers `plan_changed` (409) and nothing changes. The Host answers 403 to anyone but the owner. The history entry records `one_way_crossed`, `confirmed_by`, and in case (a) where the replaced data went.
 

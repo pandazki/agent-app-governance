@@ -58,6 +58,28 @@ describe("the Cloudflare edition's risk preset", () => {
     expect(result.risks).not.toContain("policy_change");
   });
 
+  test("replacing kv with db, as the trial's agent did, is not additive: dropping kv waits for the owner and is one-way", () => {
+    const result = assess((d) =>
+      manifest(d, (m) => {
+        delete m.capabilities.kv;
+        m.capabilities.db = {};
+      }),
+    );
+    expect(result.risks).toContain("destructive_definition");
+    expect(policy.auto_approve).not.toContain("destructive_definition");
+    expect(result.reasons).toContain("stops declaring kv, where it keeps stored data");
+    expect(result.oneWay).toEqual([
+      "The app stops declaring kv, where it keeps stored data. PneumaSpace keeps that data, but this version cannot reach it, and what the app stores from now on goes elsewhere; going back to an earlier version would not bring that along.",
+    ]);
+    expect(result.disclosure).toEqual(result.oneWay);
+  });
+
+  test("dropping a capability that keeps no data (static) is not a storage removal", () => {
+    const result = assess((d) => manifest(d, (m) => delete m.capabilities.static));
+    expect(result.risks).not.toContain("destructive_definition");
+    expect(result.oneWay).toEqual([]);
+  });
+
   test("new SQL that drops a table is destructive and one-way", () => {
     const result = assess((d) => writeFileSync(join(d, "app", "server.mjs"), "await native({type:'db.query',sql:'DROP TABLE items',params:[]});\n"));
     expect(result.risks).toContain("destructive_definition");
