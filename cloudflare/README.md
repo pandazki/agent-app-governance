@@ -111,6 +111,8 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - Left out: the owner page, screenshots, the data snapshot practice, starting Claude Code or Codex from the Host (the `drive` lane), and `record` and `review-all` modes. Only `personal` mode has been run.
 - New apps only. Nothing imports an existing app or its data.
 - Undo restores code; stored data is never put back.
+- **An agent cannot open the live app or its preview.** Both answer only to people signed in to PneumaSpace, and an agent token is the centre's, not PneumaSpace's: the agent gets 401. So an agent cannot check its own release. The Host's probes only fetch the home page and one path that starts Node, so a change that breaks a data route can still pass and go live. You see it working only by opening the app yourself.
+- **A preview starts with empty storage.** It is a separate app on PneumaSpace, without the app's data. When a change that drops or rewrites stored data waits for you, the preview does not show it applied to that data; you decide from the disclosure, not from seeing which stored values would go.
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - The default rules find destructive SQL by matching text, as in the local edition.
