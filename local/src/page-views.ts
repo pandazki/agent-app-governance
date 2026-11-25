@@ -414,7 +414,11 @@ function signalOf(w: Words, checks: unknown): { signal: number; label: string; t
 export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
   const w = wordsFor(ctx.lang, ctx.access);
   const summaries = overview.summaries;
-  const owners = new Map(overview.apps.flatMap((app) => ("status" in app ? [[app.app_id, app.status.owner] as const] : [])));
+  // Each app's owner subject, which reads as "you": from the summary, or from status where the Host gave one.
+  const owners = new Map([
+    ...summaries.flatMap((summary) => ("error" in summary || typeof summary.owner !== "string" ? [] : [[summary.app_id, summary.owner] as const])),
+    ...overview.apps.flatMap((app) => ("status" in app ? [[app.app_id, app.status.owner] as const] : [])),
+  ]);
   const lastAt = (summary: AppSummary) => ("error" in summary ? "" : str(summary.last_change?.at));
   const sorted = [...summaries].sort((a, b) => ("error" in a ? 1 : 0) - ("error" in b ? 1 : 0) || lastAt(b).localeCompare(lastAt(a)) || a.app_id.localeCompare(b.app_id));
 
@@ -945,8 +949,12 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   if (tests?.status === "passed") {
     const n = tests.coverage?.tests;
     const own = tests.coverage?.app_tests;
-    checked.push({ text: typeof n === "number" && typeof own === "number" ? fill(w.tests_passed, { n, own }) : w.tests_passed_plain, tone: "done" });
-    if (own === 0) checked.push({ text: w.tests_none_own, tone: "caution" });
+    // No test that ran is not a pass to report: say that none ran, as the warning it is.
+    if (n === 0) checked.push({ text: w.tests_none_ran, tone: "caution" });
+    else {
+      checked.push({ text: typeof n === "number" && typeof own === "number" ? fill(w.tests_passed, { n, own }) : w.tests_passed_plain, tone: "done" });
+      if (own === 0) checked.push({ text: w.tests_none_own, tone: "caution" });
+    }
   }
   if (previewCheck?.status === "passed") checked.push({ text: w.started_in_preview, tone: "done" });
   checked.push({ text: paths.length === 1 ? w.files_one : fill(w.files_other, { n: paths.length }), tone: "done", files: paths.slice(0, 40) });

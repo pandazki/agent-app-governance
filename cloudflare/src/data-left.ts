@@ -49,24 +49,46 @@ function storageDeclared(versionDir: string): string {
 
 const clip = (text: string, max = 80) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
+/** What the versions an undo goes back past left in stored data that `target`'s code may not show. */
+export interface DataLeft {
+  /** The versions gone back past, oldest first. */
+  readonly versions: readonly string[];
+  readonly target: string;
+  /** Some of them declare other storage in pneuma-space.json than `target`. */
+  readonly storage: boolean;
+  /** SQL statements they run and `target` does not, as written. */
+  readonly sql: readonly string[];
+}
+
 /**
- * One line for the owner when the versions an undo went back past (`undone`, newest first) declare other storage in
- * the manifest or run SQL that `target` does not; undefined otherwise. `versionDir` gives a version's directory.
+ * What the versions an undo goes back past (`undone`, newest first) left in stored data: other storage declared in the
+ * manifest, or SQL that `target` does not run. Undefined when there is neither. `versionDir` gives a version's directory.
  */
-export function dataLeftBehind(undone: readonly string[], target: string, versionDir: (version: string) => string): string | undefined {
+export function dataLeft(undone: readonly string[], target: string, versionDir: (version: string) => string): DataLeft | undefined {
   const targetStorage = storageDeclared(versionDir(target));
   const targetSql = sqlStatements(versionDir(target));
-  const manifestChanged = undone.filter((version) => storageDeclared(versionDir(version)) !== targetStorage);
+  const storage = undone.some((version) => storageDeclared(versionDir(version)) !== targetStorage);
   const newSql = new Map<string, string>();
   for (const version of undone) for (const [key, written] of sqlStatements(versionDir(version))) if (!targetSql.has(key)) newSql.set(key, written);
-  if (!manifestChanged.length && !newSql.size) return undefined;
-  const which = [...undone].reverse().join(", ");
-  const shown = [...newSql.values()].slice(0, 2).map((statement) => clip(statement));
+  if (!storage && !newSql.size) return undefined;
+  return { versions: [...undone].reverse(), target, storage, sql: [...newSql.values()] };
+}
+
+/** One line for the owner, as the CLI prints it after an undo. */
+export function dataLeftLine(left: DataLeft): string {
+  const which = left.versions.join(", ");
+  const shown = left.sql.slice(0, 2).map((statement) => clip(statement));
   const what = [
-    manifestChanged.length ? "declared other storage in pneuma-space.json" : "",
-    newSql.size ? `ran SQL that ${target} does not (${shown.join("; ")}${newSql.size > 2 ? `; and ${newSql.size - 2} more` : ""})` : "",
+    left.storage ? "declared other storage in pneuma-space.json" : "",
+    left.sql.length ? `ran SQL that ${left.target} does not (${shown.join("; ")}${left.sql.length > 2 ? `; and ${left.sql.length - 2} more` : ""})` : "",
   ]
     .filter(Boolean)
     .join(" and ");
-  return `Data written by the code of ${which} is still stored, and ${target}'s code may not show it: ${which} ${what}.`;
+  return `Data written by the code of ${which} is still stored, and ${left.target}'s code may not show it: ${which} ${what}.`;
+}
+
+/** `dataLeftLine` of `dataLeft`, or undefined. */
+export function dataLeftBehind(undone: readonly string[], target: string, versionDir: (version: string) => string): string | undefined {
+  const left = dataLeft(undone, target, versionDir);
+  return left ? dataLeftLine(left) : undefined;
 }

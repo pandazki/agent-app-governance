@@ -11,6 +11,10 @@ export const PRINCIPAL_HEADER = "x-appgov-principal";
 export const FOLDER_HEADER = "x-appgov-folder-etag";
 /** The app an operation is about, set by the Worker. */
 export const APP_HEADER = "x-appgov-app";
+/** Set by the Worker on the owner page's own writes: the Host writes it into the entry as `channel`. */
+export const CHANNEL_HEADER = "x-appgov-channel";
+/** The one channel there is: a decision or an undo made on the owner page. */
+export const PAGE_CHANNEL = "owner-page";
 /**
  * The level of the centre's API, in the `appgov-api` header of every answer the Worker gives. The CLI (bin/appgov.mjs,
  * HOST_API_LEVEL there) refuses to work with a centre at another level, so it never misreads an answer. Raise both
