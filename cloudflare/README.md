@@ -68,7 +68,7 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<an agent t
   node appgov.mjs fetch todo
 ```
 
-A working copy that is behind the centre (someone released a version since) is refused on `submit`; `fetch` brings it up to date and refuses while there are edits it would overwrite.
+A working copy that is behind the centre (someone released a version since) is refused on `submit`; `fetch` brings it up to date and refuses while there are edits it would overwrite. `status` there says the copy is behind, which versions the centre released or went back past since, and lists as edits only what differs from the version the copy holds.
 
 `.appgov/centre.json` holds the agent token. It is never part of a version and never sent with the files; the template's `.gitignore` keeps it out of git. Keep it out of anything you share.
 

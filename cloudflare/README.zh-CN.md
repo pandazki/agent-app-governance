@@ -68,7 +68,7 @@ APPGOV_HOST=https://appgov-host.<subdomain>.workers.dev APPGOV_TOKEN=<一个 age
   node appgov.mjs fetch todo
 ```
 
-落后于中心的工作副本（之后有人发布了新版本）在 `submit` 时会被拒绝；`fetch` 会把它更新到最新，但如果有会被覆盖的编辑，`fetch` 也会拒绝。
+落后于中心的工作副本（之后有人发布了新版本）在 `submit` 时会被拒绝；`fetch` 会把它更新到最新，但如果有会被覆盖的编辑，`fetch` 也会拒绝。在这样的副本里，`status` 会说明它落后了，以及此后中心发布了或退过了哪些版本；列为编辑的只有和副本所持版本不同的文件。
 
 `.appgov/centre.json` 里有 agent 令牌。它永远不属于任何版本，也不会随文件发出去；模板的 `.gitignore` 把它排除在 git 之外。不要把它放进任何你要分享的东西里。
 

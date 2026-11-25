@@ -524,6 +524,37 @@ function printChange(result) {
   return 1;
 }
 
+/**
+ * How the centre moved on from the version a working copy holds, by the centre's history: the versions it went back
+ * past (newest first) and the versions it released since (oldest first), to where both lines of versions meet. Null
+ * for both when they do not meet.
+ */
+function versionsBetween(history, held, centre) {
+  const builtOn = (version) => items(history).find((entry) => entry?.version === version && entry.kind !== "restore")?.base_version ?? null;
+  const line = (version) => {
+    const out = [];
+    for (let at = version; at && !out.includes(at); at = builtOn(at)) out.push(at);
+    return out;
+  };
+  const centreLine = line(centre);
+  const heldLine = line(held);
+  const meet = centreLine.find((version) => heldLine.includes(version));
+  if (!meet) return { went_back_past: null, released: null };
+  return { went_back_past: heldLine.slice(0, heldLine.indexOf(meet)), released: centreLine.slice(0, centreLine.indexOf(meet)).reverse() };
+}
+
+/** The line status prints for a working copy that is behind the centre: which versions, and how far. */
+function behindLine({ holds, centre, went_back_past: back, released }) {
+  const start = `this working copy is behind the centre: it holds ${holds}, and the centre is on ${centre}.`;
+  const end = "Run fetch before changing anything.";
+  if (!back || !released) return `${start} ${end}`;
+  const moves = [
+    back.length ? `went back past ${back.join(", ")}` : "",
+    released.length ? `released ${released.join(", ")}${back.length ? "" : ` (${released.length} version${released.length === 1 ? "" : "s"} behind)`}` : "",
+  ].filter(Boolean);
+  return `${start} Since this copy was last brought up to date, the centre ${moves.join(" and then ")}. ${end}`;
+}
+
 function printApps({ governance, apps }) {
   if (!apps.length) return console.log(`no apps yet. Create one with: node ${SELF} create <name>`);
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));
@@ -737,11 +768,15 @@ const baseVersion = synced?.active_version ?? undefined;
 switch (command) {
   case "status": {
     const s = await call("GET", base);
-    const here = DIR ? changedAgainst(DIR, s.active_version) : null;
+    // A working copy last brought in line with another version than the centre's is behind: its files are that
+    // version's, so the edits here are what differs from it, not what differs from the centre's version.
+    const behind = DIR && baseVersion && s.active_version && baseVersion !== s.active_version ? { holds: baseVersion, centre: s.active_version } : null;
+    if (behind) Object.assign(behind, versionsBetween((await call("GET", `${base}/history`)).history, behind.holds, behind.centre));
+    const here = DIR ? changedAgainst(DIR, behind ? behind.holds : s.active_version) : null;
     // The edits here may be a change that was submitted and waits for the owner: then they are not still to submit.
     const mine = DIR ? signature(localEntries(DIR)) : null;
     const waitingHere = mine ? s.pending.find((p) => p.tree_signature === mine) : undefined;
-    out({ ...s, ...(here ? { uncommitted_here: here } : {}), ...(waitingHere ? { waiting_here: waitingHere.change_id } : {}) }, () => {
+    out({ ...s, ...(here ? { uncommitted_here: here } : {}), ...(behind ? { behind } : {}), ...(waitingHere ? { waiting_here: waitingHere.change_id } : {}) }, () => {
       console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} at ${s.address}`);
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
       else if (s.serving_version && s.serving_version !== s.active_version) {
@@ -751,12 +786,16 @@ switch (command) {
       console.log(s.governance_note);
       console.log(`on PneumaSpace: ${s.space_manager.note}`);
       if (DIR) {
-        if (baseVersion && baseVersion !== s.active_version) console.log(`this working copy is on ${baseVersion}; the centre is on ${s.active_version}. Run fetch before changing anything.`);
+        if (behind) console.log(behindLine(behind));
         if (waitingHere) {
           console.log(`changed here: ${here?.length ? here.join(", ") : "the files of the change below"}. These edits are change ${waitingHere.change_id}, which was submitted and waits for the owner. Do not submit them again; the owner approves or denies it.`);
         } else {
-          const other = s.pending.length && here?.length ? ` (they are not the change waiting for the owner as it was submitted)` : "";
-          console.log(`changed here, not submitted: ${here === null ? "unknown (this working copy does not hold the active version's files; run fetch)" : here.length ? `${here.join(", ")}${other}` : "none"}`);
+          const notes = [
+            behind ? (here?.length ? `edited here on ${behind.holds}, the version this copy holds, so fetch refuses while they are here` : `the files here are ${behind.holds}'s, the version this copy holds`) : "",
+            s.pending.length && here?.length ? "they are not the change waiting for the owner as it was submitted" : "",
+          ].filter(Boolean);
+          const note = notes.length ? ` (${notes.join("; ")})` : "";
+          console.log(`changed here, not submitted: ${here === null ? "unknown (this working copy does not hold the files of the version it was brought up to; run fetch)" : `${here.length ? here.join(", ") : "none"}${note}`}`);
         }
       } else console.log(`uncommitted at the centre: ${s.uncommitted.length ? s.uncommitted.join(", ") : "none"}`);
       for (const p of s.pending) {

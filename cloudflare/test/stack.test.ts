@@ -379,4 +379,33 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(own.out).toMatch(/published v\d+/);
     expect((await cli(copy(), ["history"])).out).toMatch(/change published -> v\d+ by owner \(owner session\) \[owner\]: The owner's line/);
   });
+
+  test("status in a working copy that is behind says how far, and does not call that version's files edits", async () => {
+    const second = join(root, "elsewhere", "todo");
+    expect((await cli(second, ["fetch"])).code).toBe(0);
+    const held = /todo: (v\d+)/.exec((await cli(second, ["status"])).out)![1]!;
+
+    // The centre releases one version from the first copy.
+    const style = join(copy(), "app", "public", "style.css");
+    writeFileSync(style, `${readFileSync(style, "utf8")}\nh1 { letter-spacing: 0.01em; }\n`);
+    const next = /published (v\d+)/.exec((await cli(copy(), ["submit", "Wider headings"])).out)![1]!;
+    let status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`this working copy is behind the centre: it holds ${held}, and the centre is on ${next}. Since this copy was last brought up to date, the centre released ${next} (1 version behind). Run fetch before changing anything.`);
+    expect(status).toContain(`changed here, not submitted: none (the files here are ${held}'s, the version this copy holds)`);
+    const json = JSON.parse((await cli(second, ["status", "--json"])).out);
+    expect(json).toMatchObject({ behind: { holds: held, centre: next, released: [next], went_back_past: [] }, uncommitted_here: [] });
+
+    // The other way: this copy is brought up to date, and the centre goes back past what it holds.
+    expect((await cli(second, ["fetch"])).code).toBe(0);
+    expect((await cli(copy(), ["undo", "narrower headings after all"])).code).toBe(0);
+    status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`this working copy is behind the centre: it holds ${next}, and the centre is on ${held}. Since this copy was last brought up to date, the centre went back past ${next}. Run fetch before changing anything.`);
+    expect(status).toContain(`changed here, not submitted: none (the files here are ${next}'s, the version this copy holds)`);
+
+    // Edits made here on the older version are listed as edits, against that version.
+    writeFileSync(join(second, "app", "public", "app.js"), "// edited on the copy that is behind\n");
+    status = (await cli(second, ["status"])).out;
+    expect(status).toContain(`changed here, not submitted: app/public/app.js (edited here on ${next}, the version this copy holds, so fetch refuses while they are here`);
+    expect((await cli(second, ["discard"])).code).toBe(0);
+  });
 });
