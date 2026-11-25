@@ -78,7 +78,7 @@ const readableTime = (iso) => (typeof iso === "string" && iso.length >= 16 ? `${
 
 /**
  * The address a Host recorded for itself: .pneuma/host.json in the current directory or above, else
- * next to this copy of the CLI, else in the example's apps directory next to bin/.
+ * next to this copy of the CLI, else in the apps directory next to bin/ (local/apps).
  */
 function findRecordedHost(start) {
   const files = [];
@@ -471,7 +471,7 @@ function guideBlock(appsDir) {
 
 if (command === "guide") {
   if (!APPS_DIR) {
-    fail("guide needs to know where the apps live: run it in the apps directory, in an app's directory, or as bin/pneuma.mjs next to the example's apps/ once the Host has started");
+    fail("guide needs to know where the apps live: run it in the apps directory, in an app's directory, or as bin/pneuma.mjs next to local/apps/ once the Host has started");
   }
   // The block names this directory as the Host's, so every app the Host lists must be in it.
   const { apps } = await call("GET", "/apps");

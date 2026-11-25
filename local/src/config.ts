@@ -21,7 +21,7 @@ export interface DataSnapshotContext {
 
 /**
  * The data snapshot implementations this Host can be started with, by the name `PNEUMA_DATA_SNAPSHOT`
- * gives. Each is a practice this example shows, not something the framework or PneumaSpace promises.
+ * gives. Each is a practice this Host shows, not something the framework or PneumaSpace promises.
  * Without one, an undo past a one-way change puts back only code, and only with the owner's confirmation.
  */
 export const DATA_SNAPSHOT_IMPLEMENTATIONS: Readonly<Record<string, (env: Env, context: DataSnapshotContext) => HostDataSnapshot>> = {
