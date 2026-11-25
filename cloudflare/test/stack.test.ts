@@ -16,9 +16,9 @@ let ownerHome: string;
 let agentHome: string;
 
 // Asynchronous: the gateway and the container run in this process, so a synchronous spawn would starve them.
-function cli(cwd: string, args: string[], { owner = false, env = {} }: { owner?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number | null; out: string }> {
+function cli(cwd: string, args: string[], { owner = false, env = {}, script = CLI }: { owner?: boolean; env?: Record<string, string>; script?: string } = {}): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn("node", [CLI, ...args], {
+    const child = spawn("node", [script, ...args], {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: root, APPGOV_HOME: owner ? ownerHome : agentHome, APPGOV_AGENT: "test-agent", ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -62,6 +62,39 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(statSync(join(apps(), ".appgov", "centre.json")).mode & 0o777).toBe(0o600);
     // Without the owner's session, tokens are refused.
     expect((await cli(apps(), ["token", "list"])).code).toBe(2);
+  });
+
+  test("the token's directory explains itself: the centre's own CLI, and an AGENTS.md that says the token file is a credential", async () => {
+    // The CLI written there is the one the centre serves, byte for byte.
+    expect(readFileSync(join(apps(), ".appgov", "appgov.mjs"), "utf8")).toBe(readFileSync(CLI, "utf8"));
+    const agents = readFileSync(join(apps(), "AGENTS.md"), "utf8");
+    expect(agents).toContain(`The centre is at ${stack.url}.`);
+    expect(agents).toContain("node .appgov/appgov.mjs create <name>");
+    expect(agents).toContain("node .appgov/appgov.mjs fetch <name>");
+    expect(agents).toContain("Never print it or show its contents, copy it into another file, or commit it");
+    expect(readFileSync(join(apps(), "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+    // An agent there runs that CLI, and the empty list points at a file that is there.
+    const listed = await cli(apps(), ["list"], { script: join(apps(), ".appgov", "appgov.mjs") });
+    expect(listed.code).toBe(0);
+    expect(listed.out).toContain("no apps yet. Create one with: node .appgov/appgov.mjs create <name>");
+  });
+
+  test("a CLI at another API level than the centre refuses, and update replaces it with the centre's own", async () => {
+    const dir = join(root, "older-cli");
+    mkdirSync(join(dir, ".appgov"), { recursive: true });
+    const old = join(dir, ".appgov", "appgov.mjs");
+    writeFileSync(old, readFileSync(CLI, "utf8").replace("const HOST_API_LEVEL = 1;", "const HOST_API_LEVEL = 0;"));
+    writeFileSync(join(dir, ".appgov", "centre.json"), readFileSync(join(apps(), ".appgov", "centre.json")), { mode: 0o600 });
+    const refused = await cli(dir, ["list"], { script: old });
+    expect(refused.code).toBe(3);
+    expect(refused.out).toContain("this CLI is written for API level 0, and the centre at");
+    expect(refused.out).toContain("node .appgov/appgov.mjs update");
+    const updated = await cli(dir, ["update"], { script: old });
+    expect(updated.out).toContain("replaced .appgov/appgov.mjs with the centre's own CLI");
+    expect(readFileSync(old, "utf8")).toBe(readFileSync(CLI, "utf8"));
+    expect((await cli(dir, ["list"], { script: old })).code).toBe(0);
+    // The repository's own CLI is never replaced.
+    expect((await cli(dir, ["update"])).out).toContain("the owner reruns the installer");
   });
 
   test("create, with the agent token: a managed app on the plane, and a working copy with the agent instructions", async () => {

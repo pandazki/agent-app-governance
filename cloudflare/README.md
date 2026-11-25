@@ -41,14 +41,16 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev token create --label laptop --write ~/apps
 ```
 
-`login` reads the owner credentials file and keeps the session (12 hours) next to it. `token create --write ~/apps` writes the centre's address and a new agent token to `~/apps/.appgov/centre.json` (mode 0600) and never prints the token. Your agent works in `~/apps`. `token list` and `token revoke <id>` manage the tokens.
+`login` reads the owner credentials file and keeps the session (12 hours) next to it. `token create --write ~/apps` writes the centre's address and a new agent token to `~/apps/.appgov/centre.json` (mode 0600) and never prints the token. Beside it, it writes the CLI this centre was deployed with, at `~/apps/.appgov/appgov.mjs`, and an `AGENTS.md` (read by Claude Code through a `CLAUDE.md`) that tells an agent started in `~/apps` what the directory is, how to list, create and fetch apps, and that `centre.json` is a credential it must not print, copy or commit. Text you keep in that `AGENTS.md` outside the block it writes stays. Your agent works in `~/apps`. `token list` and `token revoke <id>` manage the tokens.
+
+The CLI and the centre check that they speak the same API level. A CLI at another level stops and says so; `node .appgov/appgov.mjs update` replaces it with the centre's own.
 
 ## Create an app
 
 In `~/apps`:
 
 ```sh
-node /path/to/agent-app-governance/cloudflare/bin/appgov.mjs create todo
+node .appgov/appgov.mjs create todo
 ```
 
 The Host copies this edition's app template (PneumaSpace's Cloudflare starter, contract `pneuma-space.cf/1`, with `identity.required` declared), adds the instructions for your agent, runs the app's tests, starts it once as a preview, and publishes it as `v1`, as an app managed by `appgov` on PneumaSpace. The working copy lands in `~/apps/todo/`, with its own copy of the CLI in `.appgov/appgov.mjs` and the address and token in `.appgov/centre.json`. The app answers at `https://<PneumaSpace origin>/apps/todo/` to anyone signed in to that PneumaSpace.

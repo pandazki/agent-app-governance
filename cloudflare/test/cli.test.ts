@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FRAMEWORK_DIR, STATE_DIR, TREE } from "../../host/src/artifact";
+import { API_HEADER, API_LEVEL } from "../src/protocol";
 
 // The CLI runs without the Host's code, so it carries copies of what it needs; these must agree with the Host.
 const source = readFileSync(join(import.meta.dir, "..", "bin", "appgov.mjs"), "utf8");
@@ -21,6 +22,11 @@ describe("the Cloudflare edition's CLI", () => {
     expect(set("IGNORED_DIRS")).toEqual([...TREE.ignoredDirs!].sort());
     expect(set("IGNORED_FILES")).toEqual([...TREE.ignoredFiles!].sort());
     expect(set("IGNORED_PATHS")).toEqual([...TREE.ignoredPaths!].sort());
+  });
+
+  test("is written for the centre's API level, and reads the header the centre sends it in", () => {
+    expect(Number(/const HOST_API_LEVEL = (\d+);/.exec(source)?.[1])).toBe(API_LEVEL);
+    expect(constant("API_HEADER")).toBe(API_HEADER);
   });
 
   test("has no dependencies: only Node's own modules", () => {

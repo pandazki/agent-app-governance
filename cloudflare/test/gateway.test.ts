@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PRINCIPAL_HEADER } from "../src/protocol";
+import { API_HEADER, API_LEVEL, PRINCIPAL_HEADER } from "../src/protocol";
 import { handle, sha256, SESSION_MS, type GatewayDeps } from "../worker/gateway";
 import { MemoryAuth } from "./stack";
 
@@ -10,6 +10,7 @@ const OWNER_KEY = `apk_${"1".repeat(64)}`;
 async function gateway(now = { value: Date.now() }) {
   const forwarded: { path: string; method: string; principal: unknown; op: string | null }[] = [];
   const deps: GatewayDeps = {
+    starter: { cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at {{CENTRE}}.\n" },
     ownerKeyHash: await sha256(OWNER_KEY),
     auth: new MemoryAuth(),
     governance: "personal",
@@ -47,6 +48,7 @@ const APP_ROUTES: [string, string, unknown?][] = [
   ["POST", "/tokens", {}],
   ["DELETE", "/tokens/t1"],
   ["GET", "/me"],
+  ["GET", "/starter"],
   ["POST", "/auth/logout", {}],
 ];
 
@@ -60,6 +62,22 @@ describe("the Worker's gateway", () => {
       }
     }
     expect(forwarded).toEqual([]);
+  });
+
+  test("every answer says the centre's API level, a refusal too", async () => {
+    const { call, login } = await gateway();
+    expect((await call("GET", "/apps")).headers.get(API_HEADER)).toBe(String(API_LEVEL));
+    expect((await call("GET", "/apps/todo", { secret: await login() })).headers.get(API_HEADER)).toBe(String(API_LEVEL));
+    expect((await call("GET", "/nowhere", { secret: await login() })).headers.get(API_HEADER)).toBe(String(API_LEVEL));
+  });
+
+  test("the owner and an agent token get this centre's own CLI and the starter instructions, with the centre's address", async () => {
+    const { call, login, token } = await gateway();
+    const session = await login();
+    for (const secret of [session, (await token(session)).token]) {
+      const starter = (await (await call("GET", "/starter", { secret })).json()) as { api_level: number; cli: string; agents: string };
+      expect(starter).toEqual({ api_level: API_LEVEL, cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at https://host.test.\n" });
+    }
   });
 
   test("signing in takes the owner key and gives a session; a wrong key gives nothing", async () => {
@@ -76,7 +94,7 @@ describe("the Worker's gateway", () => {
     const agent = await token(await login());
     const allowed = APP_ROUTES.filter(([, path]) => !/approve|deny|container|tokens|logout/.test(path));
     for (const [method, path, body] of allowed) expect(`${method} ${path} ${(await call(method, path, { secret: agent.token, body })).status}`).toBe(`${method} ${path} 200`);
-    expect(forwarded.length).toBe(allowed.filter(([method, path]) => !(method === "GET" && path === "/apps") && path !== "/me").length);
+    expect(forwarded.length).toBe(allowed.filter(([method, path]) => !(method === "GET" && path === "/apps") && path !== "/me" && path !== "/starter").length);
     expect(forwarded.every((f) => (f.principal as { kind: string; id: string }).kind === "agent" && (f.principal as { id: string }).id === agent.id)).toBe(true);
     expect(forwarded.find((f) => f.path === "/apps")!.op).toBe("create");
   });

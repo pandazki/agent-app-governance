@@ -8,8 +8,9 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 // The directory under each app directory that the Host keeps for itself (STATE_DIR in host/src/artifact.ts), and
 // the one where pneuma-framework keeps every version and the history (FRAMEWORK_DIR there). A test checks both.
@@ -23,8 +24,20 @@ const IGNORED_PATHS = new Set(["data"]);
 const CENTRE_FILE = "centre.json";
 /** What the working copy was last brought in line with: the version and a signature of its files. */
 const SYNCED_FILE = "synced.json";
+// The level of the centre's API this CLI is written for. The centre sends its own in the `appgov-api` header of every
+// answer (API_LEVEL in src/protocol.ts; a test checks the two agree). At any other level this CLI refuses to go on,
+// except `update`, which replaces it with the centre's own.
+const HOST_API_LEVEL = 1;
+const API_HEADER = "appgov-api";
+/** This file, as a command run from the current directory: every hint this CLI prints names a file that is there. */
+const SELF = (() => {
+  const file = fileURLToPath(import.meta.url);
+  const rel = relative(process.cwd(), file);
+  const path = rel && !isAbsolute(rel) ? rel : file;
+  return /[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path;
+})();
 
-const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json] [--timing]
+const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--host <url>] [--json] [--timing]
 
   status [<name>]        active version, address, files changed here and not submitted, changes waiting for the owner
   history [<name>]       every attempt so far, oldest first, with what was guaranteed for each
@@ -40,12 +53,15 @@ const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--a
   fetch [<name>]         in a working copy: bring it up to date (refused while you have edits it would overwrite).
                          elsewhere: put the app's working copy in ./<name> (or --into <dir>)
   list                   every app the centre keeps
+  update                 replace this CLI with the centre's own (when it says it is at another API level)
 
 Owner only:
   login [--key-file <f>] sign in with the owner key the installer wrote; the session is kept next to that file
   logout
   token create [--label <l>] [--days <n>] --write <dir>
                          create an agent token and write it, with the centre's address, to <dir>/${STATE_DIR}/${CENTRE_FILE}
+                         and, beside it, this centre's own CLI (.appgov/appgov.mjs) and an AGENTS.md (with CLAUDE.md)
+                         that tell an agent started in <dir> what it is and how to work there
   token list | token revoke <id>
   container [<name>] [stop]
                          whether the app's Host container runs; stop it (the next operation starts from R2)
@@ -269,7 +285,9 @@ function request(method, url, payload, secret) {
     const req = (tls ? httpsRequest : httpRequest)(url, { method, agent: false, headers }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => (res.complete ? settle({ status: res.statusCode, timing: res.headers["x-appgov-timing"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted())));
+      res.on("end", () =>
+        res.complete ? settle({ status: res.statusCode, level: res.headers[API_HEADER], timing: res.headers["x-appgov-timing"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted()),
+      );
       res.on("error", lost);
       res.on("close", () => res.complete || lost(aborted()));
     });
@@ -279,11 +297,28 @@ function request(method, url, payload, secret) {
   });
 }
 
+/**
+ * Stop unless the centre speaks the API level this CLI is written for: an answer from a centre at another level may
+ * lack what this CLI relies on, or mean something else. `update` replaces this CLI with the centre's own.
+ */
+function checkLevel(level, url) {
+  if (command === "update" || String(level ?? "") === String(HOST_API_LEVEL)) return;
+  const centre = url.origin;
+  if (level === undefined || Number(level) < HOST_API_LEVEL) {
+    fail(
+      `the centre at ${centre} ${level === undefined ? "does not say which API level it speaks, so it is older than this CLI" : `speaks API level ${level}, older than this CLI (level ${HOST_API_LEVEL})`}. ` +
+        `Nothing was sent that changes anything. Use the centre's own CLI: node ${SELF} update. If the owner upgraded this checkout, they rerun the installer so the centre matches it.`,
+      3,
+    );
+  }
+  fail(`this CLI is written for API level ${HOST_API_LEVEL}, and the centre at ${centre} speaks level ${level}. Nothing was changed. Replace this CLI with the centre's own: node ${SELF} update, then run the command again.`, 3);
+}
+
 const REFUSAL_HINTS = {
-  crosses_one_way_change: `Stop and show this to the user. Going back past a one-way change is the owner's decision: signed in as the owner (node ${STATE_DIR}/appgov.mjs login), they run: node ${STATE_DIR}/appgov.mjs undo --accept-one-way "<why>" (with the same --to, if one was given).`,
+  crosses_one_way_change: `Stop and show this to the user. Going back past a one-way change is the owner's decision: signed in as the owner (node ${SELF} login), they run: node ${SELF} undo --accept-one-way "<why>" (with the same --to, if one was given).`,
   plan_changed: "Nothing changed. Run the same undo again to see what going back does now, then confirm that.",
   owner_required: "Stop and show this to the user: it is theirs to do, signed in as the owner. Do not look for a way around it.",
-  working_copy_behind: `Run node ${STATE_DIR}/appgov.mjs fetch, then make the change again.`,
+  working_copy_behind: `Run node ${SELF} fetch, then make the change again.`,
   unauthenticated: `The centre did not accept the credential. An agent token lives in ${STATE_DIR}/${CENTRE_FILE} (or APPGOV_TOKEN); the owner creates one with token create. Ask the user.`,
 };
 const refusalCode = (reason) => (reason === "crosses_one_way_change" || reason === "owner_required" ? 2 : 3);
@@ -299,7 +334,7 @@ async function send(method, path, payload, { owner = false } = {}) {
   const secret = credential(owner);
   if (!secret) fail(`no credential for the centre at ${CENTRE}: no APPGOV_TOKEN, no token in ${STATE_DIR}/${CENTRE_FILE}, and no owner session. Ask the user for an agent token.`, 3);
   const began = Date.now();
-  const { err, connected, status, timing, text } = await request(method, url, payload, secret);
+  const { err, connected, status, level, timing, text } = await request(method, url, payload, secret);
   if (err) {
     const code = err.code ?? err.message;
     if (connected) {
@@ -313,6 +348,7 @@ async function send(method, path, payload, { owner = false } = {}) {
     if (code === "EPERM" || code === "EACCES") fail(`the sandbox this command runs in blocks the connection to the centre at ${CENTRE} (${code}). Nothing was sent. Run this command with network access (ask the user for permission), then repeat it.`, 3);
     fail(`cannot reach the centre at ${CENTRE} (${code}). ${CENTRE_SOURCE} Ask the user, do not start anything yourself.`, 3);
   }
+  checkLevel(level, url);
   let data;
   try {
     data = JSON.parse(text);
@@ -410,7 +446,7 @@ const NOTHING_CHECKED = "Nothing checked or approved this change: the Host recor
 function previewLine(preview, changeId) {
   if (preview.state === "standing") return `preview: ${preview.address}${preview.expires_at ? ` (it ends itself at ${readableTime(preview.expires_at)})` : ""}`;
   if (preview.state === "unknown") return `preview: unknown; ${preview.note}. Nothing was changed; ask again in a minute.`;
-  return `preview: none standing; ${preview.note}. Publish it again with: node ${STATE_DIR}/appgov.mjs preview ${changeId}`;
+  return `preview: none standing; ${preview.note}. Publish it again with: node ${SELF} preview ${changeId}`;
 }
 
 function printChange(result) {
@@ -440,7 +476,7 @@ function printChange(result) {
     if (result.test_warning) console.log(result.test_warning);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide, signed in as the owner, with" : "They decide, signed in as the owner, with";
-    console.log(`Show this to the owner. ${look}: node ${STATE_DIR}/appgov.mjs approve ${result.change_id}   (or deny)`);
+    console.log(`Show this to the owner. ${look}: node ${SELF} approve ${result.change_id}   (or deny)`);
     return 2;
   }
   console.log(`rejected (${result.reason}): nothing was released.`);
@@ -450,7 +486,7 @@ function printChange(result) {
 }
 
 function printApps({ governance, apps }) {
-  if (!apps.length) return console.log(`no apps yet. Create one with: node ${STATE_DIR}/appgov.mjs create <name>`);
+  if (!apps.length) return console.log(`no apps yet. Create one with: node ${SELF} create <name>`);
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));
   console.log(
     `${apps.length} app${apps.length === 1 ? "" : "s"} at the centre ${CENTRE}, in ${governance} mode. ` +
@@ -503,7 +539,59 @@ function newCopy(dir, copy) {
   console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}; the centre's address${TOKEN ? " and the agent token are" : " is"} in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git). Open it with your coding agent.`);
 }
 
+// The block this CLI keeps in a directory's AGENTS.md, as the local edition's Host keeps the one in its apps directory.
+const BLOCK_BEGIN = "<!-- appgov-centre:begin (written by token create and update; edits inside it are lost) -->";
+const BLOCK_END = "<!-- appgov-centre:end -->";
+
+/** Put `block` into the AGENTS.md text `existing`, replacing an earlier copy of it and keeping the rest. */
+function withBlock(existing, block) {
+  const wrapped = `${BLOCK_BEGIN}\n${block.trim()}\n${BLOCK_END}\n`;
+  const begin = existing.indexOf(BLOCK_BEGIN);
+  const end = begin === -1 ? -1 : existing.indexOf(BLOCK_END, begin);
+  if (end !== -1) return `${existing.slice(0, begin)}${wrapped}${existing.slice(end + BLOCK_END.length).replace(/^\n/, "")}`;
+  return existing.trim() ? `${wrapped}\n${existing.trimStart()}` : wrapped;
+}
+
+/**
+ * Make `dir` explain itself to an agent started there: the centre's own CLI at .appgov/appgov.mjs, and an AGENTS.md
+ * block saying what the directory is, the commands, and that .appgov/centre.json is a credential (Claude Code reads it
+ * through a CLAUDE.md holding @AGENTS.md). Text outside the block and an existing CLAUDE.md are left alone.
+ */
+function writeStarter(dir, starter) {
+  if (typeof starter?.cli !== "string" || typeof starter?.agents !== "string") fail("the centre did not send its CLI and the starter instructions", 3);
+  const written = [];
+  const cli = join(dir, STATE_DIR, "appgov.mjs");
+  mkdirSync(dirname(cli), { recursive: true });
+  writeFileSync(cli, starter.cli, { mode: 0o755 });
+  written.push(`${STATE_DIR}/appgov.mjs`);
+  const agents = join(dir, "AGENTS.md");
+  const existing = existsSync(agents) ? readFileSync(agents, "utf8") : "";
+  const wanted = withBlock(existing, starter.agents);
+  if (wanted !== existing) {
+    writeFileSync(agents, wanted);
+    written.push("AGENTS.md");
+  }
+  const claude = join(dir, "CLAUDE.md");
+  if (!existsSync(claude)) {
+    writeFileSync(claude, "@AGENTS.md\n");
+    written.push("CLAUDE.md");
+  }
+  return written;
+}
+
 // --- commands that need no app ----------------------------------------------------------------------------
+
+if (command === "update") {
+  // Any credential will do; the API level is not checked here (checkLevel), since this is how a CLI catches up.
+  const self = fileURLToPath(import.meta.url);
+  // Only a copy in a directory's .appgov/ is replaced; the repository's own CLI is the owner's, and the installer deploys it.
+  if (dirname(self).split(sep).at(-1) !== STATE_DIR) fail(`update replaces a copy of the CLI at ${STATE_DIR}/appgov.mjs; this one is ${self}. To bring the centre to this CLI's level, the owner reruns the installer.`);
+  const starter = await call("GET", "/starter");
+  const same = readFileSync(self, "utf8") === starter.cli;
+  if (!same) writeFileSync(self, starter.cli);
+  console.log(same ? `${SELF} is the centre's own CLI already (API level ${starter.api_level}).` : `replaced ${SELF} with the centre's own CLI (API level ${starter.api_level}). Run your command again.`);
+  process.exit(0);
+}
 
 if (command === "login") {
   const files = ownerFiles();
@@ -511,8 +599,9 @@ if (command === "login") {
   const record = readJson(files.keyFile);
   if (!record?.key || !record?.url) fail(`${files.keyFile} is not an owner credentials file`);
   const url = clean(record.url);
-  const { err, status, text } = await request("POST", new URL(`${url}/auth/login`), { key: record.key });
+  const { err, status, level, text } = await request("POST", new URL(`${url}/auth/login`), { key: record.key });
   if (err) fail(`cannot reach the centre at ${url} (${err.code ?? err.message})`, 3);
+  checkLevel(level, new URL(url));
   let data = {};
   try {
     data = JSON.parse(text);
@@ -533,7 +622,7 @@ if (command === "logout") {
 
 if (command === "token") {
   const [sub, id] = args;
-  if (!ownerSession()) fail(`tokens are the owner's: sign in first with node ${STATE_DIR}/appgov.mjs login`, 2);
+  if (!ownerSession()) fail(`tokens are the owner's: sign in first with node ${SELF} login`, 2);
   if (sub === "list") {
     out(await call("GET", "/tokens", undefined, { owner: true }), ({ tokens }) => {
       if (!tokens.length) console.log("no agent tokens");
@@ -549,11 +638,16 @@ if (command === "token") {
   if (sub === "create") {
     // Never printed: the token goes straight into the file the agent's CLI reads.
     if (!flags.write) fail("token create writes the token to <dir>/.appgov/centre.json and never prints it: pass --write <dir>");
-    const file = join(resolve(flags.write), STATE_DIR, CENTRE_FILE);
+    const dir = resolve(flags.write);
+    const file = join(dir, STATE_DIR, CENTRE_FILE);
     if (existsSync(file)) fail(`${file} exists already; revoke the token in it first, or write to another directory`);
+    // What the agent will run and read comes from the centre, before any token exists: nothing is left half made.
+    const starter = await call("GET", "/starter", undefined, { owner: true });
     const data = await call("POST", "/tokens", { label: flags.label ?? "agent", ...(flags.days ? { expires_in_days: Number(flags.days) } : {}) }, { owner: true });
     writePrivate(file, { url: CENTRE, token: data.token });
+    const written = writeStarter(dir, starter);
     console.log(`created agent token ${data.id} (${data.label}), valid until ${readableTime(new Date(data.expires_at).toISOString())}; written to ${file}. Keep that file out of git.`);
+    console.log(`${dir} also has ${written.join(", ")}: this centre's CLI and what an agent started there needs to know. Start your agent in ${dir}.`);
     process.exit(0);
   }
   fail("token takes create, list or revoke");
@@ -675,7 +769,7 @@ switch (command) {
     const payload = { reason: args.join(" ") || "undo", actor: actor.name, ...(flags.to ? { to: flags.to } : {}), ...(baseVersion ? { base_version: baseVersion } : {}) };
     let { status, data } = await send("POST", `${base}/undo`, payload);
     if (flags.acceptOneWay && status === 409 && data.reason === "crosses_one_way_change") {
-      if (!ownerSession()) fail(`${data.error}\nGoing back past a one-way change is the owner's decision: sign in first with node ${STATE_DIR}/appgov.mjs login`, 2);
+      if (!ownerSession()) fail(`${data.error}\nGoing back past a one-way change is the owner's decision: sign in first with node ${SELF} login`, 2);
       console.log(data.error);
       if (process.stdin.isTTY) {
         const rl = createInterface({ input: process.stdin, output: process.stdout });

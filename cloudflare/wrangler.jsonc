@@ -20,6 +20,8 @@
   },
   "secrets": { "required": ["APPGOV_OWNER_KEY_HASH", "APPGOV_CONTAINER_SECRET", "APPGOV_SPACE_TOKEN"] },
   "r2_buckets": [{ "binding": "FOLDERS", "bucket_name": "appgov-host-folders" }],
+  // The CLI and the starter instructions, bundled as text so GET /starter serves what was deployed.
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/bin/appgov.mjs"], "fallthrough": true }],
   // Which version of this Worker a Durable Object runs, shown by `appgov container <app>`.
   "version_metadata": { "binding": "WORKER_VERSION" },
   "durable_objects": {

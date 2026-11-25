@@ -41,14 +41,16 @@ node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.de
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev token create --label laptop --write ~/apps
 ```
 
-`login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
+`login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。它还在旁边写下这个中心部署时带的 CLI（`~/apps/.appgov/appgov.mjs`），以及一个 `AGENTS.md`（Claude Code 通过 `CLAUDE.md` 读到它），告诉在 `~/apps` 里启动的 agent：这个目录是什么，怎样列出、创建和取回应用，以及 `centre.json` 是凭据，不能打印、复制或提交。你在这个 `AGENTS.md` 里、它写的那一段之外留下的文字会保留。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
+
+CLI 和中心会核对彼此说的 API 级别。级别不同的 CLI 会停下并说明；`node .appgov/appgov.mjs update` 会把它换成中心自己的 CLI。
 
 ## 创建应用
 
 在 `~/apps` 里：
 
 ```sh
-node /path/to/agent-app-governance/cloudflare/bin/appgov.mjs create todo
+node .appgov/appgov.mjs create todo
 ```
 
 Host 会复制这个版本自己的应用模板（PneumaSpace 的 Cloudflare 起步应用，契约 `pneuma-space.cf/1`，声明了 `identity.required`），加上写给 agent 的说明，跑一遍应用的测试，把它作为预览启动一次，然后发布为 `v1`，成为 PneumaSpace 上由 `appgov` 管理的应用。工作副本放在 `~/apps/todo/`，里面有一份 CLI（`.appgov/appgov.mjs`），中心地址和令牌在 `.appgov/centre.json`。登录了那个 PneumaSpace 的人可以在 `https://<PneumaSpace 地址>/apps/todo/` 打开这个应用。
