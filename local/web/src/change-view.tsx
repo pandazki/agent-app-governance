@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
 import { ValuePill } from "../beautifui/atoms/ValuePill";
@@ -10,7 +10,7 @@ import { Section, Surface } from "../beautifui/site";
 import { act, fill, hue, useOwner, usePage, useUi } from "./lib";
 import type { ChangeModel, Notice, Side } from "./model";
 import { TONE_VAR } from "./home";
-import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, Picture, RichText, StatePill } from "./parts";
+import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
 
 /** What a failed write says: the plain line, and the Host's own words under Details. */
 export function Failure({ text, detail }: { text: string; detail: string }) {
@@ -39,13 +39,13 @@ export function noticeRow(notice: Notice, i: number): TaskRow {
 /** One side of before and after: a card with its label, a way to open the real thing, and its picture. */
 function SideCard({ side, name, index }: { side: Side; name: string; index: number }) {
   const ui = useUi();
-  const { refusals } = usePage();
+  const { refusals, access } = usePage();
   const owner = useOwner();
   const [again, setAgain] = useState<"idle" | "working" | { error: string; detail: string }>("idle");
   const showAgain = async () => {
-    if (!side.again) return;
+    if (!side.again || again === "working") return;
     setAgain("working");
-    const result = await act(side.again.url, {});
+    const result = await act(side.again.url, {}, access);
     if (result.lost) {
       owner.lose();
       setAgain("idle");
@@ -117,18 +117,24 @@ function DecisionCard({ model }: { model: ChangeModel }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ text: string; detail: string } | null>(null);
+  // One decision at a time: a second click while one is on its way, or while the page moves on after it, sends nothing.
+  const sending = useRef(false);
   const can = owner.state === "yes";
 
   const go = async (verb: "approve" | "deny") => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setFailure(null);
-    const result = await act(verb === "approve" ? d.approveUrl : d.denyUrl, verb === "deny" && reason.trim() ? { reason: reason.trim() } : {});
-    setBusy(false);
-    if (result.lost) return owner.lose();
+    const result = await act(verb === "approve" ? d.approveUrl : d.denyUrl, verb === "deny" && reason.trim() ? { reason: reason.trim() } : {}, model.access);
     if (result.ok && !(verb === "approve" && result.data.status === "rejected")) {
+      // Still working until the next view is here: the buttons stay off.
       location.href = verb === "approve" ? d.doneLive : d.doneNo;
       return;
     }
+    sending.current = false;
+    setBusy(false);
+    if (result.lost) return owner.lose();
     const why = model.reasons[String(result.data.reason ?? "")] ?? ui.why_other;
     setFailure({
       text: result.ok ? fill(ui.not_released, { why }) : refusalText(model.refusals, result.data, ui.failed),
@@ -263,7 +269,22 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
       : {}),
   }));
   const why: TaskRow[] = [
-    ...(model.oneWay ? [{ key: "one-way", label: model.oneWay.title, status: "caution" as const, details: <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>, defaultOpen: true }] : []),
+    ...(model.oneWay
+      ? [
+          {
+            key: "one-way",
+            label: model.oneWay.title,
+            status: "caution" as const,
+            details: (
+              <>
+                <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>
+                {model.oneWay.why && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
+              </>
+            ),
+            defaultOpen: true,
+          },
+        ]
+      : []),
     ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: <span className="font-normal">{line}</span>, status: "caution" })),
   ];
   return (
@@ -281,6 +302,7 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
             <SideCard side={model.before} name={model.name} index={0} />
             <SideCard side={model.after} name={model.name} index={1} />
           </div>
+          {(model.before.open || model.after.open) && model.opensElsewhere && <OpensElsewhere text={model.opensElsewhere} />}
           {model.notices.length > 0 && (
             <div className="mx-auto mt-3 w-full max-w-[720px]">
               <TaskRows rows={model.notices.map(noticeRow)} />

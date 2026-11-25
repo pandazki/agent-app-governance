@@ -6,7 +6,7 @@ import { Section, Surface } from "../beautifui/site";
 import { fill, useUi } from "./lib";
 import type { AppModel, HistoryRow, RowBadge, Tone } from "./model";
 import { noticeRow } from "./change-view";
-import { ArrowOut, ButtonLink, Details, DetailsBlock, Header, HintCard, Picture, RichText, StatePill } from "./parts";
+import { ArrowOut, ButtonLink, Details, DetailsBlock, Header, HintCard, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
 
 const BADGE_STATUS: Record<RowBadge, TaskStatus> = { done: "done", failed: "failed", waiting: "waiting", plain: "plain", undo: "undo" };
 const TONE_TEXT: Record<Tone, string> = { green: "text-green", red: "text-red", orange: "text-orange", neutral: "text-ink-2", accent: "text-accent-ink" };
@@ -125,6 +125,11 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
               <Picture shot={model.shot} name={model.name} />
             )}
           </div>
+          {model.address && model.opensElsewhere && (
+            <div className="mx-auto -mt-3 w-full max-w-[720px]">
+              <OpensElsewhere text={model.opensElsewhere} />
+            </div>
+          )}
           {model.notices.length > 0 && (
             <div className="mx-auto w-full max-w-[720px]">
               <TaskRows rows={model.notices.map(noticeRow)} />

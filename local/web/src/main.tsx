@@ -3,18 +3,53 @@
 
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import LoadingState from "../beautifui/primitives/LoadingState";
 import SearchPalette from "../beautifui/primitives/SearchPalette";
 import { PageColumn } from "../beautifui/site";
 import { hue, OwnerContext, PageContext, useOwnerState } from "./lib";
 import type { PageModel } from "./model";
 import { View } from "./view";
 
+/**
+ * While the browser fetches the next view: a view is built when it is asked for, and on the Cloudflare edition that
+ * can mean starting the app's container first, a second or more. Shown only when it takes longer than a moment.
+ */
+function useNavigating(): boolean {
+  const [navigating, setNavigating] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const click = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || anchor.target || anchor.hasAttribute("download") || anchor.origin !== location.origin) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => setNavigating(true), 250);
+    };
+    // Coming back to this page from the browser's cache: whatever was on its way has gone.
+    const shown = () => {
+      clearTimeout(timer);
+      setNavigating(false);
+    };
+    document.addEventListener("click", click);
+    window.addEventListener("pageshow", shown);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("click", click);
+      window.removeEventListener("pageshow", shown);
+    };
+  }, []);
+  return navigating;
+}
+
 function Page({ model }: { model: PageModel }) {
-  const owner = useOwnerState(model.ownerOff);
+  const owner = useOwnerState(model.ownerOff, model.access);
   const [searching, setSearching] = useState(false);
   const onSearch = () => setSearching(true);
+  const navigating = useNavigating();
+  const signIn = model.view === "signin";
 
   useEffect(() => {
+    if (signIn) return;
     const key = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -23,7 +58,7 @@ function Page({ model }: { model: PageModel }) {
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, []);
+  }, [signIn]);
 
   // "It's live now" is said once: a reload does not say it again.
   useEffect(() => {
@@ -39,6 +74,14 @@ function Page({ model }: { model: PageModel }) {
         <PageColumn>
           <View model={model} onSearch={onSearch} />
         </PageColumn>
+        {navigating && (
+          <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center px-4">
+            <span className="rounded-full bg-surface px-3 py-1.5 shadow-overlay" style={{ animation: "pop-in 160ms cubic-bezier(0.23,1,0.32,1) both" }}>
+              <LoadingState label={model.ui.loading} />
+            </span>
+          </div>
+        )}
+        {!signIn && (
         <SearchPalette
           open={searching}
           onClose={() => setSearching(false)}
@@ -50,6 +93,7 @@ function Page({ model }: { model: PageModel }) {
             return terms.every((term) => hay.includes(term));
           }}
         />
+        )}
       </OwnerContext.Provider>
     </PageContext.Provider>
   );

@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { CheckOption } from "../beautifui/primitives/Recommendation";
 import TaskRows, { TaskPill, type TaskRow } from "../beautifui/primitives/TaskRows";
 import { Section, Surface } from "../beautifui/site";
-import { act, useOwner, usePage, useUi } from "./lib";
+import { act, sayNext, useOwner, usePage, useUi } from "./lib";
 import type { BackModel, MissingModel, UnreadableModel } from "./model";
 import { Failure, refusalText } from "./change-view";
 import { ButtonLink, DetailsBlock, EmptyState, Header, RichText, StatePill } from "./parts";
@@ -19,19 +19,25 @@ function BackCard({ model, changed }: { model: BackModel; changed: string | null
   const [ticked, setTicked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ text: string; detail: string } | null>(null);
+  const sending = useRef(false);
   const can = owner.state === "yes" && !model.blocked;
 
   const go = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setFailure(null);
     // The version the plan above starts from: the Host refuses once the app has moved on from it.
-    const result = await act(model.undoUrl, { to: model.version, from: model.from, ...(model.accept ? { accept_one_way: true } : {}) });
-    setBusy(false);
-    if (result.lost) return owner.lose();
+    const result = await act(model.undoUrl, { to: model.version, from: model.from, ...(model.accept ? { accept_one_way: true } : {}) }, model.access);
     if (result.ok) {
+      // The Host found what the versions gone back past left in stored data: the app's page says it once, under "Done".
+      if (model.afterNote && result.data.data_left) sayNext.set(model.afterNote);
       location.href = model.doneHref;
       return;
     }
+    sending.current = false;
+    setBusy(false);
+    if (result.lost) return owner.lose();
     if (result.data.reason === "plan_changed") {
       // Show the plan as it is now, and say why it changed.
       try {

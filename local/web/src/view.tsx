@@ -2,6 +2,7 @@ import { AppView } from "./app-view";
 import { BackView, MissingView, UnreadableView } from "./back-view";
 import { ChangeView } from "./change-view";
 import { Home } from "./home";
+import { SignInView } from "./signin-view";
 import type { PageModel } from "./model";
 
 /** The view for this page's data. */
@@ -17,6 +18,8 @@ export function View({ model, onSearch }: { model: PageModel; onSearch: () => vo
       return <BackView model={model} onSearch={onSearch} />;
     case "unreadable":
       return <UnreadableView model={model} onSearch={onSearch} />;
+    case "signin":
+      return <SignInView model={model} />;
     default:
       return <MissingView model={model} onSearch={onSearch} />;
   }

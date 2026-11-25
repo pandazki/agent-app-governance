@@ -2,13 +2,13 @@
 // the record or an app is rendered as text by React; no markup from data is ever inserted.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { buttonVariants } from "../beautifui/atoms/Button";
+import { Button, buttonVariants } from "../beautifui/atoms/Button";
 import { Monogram } from "../beautifui/atoms/EntityChip";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { TaskPill } from "../beautifui/primitives/TaskRows";
 import { SentPill } from "../beautifui/primitives/Recommendation";
 import { SegmentLinks, ThemeToggle } from "../beautifui/site";
-import { absoluteTime, hue, isMac, relativeTime, useNow, useOwner, usePage, useUi } from "./lib";
+import { absoluteTime, act, hue, isMac, relativeTime, sayNext, useNow, useOwner, usePage, useUi } from "./lib";
 import type { Fact, Hint, Rich, Shot, Tone } from "./model";
 
 // --- words and moments ----------------------------------------------------------
@@ -140,8 +140,16 @@ export function Crumbs({ items }: { items: { text: string; href?: string }[] }) 
 
 /** The owner's standing in this tab, as a quiet pill; it opens a small card that says how deciding works. */
 export function OwnerPill() {
-  const ui = useUi();
+  const page = usePage();
+  const ui = page.ui;
+  const session = page.access.kind === "session";
   const { state } = useOwner();
+  const [leaving, setLeaving] = useState(false);
+  const signOut = async () => {
+    setLeaving(true);
+    await act("/owner/signout", {}, page.access);
+    location.href = page.links.home;
+  };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -157,7 +165,7 @@ export function OwnerPill() {
     };
   }, [open]);
   const yes = state === "yes";
-  const label = state === "checking" ? ui.owner_checking : yes ? ui.owner_yes : ui.owner_no;
+  const label = state === "checking" ? ui.owner_checking : yes ? ui.owner_yes : session ? ui.owner_signed_out : ui.owner_no;
   const tone = yes ? "bg-green-tint text-green" : state === "lost" ? "bg-orange-tint text-orange" : "bg-field text-ink-2 shadow-hairline";
   const dot = yes ? "bg-green" : state === "lost" ? "bg-orange" : "bg-ink-3";
   return (
@@ -171,7 +179,14 @@ export function OwnerPill() {
           <div className="primitive-card-pad">
             <p className="text-[13px] font-medium text-ink">{ui.owner_help_title}</p>
             <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{state === "off" ? ui.owner_off : state === "lost" ? ui.owner_lost : ui.owner_help}</p>
-            {!yes && state !== "off" && (
+            {session && yes && (
+              <div className="mt-3 flex justify-end">
+                <Button variant="secondary" size="sm" className="text-[12.5px]" disabled={leaving} onClick={signOut}>
+                  {ui.sign_out}
+                </Button>
+              </div>
+            )}
+            {!yes && state !== "off" && !session && (
               <>
                 <p className="mt-2 text-[12px] text-ink-3">{ui.owner_how}</p>
                 <code className="mt-1 block rounded-chip bg-field px-1.5 py-1 font-mono text-[11px] text-ink-2 shadow-hairline">[host] owner link …/#owner=…</code>
@@ -209,16 +224,22 @@ export function Header({
   pills,
   action,
   onSearch,
+  bare,
 }: {
   crumbs: { text: string; href?: string }[];
   title: ReactNode;
   meta?: ReactNode;
   pills?: ReactNode;
   action?: ReactNode;
-  onSearch: () => void;
+  onSearch?: () => void;
+  /** Before signing in: no search and no owner pill, only the language and the theme. */
+  bare?: boolean;
 }) {
   const page = usePage();
   const ui = page.ui;
+  // What the write that led here left to say, once, under its "Done" (going back: what stays in stored data).
+  const [said] = useState(() => (page.done ? sayNext.peek() : null));
+  useEffect(() => sayNext.drop(), []);
   const remember = (lang: string) => () => {
     try {
       localStorage.setItem("appgov-lang", lang);
@@ -230,7 +251,7 @@ export function Header({
       <div className="flex items-center justify-between gap-3">
         <Crumbs items={crumbs} />
         <div className="flex shrink-0 items-center gap-2">
-          <SearchButton onOpen={onSearch} />
+          {!bare && onSearch && <SearchButton onOpen={onSearch} />}
           <SegmentLinks
             label={ui.language}
             active={page.lang}
@@ -246,19 +267,35 @@ export function Header({
         <div className="min-w-0">
           <h1 className="text-[21px] leading-snug font-semibold tracking-[-0.02em] text-ink text-balance [overflow-wrap:anywhere]">{title}</h1>
           {meta && <p className="mt-1 text-[12.5px] text-ink-3">{meta}</p>}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {pills}
-            <OwnerPill />
-          </div>
+          {!bare && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {pills}
+              <OwnerPill />
+            </div>
+          )}
         </div>
         {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
       </div>
       {page.done && (
         <div className="mt-4">
           <SentPill>{page.done}</SentPill>
+          {said && <p className="mt-2 max-w-[640px] text-[12.5px] leading-relaxed text-ink-2">{said}</p>}
         </div>
       )}
     </header>
+  );
+}
+
+/** Under a link to the app or a preview, where they open behind a sign-in of their own: one quiet line saying so. */
+export function OpensElsewhere({ text }: { text: string }) {
+  return (
+    <p className="mt-3 flex items-start gap-1.5 px-0.5 text-[12px] leading-relaxed text-ink-3">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="mt-[0.2em] shrink-0">
+        <rect x="5" y="11" width="14" height="10" rx="2" />
+        <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+      </svg>
+      <span>{text}</span>
+    </p>
   );
 }
 

@@ -3,7 +3,7 @@
 import type { HistoryEntry } from "../../host/src/artifact";
 import { RUN_UNDO, STATE_DIR } from "../../host/src/constants";
 import type { AppStatus, AppSummary, Overview } from "../../host/src/host";
-import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, WORDS, type Lang, type Words } from "./page-words";
+import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, wordsFor, type Lang, type Words } from "./page-words";
 import type {
   AppCard,
   AppModel,
@@ -16,6 +16,7 @@ import type {
   HomeModel,
   MissingModel,
   Notice,
+  OwnerAccess,
   PageModel,
   Problem,
   Rich,
@@ -23,6 +24,7 @@ import type {
   SearchEntry,
   Shot,
   Side,
+  SignInModel,
   Stamp,
   Tone,
   Ui,
@@ -46,6 +48,13 @@ export type { Overview };
 // JSON is escaped so nothing in it can end its <script> element. Technical terms
 // stay under "Details". The page's own writes go through src/owner.ts and need
 // the owner's link.
+//
+// The Cloudflare edition's Worker builds the same views from the same Host
+// answers (cloudflare/worker/page.ts). What differs between the two is how the
+// owner is let in (`OwnerAccess` in page-model.ts, `PageContext.access` here):
+// an owner link here, a sign-in there. The rest that differs is what the
+// context says about the deployment: whether pictures are taken, and whether
+// the apps open behind a sign-in of their own.
 // ---------------------------------------------------------------------------
 
 export type { AppState } from "./page-model";
@@ -121,12 +130,19 @@ export interface PictureMiss {
 /** Pictures the page can show: the screenshot keeper, or nothing. */
 export interface PictureLookup {
   readonly enabled: boolean;
+  /** This Host never takes pictures (the Cloudflare edition): the placeholder says so, as a fact rather than a miss. */
+  readonly never?: boolean;
   latest(name: string): Picture | null;
   preview(name: string, changeId: string): Picture | null;
   miss(name: string, key: string): PictureMiss | null;
 }
 
 export const NO_PICTURES: PictureLookup = { enabled: false, latest: () => null, preview: () => null, miss: () => null };
+/** A Host that has no way to take pictures. */
+export const NO_PICTURES_HERE: PictureLookup = { ...NO_PICTURES, never: true };
+
+/** The local edition's: the owner link. */
+export const OWNER_LINK: OwnerAccess = { kind: "owner-link" };
 
 /** What every view needs besides its own data. */
 export interface PageContext {
@@ -150,6 +166,10 @@ export interface PageContext {
   readonly ownerOff?: boolean;
   /** The name this Host goes by on PneumaSpace as the manager of the apps it releases. */
   readonly manager?: string;
+  /** How the owner is let in to decide; the owner link when not set. */
+  readonly access?: OwnerAccess;
+  /** The apps and their previews open on a runtime that asks the owner to sign in there too. */
+  readonly appsSignIn?: boolean;
 }
 
 // The record and the waiting changes come from files an agent can write: any field may be missing or of another type.
@@ -284,7 +304,7 @@ function liveKey(summary: { serving_version?: string | null; active_version?: st
 
 /** The app's latest picture, or the placeholder with why there is none when the keeper tried. */
 function shotOf(ctx: PageContext, name: string, picture: Picture | null, key: string | null, withTaken = false): Shot {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const monogram = initials(appTitle(name));
   const miss = key ? ctx.pictures.miss(name, key) : null;
   // A version that asks visitors to sign in is not shown by an older picture: that would be the guest view of something else.
@@ -296,14 +316,43 @@ function shotOf(ctx: PageContext, name: string, picture: Picture | null, key: st
       ...(withTaken ? { taken: rich(ctx, picture.key === key ? w.picture_taken : w.picture_older, {}, { when: { iso: picture.at, mode: "rel" } }) } : {}),
     };
   }
-  if (!ctx.pictures.enabled) return { src: null, monogram, caption: null };
+  if (!ctx.pictures.enabled) return { src: null, monogram, caption: noPicture(ctx) };
   return { src: null, monogram, caption: miss?.reason === "needs_sign_in" ? w.no_picture_sign_in : w.no_picture };
+}
+
+/** What the placeholder says when there is no picture to look for: nothing where pictures are turned off, that there are none where none are ever taken. */
+function noPicture(ctx: PageContext): string | null {
+  const w = wordsFor(ctx.lang, ctx.access);
+  return ctx.pictures.enabled ? w.no_picture : ctx.pictures.never ? w.no_picture_here : null;
+}
+
+/**
+ * The label of the agent token a credential names, or null. The Cloudflare edition's container writes an agent
+ * token's credential as `agent token "<label>" (<id>)` (cloudflare/src/server.ts, `credentialOf`).
+ */
+export function tokenLabel(credential: unknown): string | null {
+  const m = /^agent token ("(?:[^"\\]|\\.)*") \(t[0-9a-f]+\)$/.exec(str(credential));
+  if (!m) return null;
+  try {
+    const label = JSON.parse(m[1]!) as unknown;
+    return typeof label === "string" && label.trim() ? label : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "Codex · 5 minutes ago", or "Codex, with the token “laptop” · …" when an agent token is named. */
+function whoWords(ctx: PageContext, template: { plain: string; token: string }, agent: unknown, credential: unknown, owner: string | undefined, when: { iso: unknown; mode: "rel" | "abs" }): Rich {
+  const w = wordsFor(ctx.lang, ctx.access);
+  const token = tokenLabel(credential);
+  const who = agentWords(w, agent, owner);
+  return token ? rich(ctx, template.token, { who, token }, { when }) : rich(ctx, template.plain, { who }, { when });
 }
 
 // --- what every view shares --------------------------------------------------
 
 function searchEntries(ctx: PageContext): SearchEntry[] {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   return ctx.apps.map((summary) => {
     const name = summary.app_id;
     const words =
@@ -330,7 +379,7 @@ const DONE_WORDS = { live: "done_live", live_marked: "done_live_marked", no: "do
 const REASON_CODES = ["verify_failed", "preview_refused", "protected_file_changed", "outside_writable_roots", "no_change", "draft_changed_after_check", "base_changed", "invalid_manifest", "publish_failed", "published_unhealthy", "data_snapshot_failed", "record_failed", "agent_failed", "data_snapshot_refused", "data_restore_failed", "unhealthy_after_data_restore"];
 
 function common(ctx: PageContext, title: string) {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   return {
     lang: ctx.lang,
     ui: uiWords(w),
@@ -343,6 +392,8 @@ function common(ctx: PageContext, title: string) {
     ...(ctx.done ? { done: w[DONE_WORDS[ctx.done]] } : {}),
     ownerOff: Boolean(ctx.ownerOff),
     picturesOn: ctx.pictures.enabled,
+    access: ctx.access ?? OWNER_LINK,
+    opensElsewhere: ctx.appsSignIn ? w.opens_elsewhere : null,
   };
 }
 
@@ -361,7 +412,7 @@ function signalOf(w: Words, checks: unknown): { signal: number; label: string; t
 }
 
 export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const summaries = overview.summaries;
   const owners = new Map(overview.apps.flatMap((app) => ("status" in app ? [[app.app_id, app.status.owner] as const] : [])));
   const lastAt = (summary: AppSummary) => ("error" in summary ? "" : str(summary.last_change?.at));
@@ -382,7 +433,7 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
                 appTitle: appTitle(name),
                 href: link(`/app/${name}/change/${encodeURIComponent(str(pending.change_id))}`, ctx.lang),
                 intent: quoted(pending.intent),
-                meta: rich(ctx, w.by_on, { who: agentWords(w, pending.agent, owners.get(name)) }, { when: { iso: pending.created_at, mode: "rel" } }),
+                meta: whoWords(ctx, { plain: w.by_on, token: w.by_token }, pending.agent, pending.credential, owners.get(name), { iso: pending.created_at, mode: "rel" }),
                 oneWay: Boolean(pending.one_way),
                 signal: signal.signal,
                 signalLabel: signal.label,
@@ -443,9 +494,9 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
     apps,
     hint: { body: w.hint_body, example: w.hint_new },
     facts: facts([
-      { label: w.d_governance, value: `${str(ctx.governance)}: ${str(ctx.governanceNote)}` },
+      { label: w.d_governance, value: ctx.governanceNote ? `${str(ctx.governance)}: ${str(ctx.governanceNote)}` : str(ctx.governance) },
       { label: w.d_snapshot, value: ctx.dataSnapshot ? ctx.dataSnapshot : w.d_none },
-      { label: w.d_pictures, value: ctx.pictures.enabled ? w.d_pictures_on : w.d_pictures_off },
+      { label: w.d_pictures, value: ctx.pictures.enabled ? w.d_pictures_on : ctx.pictures.never ? w.d_pictures_never : w.d_pictures_off },
       host ? { label: w.d_host, value: host, href: host, mono: true } : null,
       console ? { label: w.d_console, value: console, href: console, mono: true } : null,
       console ? { label: "", value: fill(w.d_console_warn, { manager: ctx.manager ?? "appgov" }) } : null,
@@ -642,7 +693,7 @@ function itemTitle(w: Words, item: TimelineItem, history: readonly HistoryEntry[
 
 /** What stood behind an item, in plain words, and how it reads. */
 function itemStanding(ctx: PageContext, item: TimelineItem, owner: string, history: readonly HistoryEntry[]): { text: string | Rich; tone: Tone; badge: RowBadge } | null {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const main = item.main;
   switch (item.kind) {
     case "created":
@@ -706,7 +757,7 @@ function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean):
 }
 
 function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: AppStatus, history: readonly HistoryEntry[], m: Marks): HistoryRow {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const main = item.main;
   const canGoBack = m.goBack.has(item.id);
   const stand = itemStanding(ctx, item, status.owner, history);
@@ -723,6 +774,8 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
               ? { label: w.not_live_pill, tone: "red" as Tone }
               : null;
   const undoReason = item.kind === "undo" || item.kind === "undo_failed" ? str(main.intent) : "";
+  // On a decision, `agent` is who decided and `author` the agent that made the change, which the entry submitting it names with its credential.
+  const maker = main.author !== undefined ? { agent: main.author, credential: item.entries.find((entry) => entry !== main && entry.change_id === main.change_id && entry.credential !== undefined)?.credential } : { agent: main.agent, credential: main.credential };
   const standingRich: Rich | null = stand ? (typeof stand.text === "string" ? plain(stand.text) : stand.text) : null;
   return {
     id: item.id,
@@ -732,7 +785,7 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
     pill,
     standing: standingRich,
     standingTone: stand?.tone ?? "neutral",
-    who: rich(ctx, w.by_on, { who: agentWords(w, main.agent, status.owner) }, { when: { iso: main.at, mode: "abs" } }),
+    who: whoWords(ctx, { plain: w.by_on, token: w.by_token }, maker.agent, maker.credential, status.owner, { iso: main.at, mode: "abs" }),
     note: undoReason && undoReason !== "undo" ? quoted(undoReason) : null,
     oneWay: item.oneWay ? { body: item.oneWay.destructive ? w.one_way_destructive : w.one_way_other, why: item.oneWay.reason ? fill(w.one_way_why, { why: item.oneWay.reason }) : null } : null,
     snapshot: item.snapshot && item.kind !== "snapshot" ? w.snapshot_saved : null,
@@ -746,7 +799,7 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
 // --- one app ---------------------------------------------------------------
 
 export function appModel(name: string, status: AppStatus, entries: readonly HistoryEntry[], ctx: PageContext): AppModel {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const title = appTitle(name);
   const summary = ctx.apps.find((app) => app.app_id === name);
   const state = summary ? appState(summary) : "normal";
@@ -819,14 +872,21 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
   };
 }
 
-export function unreadableModel(name: string, error: string, ctx: PageContext): UnreadableModel {
-  const w = WORDS[ctx.lang];
-  return { view: "unreadable", ...common(ctx, appTitle(name)), name, appTitle: appTitle(name), stateLabel: w.state_unreadable, body: w.unreadable_body, facts: facts([{ label: w.d_error, value: error, mono: true }]) };
+/** `unreachable`: the Host could not be asked (the Cloudflare edition's container did not answer), rather than could not read the app. */
+export function unreadableModel(name: string, error: string, ctx: PageContext, unreachable = false): UnreadableModel {
+  const w = wordsFor(ctx.lang, ctx.access);
+  return { view: "unreadable", ...common(ctx, appTitle(name)), name, appTitle: appTitle(name), stateLabel: w.state_unreadable, body: unreachable ? w.unreachable_body : w.unreadable_body, facts: facts([{ label: w.d_error, value: error, mono: true }]) };
 }
 
 export function missingModel(ctx: PageContext, message?: string): MissingModel {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   return { view: "missing", ...common(ctx, w.not_found), message: message ?? w.not_found };
+}
+
+/** The view before the owner signs in: the page's own words and nothing from any app, whatever `ctx.apps` holds. */
+export function signInModel(ctx: PageContext, signInUrl: string): SignInModel {
+  const w = wordsFor(ctx.lang, ctx.access);
+  return { view: "signin", ...common({ ...ctx, apps: [] }, w.signin_title), signInUrl };
 }
 
 // --- a change waiting for the owner ------------------------------------------
@@ -844,7 +904,7 @@ function previewHref(appAddress: string, address: string | null): string | null 
 }
 
 export function changeModel(name: string, status: AppStatus, changeId: string, ctx: PageContext): ChangeModel {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const title = appTitle(name);
   const appHref = link(`/app/${name}`, ctx.lang);
   const pending = items<Record<string, any>>(status.pending).find((p) => str(p?.change_id) === changeId);
@@ -913,9 +973,11 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
         note: null,
       }
     : previewPicture || previewLink
-      ? { label: w.after, open: previewLink, shot: previewPicture ? shotOf(ctx, name, previewPicture, null) : { src: null, monogram: initials(title), caption: ctx.pictures.enabled ? w.no_picture : null }, empty: null, again: null, note: ends }
+      ? { label: w.after, open: previewLink, shot: previewPicture ? shotOf(ctx, name, previewPicture, null) : { src: null, monogram: initials(title), caption: noPicture(ctx) }, empty: null, again: null, note: ends }
       : { label: w.after, open: null, shot: null, empty: previewCheck?.status === "passed" ? { text: w.preview_passed, tone: "green" } : { text: w.no_preview, tone: "neutral" }, again: null, note: null };
-  // Approving is refused, in the Host's order, while an undo is unfinished, while another manager runs the app, and while no preview stands.
+  // Approving is refused, in the Host's order, while an undo is unfinished, while another manager runs the app, and while no
+  // preview stands; and it ends in "didn't go live" when the change was made on a version the app has since left.
+  const behind = typeof pending.base_version === "string" && typeof status.active_version === "string" && pending.base_version !== status.active_version;
   const blocked = undoUnfinished
     ? w.blocked_undo
     : manager.other
@@ -924,7 +986,9 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
         ? preview.unknown
           ? w.blocked_preview_unknown
           : w.blocked_preview
-        : null;
+        : behind
+          ? w.blocked_behind
+          : null;
 
   const signal = signalOf(w, checks);
   const signInDropped = risks.includes("policy_change");
@@ -932,12 +996,12 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
     ...base,
     gone: false,
     intent: quoted(pending.intent),
-    meta: rich(ctx, w.made_by, { who: agentWords(w, pending.agent, status.owner) }, { when: { iso: pending.created_at, mode: "rel" } }),
+    meta: whoWords(ctx, { plain: w.made_by, token: w.made_by_token }, pending.agent, pending.credential, status.owner, { iso: pending.created_at, mode: "rel" }),
     before: nowSide,
     after,
     checked,
     why: why.length ? why : [w.risk_other],
-    oneWay: oneWay ? { title: w.one_way_title, body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot } : null,
+    oneWay: oneWay ? { title: w.one_way_title, body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot, why: fill(w.one_way_why, { why: oneWay }) } : null,
     notices: situation(w, status),
     decision: {
       approveUrl: decideUrl("approve"),
@@ -965,6 +1029,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
       previewMissing ? { label: w.d_preview, value: `${str(pending.preview?.app)} (${preview.unknown ? w.d_preview_unknown : w.d_preview_gone}): ${str(pending.preview?.note)}` } : null,
       { label: w.d_manager, value: manager.note },
       { label: w.d_agent, value: `${str(pending.agent)}${pending.agent_provenance?.source ? ` (${str(pending.agent_provenance.source)})` : ""}`, mono: true },
+      pending.credential ? { label: w.d_credential, value: str(pending.credential), mono: true } : null,
       { label: w.d_terminal, value: `${cli(`approve ${changeId} --app ${name}`)} · ${cli(`deny ${changeId} --app ${name}`)}`, mono: true },
     ]),
   };
@@ -981,10 +1046,24 @@ export interface UndoPlanView {
   readonly oneWay: readonly { readonly version?: string }[];
   readonly dataRef?: { readonly capability: string; readonly ref: string };
   readonly crossing: { readonly data_restore: "snapshot" | "none"; readonly text: string } | null;
+  /**
+   * What the versions gone back past left in stored data that the older code may not show (the Cloudflare edition's
+   * container finds it: cloudflare/src/data-left.ts): they declare storage it does not, or run SQL it does not.
+   */
+  readonly dataLeft?: { readonly storage: boolean; readonly sql: readonly string[] } | null;
+}
+
+/** The data-left line in the person's words, or null. */
+function dataLeftWords(w: Words, left: UndoPlanView["dataLeft"]): string | null {
+  if (!left || (!left.storage && !items(left.sql).length)) return null;
+  const sql = items<string>(left.sql).map(str);
+  const shown = sql.slice(0, 2).map((statement) => (statement.length > 60 ? `${statement.slice(0, 59)}…` : statement));
+  const what = [left.storage ? w.back_left_storage : "", sql.length ? fill(w.back_left_sql, { sql: `${shown.join("; ")}${sql.length > 2 ? "; …" : ""}` }) : ""].filter(Boolean).join(w.back_left_and);
+  return fill(w.back_data_left, { what });
 }
 
 export function backModel(name: string, status: AppStatus, entries: readonly HistoryEntry[], version: string, plan: UndoPlanView | null, ctx: PageContext): BackModel {
-  const w = WORDS[ctx.lang];
+  const w = wordsFor(ctx.lang, ctx.access);
   const title = appTitle(name);
   const at = madeAt(entries, version);
   const uncommitted = items<string>(status.uncommitted);
@@ -1003,7 +1082,7 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     undoUrl: `/owner/apps/${name}/undo`,
     doneHref: link(`/app/${name}?done=${manager.unmanaged ? "back_marked" : "back"}`, ctx.lang),
   };
-  const empty = { undone: [], data: null, check: null, blocked: null, marks: null, accept: false, from: null, facts: [] };
+  const empty = { undone: [], data: null, check: null, blocked: null, marks: null, accept: false, from: null, afterNote: null, facts: [] };
   if (version === status.active_version) return { ...base, ...empty, kind: "current" };
   if (!plan || !inLine) return { ...base, ...empty, kind: "not_earlier" };
   const oneWayVersions = new Set(plan.oneWay.map((entry) => str(entry.version)));
@@ -1013,7 +1092,8 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
   });
   let data: Rich;
   let check: string | null = null;
-  if (!plan.crossing) data = plain(w.back_data_stays);
+  const left = dataLeftWords(w, plan.dataLeft);
+  if (!plan.crossing) data = plain(left ?? w.back_data_stays);
   else if (plan.crossing.data_restore === "snapshot" && plan.dataRef) {
     const saved = entries.filter((entry) => str(entry?.data_ref?.ref) === plan.dataRef!.ref).at(-1)?.at;
     const oldest = [...plan.undone].reverse().find((v) => oneWayVersions.has(v));
@@ -1041,6 +1121,7 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     marks: manager.unmanaged ? w.marks_back : null,
     accept: Boolean(plan.crossing),
     from: plan.from,
+    afterNote: left,
     facts: facts([
       { label: w.d_version, value: `${str(status.active_version)} → ${version}`, mono: true },
       plan.crossing ? { label: w.d_plan, value: plan.crossing.text } : null,
@@ -1112,7 +1193,7 @@ export function assetType(name: string): string | null {
 
 /** The HTML around one view: the head script, the stylesheet, the view's data, and the client that renders it. */
 export function renderShell(model: PageModel, nonce: string, assets: PageAssets): string {
-  const w = WORDS[model.lang];
+  const w = wordsFor(model.lang, model.access);
   const css = assets.files.get("app.css");
   const js = assets.files.get("app.js");
   const missing = !css || !js;
