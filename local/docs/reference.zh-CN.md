@@ -76,7 +76,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 等主人决定的改动会一直保留预览，直到有了决定或预览结束。批准时预览必须还在：预览结束后批准会被拒绝，返回 `preview_gone`（409）；PneumaSpace 没有应答时返回 `preview_unknown`（502）。`preview <id>`，或页面上的"再给我看一次"，会把检查过的草稿重新发布成预览，并有新的结束时间。批准或拒绝都会丢弃预览。设置 `APPGOV_PREVIEW=off` 后没有预览，批准也不需要预览，任何条目都不会有 `previewed`。
 
-这些从不属于任何版本：`node_modules`、`.appgov`、`.git`、`dist`、`.work`、`.claude`、`.codex`、`.vscode` 和 `.idea` 目录，最上层的 `data` 目录，以及 `.env`、`.env.local` 和 `.DS_Store` 文件。
+这些从不属于任何版本：`node_modules`、`.pneuma-framework`、`.appgov`、`.git`、`dist`、`.work`、`.claude`、`.codex`、`.vscode` 和 `.idea` 目录，pneuma-skills 用的 `.pneuma` 目录，最上层的 `data` 目录，以及 `.env`、`.env.local` 和 `.DS_Store` 文件。
 
 ### Host 无法担保地址上跑的是什么
 
@@ -111,7 +111,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 ## 单向改动与回退
 
-- **回退是一步步往回走的。** 每次 `undo` 回到当前版本所基于的那个版本：从 v5 到 v4，再到 v3。`undo --to <version>` 直接退到其中某一个。当前版本并非基于它的那些版本，不能作为回退目标；想找回这样的版本，从 `.appgov/versions/<version>/` 把它的文件重新提交一次。回退之后的新改动会得到一个新编号。
+- **回退是一步步往回走的。** 每次 `undo` 回到当前版本所基于的那个版本：从 v5 到 v4，再到 v3。`undo --to <version>` 直接退到其中某一个。当前版本并非基于它的那些版本，不能作为回退目标；想找回这样的版本，从 `.pneuma-framework/versions/<version>/` 把它的文件重新提交一次。回退之后的新改动会得到一个新编号。
 - **每一步**都先发布旧版本，确认它有应答，然后才改动历史、把旧文件放回工作目录。工作目录里有从没提交过的编辑时，回退不会开始。如果回退进行中工作目录被改了，版本照样发出去，工作目录保持原样，并附上一条说明。
 - **哪些改动是单向的。** 在 `personal` 和 `review-all` 下由预设决定；`policy/personal.json` 里只有破坏性 SQL 那条规则是单向的。在 `record` 模式下由 agent 用 `submit --one-way "<会丢失什么>"` 自己说明；要检查的模式不接受这个参数。主人批准单向改动之前，Host 会告诉他批准的代价，以及它能不能把存储的数据放回去。
 - **越过单向改动往回退，在任何模式下都要等主人。** 回退会被拒绝（`crosses_one_way_change`，CLI 以 2 退出），什么都不会动。提示会列出每个单向版本及其原因，并说明属于哪种情况：(a) Host 在那次改动之前存了数据，数据会回到那份快照，此后存下的一切都被搁到一边、不再出现在应用里；(b) 回去的只有代码，旧版本可能读不了现在的数据。API 的回答里带有 `data_restore: "snapshot"` 或 `"none"`。
@@ -218,15 +218,17 @@ Host 只接受这些主机名：`localhost`、`127.0.0.1`、`[::1]`、`APPGOV_HO
 | `AGENTS.md`、`CLAUDE.md` | 怎么改这个应用：先是给 agent 的规则，然后是 PneumaSpace 对模板的说明 |
 | `pneuma-space.json` | 应用向 PneumaSpace 申请什么（能力） |
 | `appgov.scaffold.json` | 改动能碰哪些目录、哪些文件受保护，以及有哪些检查 |
+| `.pneuma-framework/versions/vN/` | 每个记录下来的版本的干净源码 |
+| `.pneuma-framework/history.jsonl` | 每次尝试一行，附带成立的保证 |
+| `.pneuma-framework/record.json` | 版本计数和当前版本 |
+| `.pneuma-framework/build-threads.json` | 按顺序记下的每个要求、方案和决定 |
+| `.pneuma-framework/release-rollout.json` | 地址上正在跑哪个版本，以及之前那个 |
 | `.appgov/appgov.mjs` | CLI |
-| `.appgov/host.json` | Host 的地址，由 Host 写入 |
+| `.appgov/host.json` | Host 的地址 |
 | `.appgov/app.json` | 应用的名字、主人和创建时间 |
-| `.appgov/versions/vN/` | 每个记录下来的版本的干净源码 |
-| `.appgov/history.jsonl` | 每次尝试一行，附带成立的保证 |
-| `.appgov/record.json` | 版本计数和当前版本 |
 | `.appgov/pending/`、`.appgov/drafts/` | 等主人决定的改动及其草稿 |
-| `.appgov/build-threads.json` | 按顺序记下的每个要求、方案和决定 |
-| `.appgov/release-rollout.json` | 地址上正在跑哪个版本，以及之前那个 |
+
+这两个隐藏目录由不同的一方写入。`.pneuma-framework/` 由 pneuma-framework 写入，存着每一个版本和历史。`.appgov/` 由 Host 写入，存着它的 CLI、它的地址和等待决定的改动。这两个目录都不属于任何版本，也不会随 Host 的发布出去。
 
 把这个目录拷到另一台机器，再让一个 Host 指向它，历史就能接着记下去。应用存储的数据不会跟着拷过去。
 

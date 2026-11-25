@@ -55,4 +55,4 @@ node bin/appgov.mjs create todo
 
 ## 许可证
 
-[MIT](./LICENSE)，适用于本仓库。pneuma-framework 和 PneumaSpace 在构建镜像时取得，各自适用它们自己的条款。
+[MIT](./LICENSE)。构建镜像所用的 pneuma-framework 和 PneumaSpace 也是 MIT。
