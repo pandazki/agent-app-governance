@@ -463,7 +463,7 @@ function guideBlock(appsDir) {
     `- What apps do I have: ${run("list")}. It shows each app's version, address, last change, and any change waiting for me.`,
     `- One app in full: ${run("status <name>")} and ${run("history <name>")}.`,
     `- A new app: ${run("create <name>")}.`,
-    `- To change an app, work in its directory (${quoted(join(appsDir, "<name>"))}) and follow its AGENTS.md. A change goes live only through that app's own submit. A change that waits for me is mine to approve, in a terminal.`,
+    `- To change an app, work in its directory (${quoted(join(appsDir, "<name>"))}) and follow its AGENTS.md. A change goes live only through that app's own submit. A change that waits for me is mine to decide, on the Host's page or in my terminal.`,
     `- If the Host cannot be reached at that address, ask me where it runs and add --host <url>.`,
     GUIDE_END,
   ].join("\n");
