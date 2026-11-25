@@ -42,7 +42,9 @@ const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--
   status [<name>]        active version, address, files changed here and not submitted, changes waiting for the owner
   history [<name>]       every attempt so far, oldest first, with what was guaranteed for each
   submit "<intent>"      send this working copy to the centre, take it through the Host's loop, and release it
-  discard                put the working tree back to the active version, at the centre and here
+    [--one-way "<what is lost>"]  this change deletes or rewrites data the app already stored, in any
+                         storage: say what is lost. The owner then decides it
+  discard               put the working tree back to the active version, at the centre and here
   undo "<why>"           go back one version; again to go further back
     [--to <version>]     go straight back to an earlier version
     [--accept-one-way]   owner only: confirm going back past a one-way change
@@ -796,6 +798,8 @@ switch (command) {
       if (d.confirmed_by) console.log(`Code only; stored data was not put back, as ${d.confirmed_by} confirmed. This version may fail on it.`);
       else console.log("Code only; stored data was not rolled back.");
       if (d.data_left) console.log(d.data_left);
+      // What the submitter said it did to stored data, which the Host's rules could not see.
+      for (const declared of items(d.declared_one_way)) console.log(`${declared.version} was declared one-way when it was submitted: "${declared.reason}". Going back put back its code, not what it did to stored data.`);
       if (d.note) console.log(d.note);
     });
     break;

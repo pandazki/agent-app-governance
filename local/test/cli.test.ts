@@ -396,13 +396,28 @@ describe("undo and record mode through the artifact CLI", () => {
     }
   });
 
-  test("submit --one-way is refused by a governed Host", async () => {
+  test("submit --one-way in a governed Host: the change waits for the owner, who reads the agent's words as its declaration", async () => {
     await cli(work, "create", "declared");
     const appDir = join(work, "apps", "declared");
-    writeFileSync(join(appDir, "src", "server.ts"), "export const changed = true;\n");
-    const result = await cli(appDir, "submit", "--one-way", "drops data", "tweak");
-    expect(result.code).toBe(3);
-    expect(result.output).toContain("one_way is for record mode only");
+    // Key-value data the rules cannot see being deleted: only the agent knows.
+    writeFileSync(join(appDir, "src", "server.ts"), "export const sweep = (kv: Map<string, unknown>) => { for (const key of kv.keys()) kv.delete(key); };\n");
+    const result = await cli(appDir, "submit", "--one-way", "deletes every stored due date", "remove due dates");
+    expect(result.code).toBe(2);
+    expect(result.output).toContain("needs_approval");
+    expect(result.output).toContain("risks: source_code_change");
+    expect(result.output).toContain('  - The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "deletes every stored due date"');
+    expect(result.output).toContain("  - What approving costs:");
+    const status = (await cli(appDir, "status")).output;
+    expect(status).toContain('add --one-way "<what is lost>": the owner then decides it');
+    expect(status).toContain("waiting for the owner:");
+
+    // Approved by the owner, then undone with their confirmation: undo says what the agent declared.
+    const changeId = /needs_approval (\S+):/.exec(result.output)![1]!;
+    expect(await host.resolve("declared", changeId, "approved", "user:me")).toMatchObject({ status: "published", version: "v2" });
+    expect((await cli(appDir, "history")).output).toContain('ONE-WAY: declared one-way when it was submitted: "deletes every stored due date"');
+    expect((await cli(appDir, "undo", "back")).output).toContain('  - v2: declared one-way when it was submitted: "deletes every stored due date"');
+    const confirmed = await post(`${hostUrl}/apps/declared/undo`, { reason: "back", accept_one_way: true, subject: "user:me" });
+    expect(confirmed.body).toMatchObject({ active_version: "v1", declared_one_way: [{ version: "v2", reason: "deletes every stored due date" }] });
   });
 
   test("record mode: submit says nothing checked it, and a release that does not go live exits 1 and says what the address serves", async () => {

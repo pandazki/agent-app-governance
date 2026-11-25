@@ -76,6 +76,8 @@ A working copy that is behind the centre (someone released a version since) is r
 
 The Host runs in `personal` mode. A change has to pass the app's tests (run in the Host's container; `submit` and `history` say how many of them are the app's own, and warn when a change to `app/` ran none of them) and start in a preview, which is an ephemeral app on PneumaSpace that is discarded afterwards. A standing rule lets ordinary changes go live. With this edition's preset (`policy/personal.json`), a change waits for you when the app stops declaring `identity.required`, when it stops declaring a capability that keeps stored data (`db`, `kv`, `files` or `object`; PneumaSpace keeps the data, but the app no longer reaches it, so this is also one-way), or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row.
 
+The rules read only SQL text and the manifest, so a change that deletes or rewrites what the app keeps in `kv`, `files` or objects looks to them like an ordinary code change. For that, the agent declares it: `submit --one-way "<what is lost>"`, which the app's `AGENTS.md` tells it to use whenever a change deletes or rewrites stored data. The preset sets the least a change needs and a declaration can only raise it: a declared change waits for you whatever its risks, you read the agent's words in a line of their own marked as its statement, not a finding of the rules, and once released it is recorded one-way.
+
 When `submit` answers `needs_approval <id>`, the agent stops and shows you what it printed, including the preview's address. Signed in as the owner, in the app's working copy:
 
 ```sh
@@ -92,7 +94,7 @@ node .appgov/appgov.mjs undo "why"          # back one version
 node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
 ```
 
-Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
+Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it; when one of them was declared one-way by its submitter, `undo` prints the submitter's words too. Going back past a one-way change needs the owner: signed in, `undo --accept-one-way "why"`.
 
 ## Where things live
 
@@ -116,6 +118,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - The default rules find destructive SQL by matching text, as in the local edition.
+- **For storage other than SQL, the Host relies on the agent's declaration.** The rules read SQL text and the manifest only. A change that deletes or rewrites `kv` entries, files or objects is released by the standing rule unless the agent submits it with `--one-way`.
 
 ## What has been run
 

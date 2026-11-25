@@ -263,4 +263,23 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(undone.out).toContain("Code only; stored data was not rolled back.");
     expect(undone.out).toContain(`Data written by the code of ${version} is still stored, and ${before}'s code may not show it: ${version} ran SQL that ${before} does not (ALTER TABLE notes ADD COLUMN due TEXT).`);
   });
+
+  test("a change the agent declares one-way waits for the owner with the agent's words, and the agent token cannot approve it", async () => {
+    // Key-value data swept in code the rules read as an ordinary edit.
+    const server = join(copy(), "app", "server.mjs");
+    writeFileSync(server, `${readFileSync(server, "utf8")}\nexport const sweep = (items) => items.map(({ due, ...rest }) => rest);\n`);
+    const submitted = await cli(copy(), ["submit", "Remove due dates", "--one-way", "deletes the due date from every stored list"]);
+    expect(submitted.code).toBe(2);
+    expect(submitted.out).toContain("needs_approval");
+    expect(submitted.out).toContain("risks: source_code_change");
+    expect(submitted.out).toContain('  - The agent that made this change declared it one-way. What is lost, in its own words (its statement, not something the rules found): "deletes the due date from every stored list"');
+    const id = /needs_approval (\S+):/.exec(submitted.out)![1]!;
+    // Straight to the Worker with the agent's token: refused there, whatever the CLI does.
+    const token = JSON.parse(readFileSync(join(copy(), ".appgov", "centre.json"), "utf8")).token as string;
+    const approve = await fetch(`${stack.url}/apps/todo/changes/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+    expect(approve.status).toBe(403);
+    const status = (await cli(copy(), ["status"])).out;
+    expect(status).toContain(`waiting for the owner: ${id} "Remove due dates" (source_code_change)`);
+    expect(status).toContain('add --one-way "<what is lost>": the owner then decides it');
+  });
 });

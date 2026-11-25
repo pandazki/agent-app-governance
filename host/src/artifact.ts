@@ -240,6 +240,11 @@ export interface HostEntryFields {
    * a decision is the subject who decided.
    */
   readonly author?: string;
+  /**
+   * The submitter's own words when it declared the change one-way (`submit --one-way`), in any mode. They are part of
+   * `one_way.reason` too; this field says they were declared, not found by the rules.
+   */
+  readonly declared_one_way?: string;
 }
 
 /** One line of `.pneuma-framework/history.jsonl`: the change record's entry plus this Host's fields. */
