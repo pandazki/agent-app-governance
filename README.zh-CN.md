@@ -34,7 +34,7 @@ Claude Code、Codex 这样的 coding agent，几分钟就能做出一个带存�
 ```sh
 cd local
 docker compose up -d --build
-node bin/pneuma.mjs create todo
+node bin/appgov.mjs create todo
 ```
 
 然后打开 http://127.0.0.1:8090/ 。后面的步骤见本地版指南：把应用交给你的 agent、对改动做决定、往回退。

@@ -33,10 +33,10 @@ The first build downloads base images and builds PneumaSpace and the Host from s
 ## Create an app
 
 ```sh
-node bin/pneuma.mjs create todo
+node bin/appgov.mjs create todo
 ```
 
-A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and a `.pneuma/` folder, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, how the release was approved, and the folder to open with your agent:
+A name starts with a lowercase letter and has at most 30 lowercase letters, digits and hyphens. The Host copies the template into `apps/todo/`, adds the instructions for your agent and a `.appgov/` folder, runs the app's tests, starts the app once under a temporary name to see that it answers (the preview), and publishes it as version `v1`. It prints the address, how the release was approved, and the folder to open with your agent:
 
 ```
 published v1 at http://127.0.0.1:8080/apps/todo/
@@ -79,16 +79,16 @@ cd apps/todo
 codex -c sandbox_workspace_write.network_access=true
 ```
 
-The app's `AGENTS.md`, which Claude Code reads through `CLAUDE.md`, opens with the rules for the agent: look at `status` and `history`, edit the files, add a test, run `npm test`, and submit with `node .pneuma/pneuma.mjs submit "<what you asked for>"`. You do not need to tell the agent any of this.
+The app's `AGENTS.md`, which Claude Code reads through `CLAUDE.md`, opens with the rules for the agent: look at `status` and `history`, edit the files, add a test, run `npm test`, and submit with `node .appgov/appgov.mjs submit "<what you asked for>"`. You do not need to tell the agent any of this.
 
 - **Codex:** its default sandbox blocks connections to 127.0.0.1, so the app's tests cannot open a port and `submit` cannot reach the Host. The setting above allows them. Without it, approve the command when Codex asks, or the files change and nothing is published.
 - **Claude Code** asks before it runs `npm` and `node`. Allow both.
 
-The history records which agent submitted, from variables Claude Code and Codex set in their shells, and `unknown` when it cannot tell. To name it yourself, set `PNEUMA_AGENT`. You can switch agents at any time: what the next agent needs is in the folder.
+The history records which agent submitted, from variables Claude Code and Codex set in their shells, and `unknown` when it cannot tell. To name it yourself, set `APPGOV_AGENT`. You can switch agents at any time: what the next agent needs is in the folder.
 
 ## What submit answers
 
-The Host runs in one of three modes. Set it with `PNEUMA_GOVERNANCE` in `local/.env` (copy `.env.example`), then run `docker compose up -d` again. `status` names the mode.
+The Host runs in one of three modes. Set it with `APPGOV_GOVERNANCE` in `local/.env` (copy `.env.example`), then run `docker compose up -d` again. `status` names the mode.
 
 | Mode | What happens to a change |
 | --- | --- |
@@ -101,8 +101,8 @@ The Host runs in one of three modes. Set it with `PNEUMA_GOVERNANCE` in `local/.
 | Answer | What it means | What to do |
 | --- | --- | --- |
 | `published vN at <address>` | The change is live as version N. | Open the app. |
-| `rejected (<reason>)` | Nothing went live. Common reasons: the tests failed, a protected file or a file outside the app's own code changed, the preview did not start, nothing changed. | Let the agent fix it and submit again, or drop the edits with `node .pneuma/pneuma.mjs discard`. |
-| `needs_approval <id>` | The change waits for you. The agent should stop and show you what it printed. | Decide on the apps page, opened from your owner link, or in your own terminal in the app's folder with `node .pneuma/pneuma.mjs approve <id>` or `node .pneuma/pneuma.mjs deny <id> "why"`. Each asks you to type the word to confirm. |
+| `rejected (<reason>)` | Nothing went live. Common reasons: the tests failed, a protected file or a file outside the app's own code changed, the preview did not start, nothing changed. | Let the agent fix it and submit again, or drop the edits with `node .appgov/appgov.mjs discard`. |
+| `needs_approval <id>` | The change waits for you. The agent should stop and show you what it printed. | Decide on the apps page, opened from your owner link, or in your own terminal in the app's folder with `node .appgov/appgov.mjs approve <id>` or `node .appgov/appgov.mjs deny <id> "why"`. Each asks you to type the word to confirm. |
 | `recorded vN, but it did not go live` | `record` mode only. The version is in the history, but it did not start, and the Host tried to put the address back on the version before. The next lines say whether that worked. | Fix the cause and submit again; with no new edits, the same version goes out as it is. Or go back. |
 
 ## See the history and go back
@@ -110,25 +110,25 @@ The Host runs in one of three modes. Set it with `PNEUMA_GOVERNANCE` in `local/.
 In an app's folder:
 
 ```sh
-node .pneuma/pneuma.mjs status              # version, address, mode, files not submitted, what waits for you
-node .pneuma/pneuma.mjs history             # every attempt: what was asked, by which agent, checks, approval, result
-node .pneuma/pneuma.mjs list                # every app at a glance
-node .pneuma/pneuma.mjs undo "why"          # back one version; run it again to go further back
-node .pneuma/pneuma.mjs undo --to v2 "why"  # straight back to an earlier version
+node .appgov/appgov.mjs status              # version, address, mode, files not submitted, what waits for you
+node .appgov/appgov.mjs history             # every attempt: what was asked, by which agent, checks, approval, result
+node .appgov/appgov.mjs list                # every app at a glance
+node .appgov/appgov.mjs undo "why"          # back one version; run it again to go further back
+node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
 ```
 
 In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>` work too. The Host keeps an `AGENTS.md` and a copy of the CLI there, so an agent started in `apps/` can answer "what apps do I have?".
 
 `undo` goes back along the versions the current one was built on. It publishes the older version's code, checks that the app answers, and only then moves the history. It refuses while the folder has edits that were never submitted; submit them, or drop them with `discard`. On the apps page, every version the current one was built on has a "Go back to this" button (the page is in English or Chinese, following your browser's language).
 
-A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .pneuma/pneuma.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
+A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above). In `record` mode it is marked only when the agent submits with `--one-way "<what is lost>"`. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .appgov/appgov.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
 
 ## When something looks wrong
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | The agent says it is done, nothing new is live, and `status` lists files under `uncommitted` | The agent edited files and never submitted, or its sandbox stopped `submit`. | Ask it to submit, or drop the edits with `discard`. |
-| `preview: none standing`, or the page says the preview isn't running, and approving is refused | A preview ends itself after an hour (`PNEUMA_PREVIEW_TTL`), and approving needs the change's preview to be still running. The Host checks that it runs, not that anyone opened it. | Run `node .pneuma/pneuma.mjs preview <id>` or press "Show it to me again", look at it, then decide. |
+| `preview: none standing`, or the page says the preview isn't running, and approving is refused | A preview ends itself after an hour (`APPGOV_PREVIEW_TTL`), and approving needs the change's preview to be still running. The Host checks that it runs, not that anyone opened it. | Run `node .appgov/appgov.mjs preview <id>` or press "Show it to me again", look at it, then decide. |
 | `recorded vN, but it did not go live`, or `status` says `the address serves vM, not vN` | `record` mode: version N is recorded, and the address still serves M. | Fix the cause and submit again (with no new edits, N goes out as it is), or go back. |
 | `the Host cannot vouch for what the address serves` | The Host does not know which version the address serves: after a failed release or undo it could not put the address back, or an undo went out and could not be recorded. | Do what the line says. In the first case, the next release or undo that answers settles it. In the second, submitting and approving are refused until you run `undo`. |
 | `undo` refuses, saying the way back crosses a change "that putting files back cannot undo" | A one-way change is in the way. | You decide: `undo --accept-one-way "why"` in your terminal, or go back on the page. |
@@ -138,7 +138,7 @@ A **one-way change** is one that putting the old code back cannot undo, such as 
 
 | What | Where |
 | --- | --- |
-| The source, every version, the history, changes that wait | The app's folder, `apps/<name>/`, most of it under `.pneuma/` |
+| The source, every version, the history, changes that wait | The app's folder, `apps/<name>/`, most of it under `.appgov/` |
 | The owner link's token and the pictures of your apps | The Docker volume `host-state` |
 | Each app's stored data (database, files, key-value data, objects) and its published releases | PneumaSpace's Docker volumes: `gateway-data`, `runner-data`, `redis-data`, `rustfs-data`, and `postgres-data` with PostgreSQL |
 | Data snapshots (PostgreSQL option only) | Extra databases on the PostgreSQL server |
@@ -152,7 +152,7 @@ Docker puts the compose project's name in front of each volume's name, for examp
 - Going back restores code. Stored data comes back only with the PostgreSQL option, only for a database on PostgreSQL, and only when going back past a one-way change. SQLite databases, files, key-value data and objects are never put back.
 - The default rules find destructive SQL by matching text. They flag a `DROP` inside a string that never runs, and they miss a deletion built from variables.
 - The preview starts with empty storage. It shows that the app starts and answers its home page without a server error, not that it works with your data or for a signed-in visitor. A change can pass when none of the app's own tests ran; `submit` and `history` then say so.
-- While the `screenshot` service takes a picture of an app, the app's scripts can still send requests to the other services on the compose network, a preview's scripts included. To switch pictures off, put `PNEUMA_SCREENSHOT_CDP=` in `.env`.
+- While the `screenshot` service takes a picture of an app, the app's scripts can still send requests to the other services on the compose network, a preview's scripts included. To switch pictures off, put `APPGOV_SCREENSHOT_CDP=` in `.env`.
 - What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
 
 [docs/reference.md](./docs/reference.md) covers the CLI, the modes and what each recorded guarantee means, the risk rules, one-way changes and undo, the PostgreSQL option, starting Claude Code or Codex from the Host (`bun run drive`), running beside other services, and the tests.

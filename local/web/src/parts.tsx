@@ -221,7 +221,7 @@ export function Header({
   const ui = page.ui;
   const remember = (lang: string) => () => {
     try {
-      localStorage.setItem("pneuma-lang", lang);
+      localStorage.setItem("appgov-lang", lang);
     } catch {}
   };
   return (

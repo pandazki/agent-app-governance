@@ -56,8 +56,8 @@ function refusal(output: string, ttlSeconds: number): string | undefined {
   const max = /ephemeral ttl_seconds must be a whole number from 1 to (\d+)/.exec(output)?.[1];
   if (max) {
     return (
-      `PneumaSpace refused to publish the preview: its ttl, ${ttlSeconds} s (PNEUMA_PREVIEW_TTL), is above the ${max} s PneumaSpace allows (ephemeral_max_ttl_seconds). ` +
-      `${fine} Lower PNEUMA_PREVIEW_TTL to ${max} or less and restart the Host, then try again`
+      `PneumaSpace refused to publish the preview: its ttl, ${ttlSeconds} s (APPGOV_PREVIEW_TTL), is above the ${max} s PneumaSpace allows (ephemeral_max_ttl_seconds). ` +
+      `${fine} Lower APPGOV_PREVIEW_TTL to ${max} or less and restart the Host, then try again`
     );
   }
   return undefined;
@@ -100,7 +100,7 @@ export class Previews {
     const { state: preview, listed } = await this.read(app);
     if (listed && listed.expiresAt === null) {
       await space.takeDown(app, manager.name);
-      return { ok: false, output: `${output}\n[preview ${app}] PneumaSpace kept the preview as a durable app, so it does not know ephemeral apps (its ADR 0038) and the preview would never end; it was taken down again. Use the PneumaSpace this Host is pinned to, or PNEUMA_PREVIEW=off.` };
+      return { ok: false, output: `${output}\n[preview ${app}] PneumaSpace kept the preview as a durable app, so it does not know ephemeral apps (its ADR 0038) and the preview would never end; it was taken down again. Use the PneumaSpace this Host is pinned to, or APPGOV_PREVIEW=off.` };
     }
     if (preview.state === "gone") {
       await this.drop(app, published.app);
@@ -128,7 +128,7 @@ export class Previews {
     if (now.state === "standing") return { ok: true, preview: now, republished: false };
     // It may still stand: nothing is discarded or published on a guess.
     if (now.state === "unknown") return { ok: false, reason: "preview_unknown", detail: `${now.note}. Nothing was discarded or published, and the change still waits; ask again in a minute` };
-    const copy = mkdtempSync(join(tmpdir(), "pneuma-preview-"));
+    const copy = mkdtempSync(join(tmpdir(), "appgov-preview-"));
     try {
       snapshot(draft, copy);
       if (sourceSignature(copy) !== signature) return { ok: false, reason: "draft_changed_after_check", detail: "the change's draft is not what was checked, so a preview would not show it; nothing was published. Deny the change and submit it again" };

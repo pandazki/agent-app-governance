@@ -98,7 +98,7 @@ export async function runCheckCommand(root: string, command: string, timeoutMs =
     return { ok: result.code === 0, output: result.output, no_report };
   };
   if (picksOwnReporter(root)) return plain("the test script picks its own reporter, so this Host did not ask for a per-file report");
-  const dir = mkdtempSync(join(tmpdir(), "pneuma-report-"));
+  const dir = mkdtempSync(join(tmpdir(), "appgov-report-"));
   const file = join(dir, "junit.xml");
   try {
     const result = await runCommand(["sh", "-c", command], { cwd: root, timeoutMs, env: { NODE_OPTIONS: withJunitReport(process.env.NODE_OPTIONS, file) } });

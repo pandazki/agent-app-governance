@@ -5,7 +5,7 @@ import type { SpaceBinding, SpaceRuntime } from "./space";
 
 // ---------------------------------------------------------------------------
 // A practice, not a promise: a data snapshot capability for apps whose database
-// PneumaSpace put on PostgreSQL. `PNEUMA_DATA_SNAPSHOT=postgres-template`.
+// PneumaSpace put on PostgreSQL. `APPGOV_DATA_SNAPSHOT=postgres-template`.
 //
 // `CREATE DATABASE new TEMPLATE old` makes a full copy of a database inside the
 // server. That is the local stand-in for a database branch (Neon's branching,
@@ -102,7 +102,7 @@ function snapshotPrefix(app: string): string {
  * app's own role cannot forge one; `restore` also checks that a superuser owns the database.
  */
 interface SnapshotMark {
-  readonly pneuma_snapshot: 1;
+  readonly appgov_snapshot: 1;
   readonly capability: typeof POSTGRES_TEMPLATE;
   readonly app: string;
   readonly version: string;
@@ -115,7 +115,7 @@ function readMark(text: unknown): SnapshotMark | undefined {
   if (typeof text !== "string") return undefined;
   try {
     const mark = JSON.parse(text) as Partial<SnapshotMark>;
-    if (mark.pneuma_snapshot !== 1 || mark.capability !== POSTGRES_TEMPLATE) return undefined;
+    if (mark.appgov_snapshot !== 1 || mark.capability !== POSTGRES_TEMPLATE) return undefined;
     if (typeof mark.app !== "string" || typeof mark.source !== "string" || typeof mark.version !== "string") return undefined;
     return mark as SnapshotMark;
   } catch {
@@ -181,7 +181,7 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
       return await opts.connect();
     } catch (err) {
       throw new Error(
-        `cannot reach the PostgreSQL server at ${opts.server} that PNEUMA_DATA_SNAPSHOT_URL names (${message(err)}). ` +
+        `cannot reach the PostgreSQL server at ${opts.server} that APPGOV_DATA_SNAPSHOT_URL names (${message(err)}). ` +
           "On the compose stack, start it with: docker compose --profile postgres up -d",
       );
     }
@@ -294,7 +294,7 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
       const session = await open();
       try {
         if (!(await exists(session, database))) {
-          throw new Error(`PneumaSpace says ${name}'s database is ${database}, but the PostgreSQL server at ${opts.server} has none by that name. PNEUMA_DATA_SNAPSHOT_URL must name the server PneumaSpace uses`);
+          throw new Error(`PneumaSpace says ${name}'s database is ${database}, but the PostgreSQL server at ${opts.server} has none by that name. APPGOV_DATA_SNAPSHOT_URL must name the server PneumaSpace uses`);
         }
         const takenAt = now();
         const ref = await freeName(session, snapshotPrefix(name), plain(version), `_${stamp(takenAt)}`);
@@ -306,7 +306,7 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
         } catch (err) {
           throw new Error(`copied ${database} to ${ref}, but could not close the copy to other roles (${message(err)}); ${ref} is left on the server`);
         }
-        const mark: SnapshotMark = { pneuma_snapshot: 1, capability: POSTGRES_TEMPLATE, app: name, version, source: database, taken_at: takenAt.toISOString() };
+        const mark: SnapshotMark = { appgov_snapshot: 1, capability: POSTGRES_TEMPLATE, app: name, version, source: database, taken_at: takenAt.toISOString() };
         try {
           await session.run(`COMMENT ON DATABASE ${ident(ref)} IS ${literal(JSON.stringify(mark))}`);
         } catch (err) {

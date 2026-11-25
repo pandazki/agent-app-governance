@@ -34,7 +34,7 @@ The local edition assumes one trusted machine, four free ports on 127.0.0.1, Doc
 ```sh
 cd local
 docker compose up -d --build
-node bin/pneuma.mjs create todo
+node bin/appgov.mjs create todo
 ```
 
 Then open http://127.0.0.1:8090/. The local guide goes on from there: handing the app to your agent, deciding on a change, and going back.

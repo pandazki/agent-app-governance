@@ -7,7 +7,7 @@ import { runCheckCommand, testCoverage, testWarning, withJunitReport } from "../
 // The shapes below are what Node's test runner printed in this repository's checks (Node 22, 24 and 26):
 // the spec summary on stdout and, with a second reporter, a JUnit report. Node 24 and later name each
 // test's file in the report; Node 22 does not.
-const ROOT = "/tmp/pneuma-check-AbC123";
+const ROOT = "/tmp/appgov-check-AbC123";
 const spec = (tests: number) =>
   `\n> test\n> node --test 'sdk/*.test.ts' 'src/**/*.test.ts'\n\n✔ one (0.3ms)\nℹ tests ${tests}\nℹ suites 0\nℹ pass ${tests}\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 88.5`;
 const junit = (files: readonly (string | null)[], skipped: readonly string[] = []) =>
@@ -86,7 +86,7 @@ describe("what the test check covered, read from the runner's report", () => {
   });
 
   test("test files under src/ that did not run are named, in the note and in the warning", () => {
-    const root = mkdtempSync(join(tmpdir(), "pneuma-unran-"));
+    const root = mkdtempSync(join(tmpdir(), "appgov-unran-"));
     try {
       mkdirSync(join(root, "src", "lib"), { recursive: true });
       mkdirSync(join(root, "src", "node_modules", "x"), { recursive: true });
@@ -133,7 +133,7 @@ describe("what the test check covered, read from the runner's report", () => {
 describe("against Node's real test runner", () => {
   let root: string;
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "pneuma-coverage-"));
+    root = mkdtempSync(join(tmpdir(), "appgov-coverage-"));
     mkdirSync(join(root, "sdk"));
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "sdk", "a.test.mjs"), "import test from 'node:test';\ntest('sdk one', () => {});\ntest('sdk two', () => {});\n");

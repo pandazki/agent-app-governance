@@ -24,13 +24,13 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 /**
- * The level of this Host's API, sent in the `pneuma-host-api` header of every answer. The artifact CLI refuses
+ * The level of this Host's API, sent in the `appgov-api` header of every answer. The artifact CLI refuses
  * to work with a Host below the level it was written for, so it never reads an answer that lacks what it relies on.
- * Raise it, together with HOST_API_LEVEL in bin/pneuma.mjs, when the CLI starts to rely on something new.
+ * Raise it, together with HOST_API_LEVEL in bin/appgov.mjs, when the CLI starts to rely on something new.
  * 2: status has `space_manager` and each waiting change's `preview`, and POST /apps/:name/changes/:id/preview exists.
  */
 export const HOST_API_LEVEL = 2;
-const LEVEL_HEADER = { "pneuma-host-api": String(HOST_API_LEVEL) };
+const LEVEL_HEADER = { "appgov-api": String(HOST_API_LEVEL) };
 
 const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 /** Bind addresses that mean "every address": not a name anyone reaches this Host by. */
@@ -38,7 +38,7 @@ const WILDCARD_BINDS = new Set(["", "0.0.0.0", "::", "[::]"]);
 
 /** What the server needs to know besides the Host. */
 export interface HostServerOptions {
-  /** The address `PNEUMA_HOST_BIND` gave it to listen on. */
+  /** The address `APPGOV_HOST_BIND` gave it to listen on. */
   readonly bind?: string;
   /** The owner link's token: the owner page's writes need it (src/owner.ts). Without it the page only reads. */
   readonly ownerToken?: string;
@@ -50,7 +50,7 @@ export interface HostServerOptions {
 
 /**
  * The names a request may call this Host by: the loopback names, the host name of the address it was given
- * (`PNEUMA_HOST_URL`), and the address it listens on (`PNEUMA_HOST_BIND`) when that is one address, not a wildcard.
+ * (`APPGOV_HOST_URL`), and the address it listens on (`APPGOV_HOST_BIND`) when that is one address, not a wildcard.
  */
 function acceptedNames(hostUrl: string | undefined, bind: string | undefined): Set<string> {
   const names = new Set(LOOPBACK_NAMES);
@@ -68,7 +68,7 @@ function acceptedNames(hostUrl: string | undefined, bind: string | undefined): S
  *
  * - The `Host` header must be one of the names in `acceptedNames`. A page on another name that was
  *   pointed at 127.0.0.1 after it loaded (DNS rebinding) fails here, for reads too. So any other name
- *   fails, a LAN address or host.docker.internal included, until PNEUMA_HOST_URL names it.
+ *   fails, a LAN address or host.docker.internal included, until APPGOV_HOST_URL names it.
  * - A request that changes anything must not carry `Origin` or `Sec-Fetch-Site`. Browsers add them and
  *   a page cannot remove them; the CLI and other programs do not send them.
  * - It must say `content-type: application/json`. A form cannot send that, and a script on another
@@ -79,8 +79,8 @@ export function refuseWhatABrowserCouldSend(req: IncomingMessage, hostUrl: strin
   if (!acceptedNames(hostUrl, bind).has(named)) {
     throw new HostError(
       403,
-      `this Host answers only to localhost, 127.0.0.1, [::1], the host name in PNEUMA_HOST_URL and the address in PNEUMA_HOST_BIND when it is not a wildcard; not to "${named || "(no Host header)"}". ` +
-        "To reach it by another name, set PNEUMA_HOST_URL to the address with that name (the Host also records it for the CLI in every app) and restart the Host.",
+      `this Host answers only to localhost, 127.0.0.1, [::1], the host name in APPGOV_HOST_URL and the address in APPGOV_HOST_BIND when it is not a wildcard; not to "${named || "(no Host header)"}". ` +
+        "To reach it by another name, set APPGOV_HOST_URL to the address with that name (the Host also records it for the CLI in every app) and restart the Host.",
       "wrong_host_name",
     );
   }
@@ -201,7 +201,7 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
 
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     // Every answer, the page's included, says which API level this Host speaks.
-    res.setHeader("pneuma-host-api", String(HOST_API_LEVEL));
+    res.setHeader("appgov-api", String(HOST_API_LEVEL));
     // The owner page, its pictures and its writes. Every other route answers JSON, as before.
     if (servePage(req, res, { host, checkHostName, ...options })) return;
     route(req).then(

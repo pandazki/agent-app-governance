@@ -23,7 +23,7 @@ import { chooseLang } from "./page-words";
 //     The token rides in the fragment, which no browser sends to any server or
 //     puts in a Referer. The page moves it into this tab's sessionStorage and
 //     takes it out of the address bar.
-//   - Each write sends it in the `x-pneuma-owner` header. Another site cannot
+//   - Each write sends it in the `x-appgov-owner` header. Another site cannot
 //     ride on that: it has no way to read the token, and a custom header from
 //     another origin needs a preflight this Host never answers. No cookie is
 //     used: apps on the runtime are served from this machine's own name, and
@@ -37,7 +37,7 @@ import { chooseLang } from "./page-words";
 // ---------------------------------------------------------------------------
 
 /** The header the page's writes carry the owner token in. */
-export const OWNER_HEADER = "x-pneuma-owner";
+export const OWNER_HEADER = "x-appgov-owner";
 /** What a decision or undo made on the page says in its history entry. */
 export const PAGE_CHANNEL = "owner-page";
 

@@ -149,7 +149,7 @@ export const MANAGER_HEADER = "x-pneuma-space-manager";
 export const SPACE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 
 /** The manager name a Host goes by on PneumaSpace when it is given none. */
-export const DEFAULT_MANAGER = "pneuma-host";
+export const DEFAULT_MANAGER = "appgov";
 
 /** Who manages an app on PneumaSpace, as the Host named `ours` reads PneumaSpace's answer. */
 export interface ManagerState {
@@ -179,7 +179,7 @@ export async function readManager(space: SpaceRuntime, app: string, ours: string
     name: manager.name,
     note:
       `${app} is managed on PneumaSpace by ${manager.name}${manager.url ? ` (${manager.url})` : ""}, not by this Host (${ours}), and this Host does not write to an app another manager runs. ` +
-      `If ${manager.name} is this Host under an earlier name, start it with PNEUMA_MANAGER=${manager.name}. ` +
+      `If ${manager.name} is this Host under an earlier name, start it with APPGOV_MANAGER=${manager.name}. ` +
       `If ${manager.name} no longer runs ${app}, the owner ends that with \`appctl unmanage ${app} --manager ${manager.name}\`, and the next change through this Host marks ${app} as its own`,
   };
 }
@@ -309,17 +309,17 @@ export class Space implements SpaceRuntime {
 }
 
 export function spaceFromEnv(env: Record<string, string | undefined> = process.env): Space {
-  const cli = env.PNEUMA_SPACE_CLI;
-  if (!cli) throw new Error("PNEUMA_SPACE_CLI must point at pneuma-space/cli/appctl.ts");
-  const adminUrl = env.PNEUMA_SPACE_ADMIN ?? "http://127.0.0.1:8081";
-  const ingressUrl = env.PNEUMA_SPACE_INGRESS ?? "http://127.0.0.1:8080";
+  const cli = env.APPGOV_SPACE_CLI;
+  if (!cli) throw new Error("APPGOV_SPACE_CLI must point at pneuma-space/cli/appctl.ts");
+  const adminUrl = env.APPGOV_SPACE_ADMIN ?? "http://127.0.0.1:8081";
+  const ingressUrl = env.APPGOV_SPACE_INGRESS ?? "http://127.0.0.1:8080";
   return new Space({
     cli,
     adminUrl,
     ingressUrl,
-    publicUrl: env.PNEUMA_SPACE_PUBLIC ?? "http://127.0.0.1:8080",
-    owner: env.PNEUMA_OWNER ?? "user:me",
-    node: env.PNEUMA_NODE,
-    token: env.PNEUMA_SPACE_TOKEN,
+    publicUrl: env.APPGOV_SPACE_PUBLIC ?? "http://127.0.0.1:8080",
+    owner: env.APPGOV_OWNER ?? "user:me",
+    node: env.APPGOV_NODE,
+    token: env.APPGOV_SPACE_TOKEN,
   });
 }

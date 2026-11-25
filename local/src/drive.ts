@@ -21,7 +21,7 @@ const USAGE = `usage: bun run src/drive.ts <command>
   approve <name> <change-id> | deny <name> <change-id> [why]
   preview <name> <change-id>    publish a waiting change's preview again once it has ended itself
 
-needs PNEUMA_SPACE_CLI (pneuma-space/cli/appctl.ts) and a running PneumaSpace (docker compose up -d)`;
+needs APPGOV_SPACE_CLI (pneuma-space/cli/appctl.ts) and a running PneumaSpace (docker compose up -d)`;
 
 const NOTHING_CHECKED = "Nothing checked or approved this change: the Host recorded it and published it as it was.";
 
@@ -143,7 +143,7 @@ async function main(argv: string[]): Promise<number> {
         const answer = await rl.question(confirmPrompt(err.fields?.data_restore)).catch(() => "");
         rl.close();
         if (answer.trim() !== "accept") throw new HostError(400, "not confirmed; nothing changed");
-        result = await host.undo(name, reason, { to, acceptOneWay: true, subject: process.env.PNEUMA_OWNER ?? "user:me" });
+        result = await host.undo(name, reason, { to, acceptOneWay: true, subject: process.env.APPGOV_OWNER ?? "user:me" });
       }
       console.log(`now on ${result.active_version} (was ${result.undone_version}) at ${result.address}.`);
       if (result.data_restored) {
@@ -172,7 +172,7 @@ async function main(argv: string[]): Promise<number> {
       const answer = await rl.question(`Type "${command}" to confirm: `).catch(() => "");
       rl.close();
       if (answer.trim() !== command) throw new HostError(400, "not confirmed; nothing changed");
-      const result = await host.resolve(name, changeId, command === "approve" ? "approved" : "denied", process.env.PNEUMA_OWNER ?? "user:me", rest.slice(1).join(" ") || undefined);
+      const result = await host.resolve(name, changeId, command === "approve" ? "approved" : "denied", process.env.APPGOV_OWNER ?? "user:me", rest.slice(1).join(" ") || undefined);
       return command === "deny" ? 0 : print(result);
     }
     case "preview": {

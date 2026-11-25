@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HistoryEntry } from "./artifact";
+import { STATE_DIR, type HistoryEntry } from "./artifact";
 import { RUN_UNDO, type AppStatus, type AppSummary } from "./host";
 import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, WORDS, type Lang, type Words } from "./page-words";
 import { previewOf, type Picture, type PictureMiss } from "./screenshots";
@@ -173,7 +173,7 @@ function initials(title: string): string {
 /** Typographic quotes around the person's own words. */
 const quoted = (text: unknown) => `“${str(text).trim()}”`;
 
-const cli = (args: string) => `node .pneuma/pneuma.mjs ${args}`;
+const cli = (args: string) => `node ${STATE_DIR}/appgov.mjs ${args}`;
 
 /** One part of a view, or a fallback: one malformed record does not take the page down. */
 function guarded<T>(build: () => T, fallback: T): T {
@@ -214,9 +214,12 @@ export function uncertainKind(line: unknown): "undo" | "answer" | null {
   return text ? (text.endsWith(RUN_UNDO) ? "undo" : "answer") : null;
 }
 
-/** The file a `malformed_pending` line names: the Host writes `.pneuma/pending/<file> is not a waiting change ...`. */
+const PENDING_DIR = `${STATE_DIR}/pending/`;
+
+/** The file a `malformed_pending` line names: the Host writes `<state dir>/pending/<file> is not a waiting change ...`. */
 function malformedFile(line: unknown): string {
-  return /^\.pneuma\/pending\/(\S+) is not /.exec(str(line))?.[1] ?? "";
+  const text = str(line);
+  return text.startsWith(PENDING_DIR) ? (/^(\S+) is not /.exec(text.slice(PENDING_DIR.length))?.[1] ?? "") : "";
 }
 
 /** Who runs the app on PneumaSpace, as status asked: another manager blocks every write; nobody means the next write marks it. */
@@ -409,7 +412,7 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
       { label: w.d_pictures, value: ctx.pictures.enabled ? w.d_pictures_on : w.d_pictures_off },
       host ? { label: w.d_host, value: host, href: host, mono: true } : null,
       console ? { label: w.d_console, value: console, href: console, mono: true } : null,
-      console ? { label: "", value: fill(w.d_console_warn, { manager: ctx.manager ?? "pneuma-host" }) } : null,
+      console ? { label: "", value: fill(w.d_console_warn, { manager: ctx.manager ?? "appgov" }) } : null,
       { label: w.d_terminal, value: `${cli("list")} · ${cli("status <name>")} · ${cli("history <name>")}`, mono: true },
     ]),
   };
@@ -715,7 +718,7 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
   const uncommitted = items<string>(status.uncommitted);
   const notices: Notice[] = situation(w, status);
   const malformed = items(status.malformed_pending).map(str);
-  for (const line of malformed) notices.push({ tone: "orange", text: fill(w.malformed_body, { file: malformedFile(line) || "?" }) });
+  for (const line of malformed) notices.push({ tone: "orange", text: fill(w.malformed_body, { file: `${PENDING_DIR}${malformedFile(line) || "?"}` }) });
   if (uncommitted.length) notices.push({ tone: "neutral", text: uncommitted.length === 1 ? w.working_here_one : fill(w.working_here_other, { n: uncommitted.length }) });
 
   let history: HistoryRow[] = [];
@@ -1037,14 +1040,14 @@ export function pageHeaders(nonce: string): Record<string, string> {
 const HEAD_SCRIPT = `(() => {
   const m = /(?:^#|&)owner=([A-Za-z0-9_-]{16,})/.exec(location.hash);
   if (m) {
-    try { sessionStorage.setItem("pneuma-owner", m[1]); } catch {}
+    try { sessionStorage.setItem("appgov-owner", m[1]); } catch {}
     history.replaceState(null, "", location.pathname + location.search);
   }
   let held = null;
-  try { held = sessionStorage.getItem("pneuma-owner"); } catch {}
+  try { held = sessionStorage.getItem("appgov-owner"); } catch {}
   document.documentElement.dataset.owner = held ? "checking" : "no";
   let theme = null;
-  try { theme = localStorage.getItem("pneuma-theme"); } catch {}
+  try { theme = localStorage.getItem("appgov-theme"); } catch {}
   const dark = theme ? theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.classList.toggle("dark", dark);
 })();`;

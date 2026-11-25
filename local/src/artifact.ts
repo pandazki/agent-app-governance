@@ -12,21 +12,29 @@ import type { TestCoverage } from "./test-coverage";
 //
 //   AGENTS.md / CLAUDE.md      how to work on it (read by Codex / Claude Code)
 //   pneuma-space.json          what the runtime must provide
-//   pneuma.scaffold.json       what may change and which checks gate a change
-//   .pneuma/app.json           identity of the app
-//   .pneuma/pneuma.mjs         zero-dependency CLI that talks to a Host
-//   .pneuma/host.json          the Host's address, as the Host recorded it; the CLI reads it
-//   .pneuma/versions/vN        the framework's change record: a clean copy of every version
-//   .pneuma/history.jsonl      the change record's history: every attempt, with the guarantees that held
-//   .pneuma/record.json        the change record's version counter and current version
-//   .pneuma/build-threads.json framework BuildThread transcript
-//   .pneuma/release-rollout.json  framework rollout state: what the address serves (active / previous)
+//   appgov.scaffold.json       what may change and which checks gate a change
+//   .appgov/app.json           identity of the app
+//   .appgov/appgov.mjs         zero-dependency CLI that talks to a Host
+//   .appgov/host.json          the Host's address, as the Host recorded it; the CLI reads it
+//   .appgov/versions/vN        the framework's change record: a clean copy of every version
+//   .appgov/history.jsonl      the change record's history: every attempt, with the guarantees that held
+//   .appgov/record.json        the change record's version counter and current version
+//   .appgov/build-threads.json framework BuildThread transcript
+//   .appgov/release-rollout.json  framework rollout state: what the address serves (active / previous)
 //
 // Source, versions, history and the current version travel with the directory; they belong to
 // `@pneuma-framework/host-kit/change-record`, and this Host writes its entries there with its own
 // fields added. What does not travel: the app's stored data (on PneumaSpace), and the Host's own
-// state (pictures of apps and the owner token, in PNEUMA_HOST_STATE).
+// state (pictures of apps and the owner token, in APPGOV_HOST_STATE).
 // ---------------------------------------------------------------------------
+
+/**
+ * The directory, directly under every app directory and under the directory that holds the apps, where this
+ * Host keeps what is not part of any version: the change record, the app's identity, waiting changes, the
+ * CLI copy and the recorded address. The framework's stores are told this name (`stateDir`). The CLI in
+ * bin/ names the same directory on its own, because it runs without this code; a test checks the two agree.
+ */
+export const STATE_DIR = ".appgov";
 
 /**
  * Never part of a version: host state, installed dependencies, VCS, local secrets, the
@@ -39,7 +47,7 @@ import type { TestCoverage } from "./test-coverage";
  * `changedPaths` and `draftSignature` cover exactly what a version holds.
  */
 export const TREE: TreeWalkOptions = {
-  ignoredDirs: new Set(["node_modules", ".pneuma", ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea"]),
+  ignoredDirs: new Set(["node_modules", STATE_DIR, ".git", "dist", ".work", ".claude", ".codex", ".vscode", ".idea"]),
   ignoredFiles: new Set([".env", ".env.local", ".DS_Store"]),
   ignoredPaths: new Set(["data"]),
 };
@@ -60,14 +68,14 @@ export interface AppPaths {
 
 export function appPaths(appsDir: string, name: string): AppPaths {
   const root = join(appsDir, name);
-  const state = join(root, ".pneuma");
+  const state = join(root, STATE_DIR);
   return {
     root,
     state,
     drafts: join(state, "drafts"),
     pending: join(state, "pending"),
     info: join(state, "app.json"),
-    cli: join(state, "pneuma.mjs"),
+    cli: join(state, "appgov.mjs"),
     rollout: join(state, "release-rollout.json"),
   };
 }
@@ -93,7 +101,7 @@ export function writeAppInfo(paths: AppPaths, info: AppInfo): void {
 
 /** The app's change record, with the Host's own idea of which files make up a version. */
 export function openRecord(paths: AppPaths): ChangeRecord {
-  return openChangeRecord(paths.root, { walkOptions: TREE });
+  return openChangeRecord(paths.root, { stateDir: STATE_DIR, walkOptions: TREE });
 }
 
 /**
@@ -196,7 +204,7 @@ export interface HostEntryFields {
   readonly target_version?: string;
   /** A snapshot note: the change the data was saved for. */
   readonly for_change?: string;
-  /** Where the name in `agent` came from: --agent, PNEUMA_AGENT, detected, ambiguous or none. Absent when the caller did not say. */
+  /** Where the name in `agent` came from: --agent, APPGOV_AGENT, detected, ambiguous or none. Absent when the caller did not say. */
   readonly agent_source?: string;
   /** `detected`: the environment variables the name was read from. */
   readonly agent_markers?: readonly string[];
@@ -206,7 +214,7 @@ export interface HostEntryFields {
   readonly channel?: string;
 }
 
-/** One line of `.pneuma/history.jsonl`: the change record's entry plus this Host's fields. */
+/** One line of `.appgov/history.jsonl`: the change record's entry plus this Host's fields. */
 export type HistoryEntry = ChangeRecordEntry & HostEntryFields;
 
 /** The files of a tree that make up a version. */
@@ -264,14 +272,14 @@ export interface ScaffoldBoundary {
 }
 
 export function readScaffold(root: string): ScaffoldBoundary {
-  const raw = JSON.parse(readFileSync(join(root, "pneuma.scaffold.json"), "utf8")) as {
+  const raw = JSON.parse(readFileSync(join(root, "appgov.scaffold.json"), "utf8")) as {
     scaffold_id: string;
     artifact_boundary: { writable_roots: string[]; protected_paths: string[] };
     agent_contract: { system_prompt_fragments: string[] };
     guardrails: { pre_proposal: { kind: string; command?: string }[] };
   };
   const command = raw.guardrails.pre_proposal.find((check) => check.kind === "command")?.command;
-  if (!command) throw new Error("pneuma.scaffold.json declares no pre_proposal command guardrail");
+  if (!command) throw new Error("appgov.scaffold.json declares no pre_proposal command guardrail");
   return {
     scaffold_id: raw.scaffold_id,
     writable_roots: raw.artifact_boundary.writable_roots,
@@ -290,19 +298,19 @@ export function installOverlay(root: string, overlayDir: string, cliSource: stri
   if (!existing.includes(AGENTS_MARKER)) {
     // The protocol goes first. The platform's own guide ends with "publish with appctl"; an agent that
     // reads top-down has to meet the governed protocol before it meets that.
-    writeFileSync(agents, `${readFileSync(join(overlayDir, "AGENTS.pneuma.md"), "utf8").trimEnd()}\n\n${existing.trimStart()}`);
+    writeFileSync(agents, `${readFileSync(join(overlayDir, "AGENTS.appgov.md"), "utf8").trimEnd()}\n\n${existing.trimStart()}`);
   }
   copyFileSync(join(overlayDir, "CLAUDE.md"), join(root, "CLAUDE.md"));
-  copyFileSync(join(overlayDir, "pneuma.scaffold.json"), join(root, "pneuma.scaffold.json"));
+  copyFileSync(join(overlayDir, "appgov.scaffold.json"), join(root, "appgov.scaffold.json"));
   installCli(root, cliSource);
 }
 
 export function installCli(root: string, cliSource: string): void {
-  mkdirSync(join(root, ".pneuma"), { recursive: true });
-  copyFileSync(cliSource, join(root, ".pneuma", "pneuma.mjs"));
+  mkdirSync(join(root, STATE_DIR), { recursive: true });
+  copyFileSync(cliSource, join(root, STATE_DIR, "appgov.mjs"));
 }
 
-/** Where the Host can be reached from the person's machine, as the Host itself recorded it in `.pneuma/host.json`. */
+/** Where the Host can be reached from the person's machine, as the Host itself recorded it in `.appgov/host.json`. */
 export interface HostAddressRecord {
   readonly schema_version: 1;
   readonly url: string;
@@ -314,15 +322,15 @@ export interface HostAddressRecord {
 }
 
 const HOST_ADDRESS_NOTE =
-  "The address of the pneuma Host that manages this directory, recorded by that Host. The CLI in .pneuma/pneuma.mjs uses it unless --host or PNEUMA_HOST names another.";
+  `The address of the appgov Host that manages this directory, recorded by that Host. The CLI in ${STATE_DIR}/appgov.mjs uses it unless --host or APPGOV_HOST names another.`;
 
 /**
- * Record the Host's own address under `<dir>/.pneuma/host.json`, so the CLI copy there finds the Host
- * without anyone exporting PNEUMA_HOST. `.pneuma/` is not part of any version. Rewritten only when the
+ * Record the Host's own address under `<dir>/.appgov/host.json`, so the CLI copy there finds the Host
+ * without anyone exporting APPGOV_HOST. `.appgov/` is not part of any version. Rewritten only when the
  * address or scope changed, so `recorded_at` says when this address was first recorded. Returns whether it wrote.
  */
 export function recordHostAddress(dir: string, url: string, scope: HostAddressRecord["scope"], now: Date = new Date()): boolean {
-  const file = join(dir, ".pneuma", "host.json");
+  const file = join(dir, STATE_DIR, "host.json");
   if (existsSync(file)) {
     try {
       const current = JSON.parse(readFileSync(file, "utf8")) as Partial<HostAddressRecord>;
@@ -337,8 +345,8 @@ export function recordHostAddress(dir: string, url: string, scope: HostAddressRe
   return true;
 }
 
-const APPS_BLOCK_BEGIN = "<!-- pneuma-host:begin (the pneuma Host rewrites this block when it starts; edits inside it are lost) -->";
-const APPS_BLOCK_END = "<!-- pneuma-host:end -->";
+const APPS_BLOCK_BEGIN = "<!-- appgov-host:begin (the appgov Host rewrites this block when it starts; edits inside it are lost) -->";
+const APPS_BLOCK_END = "<!-- appgov-host:end -->";
 
 /**
  * Where the marked block is in `text`: the first end marker after a begin marker, and the begin marker nearest
@@ -362,7 +370,7 @@ function withBlock(existing: string, block: string): string {
 /**
  * Make the directory that holds the apps describe itself, for an agent started there: an `AGENTS.md`
  * block saying what the directory is, the Host's address and the commands (Claude Code reads it through a
- * `CLAUDE.md` holding `@AGENTS.md`), and a copy of the CLI at `.pneuma/pneuma.mjs`. Text outside the
+ * `CLAUDE.md` holding `@AGENTS.md`), and a copy of the CLI at `.appgov/appgov.mjs`. Text outside the
  * marked block and an existing `CLAUDE.md` are left alone. Each file is written only when it is stale.
  * Returns the files it wrote, relative to `appsDir`.
  */
@@ -380,17 +388,17 @@ export function describeAppsDir(appsDir: string, overlayDir: string, cliSource: 
     copyFileSync(join(overlayDir, "CLAUDE.md"), claude);
     written.push("CLAUDE.md");
   }
-  if (refreshCli(appsDir, cliSource)) written.push(".pneuma/pneuma.mjs");
+  if (refreshCli(appsDir, cliSource)) written.push(`${STATE_DIR}/appgov.mjs`);
   return written;
 }
 
 /**
  * Bring an app's copy of the CLI up to the Host's. The copy is how an agent talks to this Host, so a
  * copy from an earlier Host silently drops what it does not know (it would send `undo --to v4` as a
- * plain undo). It lives under `.pneuma/`, which is not part of any version. Returns whether it changed.
+ * plain undo). It lives under `.appgov/`, which is not part of any version. Returns whether it changed.
  */
 export function refreshCli(root: string, cliSource: string): boolean {
-  const installed = join(root, ".pneuma", "pneuma.mjs");
+  const installed = join(root, STATE_DIR, "appgov.mjs");
   const wanted = readFileSync(cliSource);
   if (existsSync(installed) && readFileSync(installed).equals(wanted)) return false;
   installCli(root, cliSource);
