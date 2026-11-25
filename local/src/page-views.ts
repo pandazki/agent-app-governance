@@ -405,7 +405,7 @@ const facts = (rows: readonly (Fact | null | false | undefined)[]): Fact[] => ro
 function signalOf(w: Words, checks: unknown): { signal: number; label: string; tone: Tone } {
   const list = items<{ id?: unknown; status?: unknown }>(checks);
   const passed = (id: string) => list.some((check) => check?.id === id && check?.status === "passed");
-  const tests = passed("npm-test");
+  const tests = passed("npm-test") && !noTestRan(list);
   const tried = passed("space-preview");
   const signal = (tests ? 1 : 0) + (tried ? 1 : 0) + (tests && tried ? 1 : 0);
   return { signal, label: tests && tried ? w.checked_tried : tests ? w.checked : tried ? w.tried : w.not_checked, tone: signal >= 2 ? "green" : signal === 1 ? "orange" : "neutral" };
@@ -632,9 +632,14 @@ function madeAt(history: readonly HistoryEntry[], version: string): string | und
   return history.find((entry) => entry?.version === version && entry.kind !== "restore")?.at;
 }
 
+/** A test run that passed with no test in it: the check passed, but nothing was tested. */
+function noTestRan(checks: unknown): boolean {
+  return items<{ id?: unknown; coverage?: { tests?: unknown } }>(checks).some((check) => check?.id === "npm-test" && check.coverage?.tests === 0);
+}
+
 function checkedPart(w: Words, entry: HistoryEntry): string {
   const guarantees = items<string>(entry.guarantees);
-  const checked = guarantees.includes("verified");
+  const checked = guarantees.includes("verified") && !noTestRan(entry.checks);
   const tried = guarantees.includes("previewed");
   return checked && tried ? w.checked_tried : checked ? w.checked : tried ? w.tried : w.not_checked;
 }
@@ -1009,7 +1014,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
     after,
     checked,
     why: why.length ? why : [w.risk_other],
-    oneWay: oneWay ? { title: w.one_way_title, body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot, why: fill(w.one_way_why, { why: oneWay }) } : null,
+    oneWay: oneWay ? { title: w.one_way_title, body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot, why: fill(w.one_way_rule, { why: oneWay }) } : null,
     notices: situation(w, status),
     decision: {
       approveUrl: decideUrl("approve"),

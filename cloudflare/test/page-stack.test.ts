@@ -161,7 +161,9 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(model.checked[0]).toEqual({ text: "No tests ran for this change: only its preview checked it.", tone: "caution" });
     expect(model.oneWay?.title).toBe("This one can't be taken back");
     expect(model.oneWay?.body).toBe("If you go back later, only the app goes back. The data this change removes stays removed, and the older version may not work with your data.");
-    expect(model.oneWay?.why).toBe('Why: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
+    expect(model.oneWay?.why).toBe('In the words of this Host\'s rules: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
+    // A test run with no test in it is not "checked".
+    expect(model.decision.signalLabel).toBe("Tried out");
     expect(model.decision.oneWay).toBe(true);
     expect(model.decision.check).not.toBeNull();
     const zh = await view<ChangeModel>(`/app/journal/change/${ids.oneWay}?lang=zh`);

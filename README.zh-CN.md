@@ -27,7 +27,7 @@ Claude Code、Codex 这样的 coding agent，几分钟就能做出一个带存�
 | 版本 | 状态 | 应用跑在哪里 |
 | --- | --- | --- |
 | [本地版](./local/README.zh-CN.md) | 能跑 | 你的机器：一条 `docker compose up` 启动 PneumaSpace 和 Host，只监听回环端口 |
-| [Cloudflare 版](./cloudflare/README.zh-CN.md) | 能跑，只有 `personal` 模式，没有主人页面 | Cloudflare：Host 跑在 Worker 后面的 Container 里，每个应用的记录在 R2，应用跑在部署于 Cloudflare 的 PneumaSpace 上。主人要登录；agent 用主人创建的令牌 |
+| [Cloudflare 版](./cloudflare/README.zh-CN.md) | 能跑，只有 `personal` 模式，应用页面要先登录 | Cloudflare：Host 跑在 Worker 后面的 Container 里，每个应用的记录在 R2，应用跑在部署于 Cloudflare 的 PneumaSpace 上。主人要登录；agent 用主人创建的令牌 |
 
 本地版假定只用在一台你信任的机器上，127.0.0.1 上有四个空闲端口，装有 Docker（它的 gateway 容器会挂载 Docker socket）和 Node.js 24。开始前需要什么，见 [local/README.zh-CN.md](./local/README.zh-CN.md)。准备好以后：
 

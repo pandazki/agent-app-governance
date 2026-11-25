@@ -69,8 +69,8 @@ function AppTile({ app, index }: { app: AppCard; index: number }) {
       <div className="flex flex-1 items-end gap-2 px-3 pt-2.5 pb-3">
         <div className="min-w-0 flex-1">
           <StatePill tone={app.tone}>{app.stateLabel}</StatePill>
-          {/* A div: the foundation sets text-wrap on every p, which outranks truncate. */}
-          <div className={`mt-1.5 text-[12px] text-ink-3 ${app.unreadable ? "line-clamp-2" : "truncate"}`}>
+          {/* A div: the foundation sets text-wrap on every p. Two lines, so who changed it is not cut off beside a button. */}
+          <div className="mt-1.5 line-clamp-2 text-[12px] text-ink-3">
             <RichText rich={app.meta} />
           </div>
         </div>
