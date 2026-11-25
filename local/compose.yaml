@@ -1,0 +1,216 @@
+# All in one: PneumaSpace (gateway, isolate runner, object store, Redis) plus a
+# headless pneuma Host. One command, loopback ports only, one trusted machine.
+#
+#   docker compose up -d --build
+#
+#   http://127.0.0.1:8080/apps/<name>/   your apps
+#   http://127.0.0.1:8081/               PneumaSpace console
+#   http://127.0.0.1:8090/               the Host: your apps, what waits for you, and the API the artifact CLI talks to
+#                                        (to decide on that page, open the owner link: docker compose logs host | grep "owner link")
+#   ./apps/<name>/                       the app directories your coding agent opens
+#
+# The PneumaSpace services mirror pneuma-space/compose.yaml at the pinned commit;
+# every credential below is its single-trusted-machine default.
+#
+# Opt-in practice: the Host can put stored data back on undo (README, "Practice:
+# declaring that stored data can be put back"). Off unless you do all of this:
+#   1. docker compose --profile postgres up -d        adds PostgreSQL at postgres:5432
+#   2. before an app first declares a database ("db" in pneuma-space.json), put new databases on PostgreSQL:
+#      curl -X PUT http://127.0.0.1:8081/api/policy -H 'content-type: application/json' -d '{"db_backend":"postgres"}'
+#   3. in .env: PNEUMA_DATA_SNAPSHOT=postgres-template
+#               PNEUMA_DATA_SNAPSHOT_URL=postgresql://postgres:pneuma-local@postgres:5432/postgres
+#      then docker compose --profile postgres up -d again, so the Host picks them up.
+# Without the two variables the stack behaves as before. Apps on SQLite are not covered.
+name: pneuma-all-in-one
+
+x-space-context: &space-context "${PNEUMA_SPACE_CONTEXT:-https://github.com/pandazki/pneuma-space.git#6e7353809338901a604973e9fe90d1cafe4cb3cc}"
+
+services:
+  gateway:
+    build:
+      context: *space-context
+      dockerfile: gateway/Dockerfile
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "50m", max-file: "5" } }
+    depends_on:
+      rustfs: { condition: service_healthy }
+      redis: { condition: service_started }
+      runner: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 2s
+      retries: 30
+    ports:
+      - "127.0.0.1:${PNEUMA_SPACE_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${PNEUMA_SPACE_ADMIN_PORT:-8081}:8081"
+    volumes:
+      # Kept as upstream: the gateway builds its Docker client unconditionally, and running it without the socket is untested.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gateway-data:/data
+    environment:
+      # Must name the network below: the gateway attaches what it starts to it. One variable sets both.
+      PNEUMA_SPACE_NETWORK: ${PNEUMA_SPACE_NETWORK:-pneuma-all-in-one}
+      PNEUMA_SPACE_HTTP_PORT: ${PNEUMA_SPACE_HTTP_PORT:-8080}
+      PNEUMA_SPACE_OBJECT_ROOT_USER: pneuma-local
+      PNEUMA_SPACE_OBJECT_ROOT_PASSWORD: pneuma-local-secret
+      PNEUMA_SPACE_OBJECT_PUBLIC_ENDPOINT: http://127.0.0.1:${PNEUMA_SPACE_OBJECT_PORT:-9000}
+      PNEUMA_SPACE_RTC_SECRET: pneuma-local-rtc
+      PNEUMA_SPACE_RTC_PUBLIC_HOST: 127.0.0.1
+      PNEUMA_SPACE_REDIS_PASSWORD: pneuma
+      PNEUMA_SPACE_POSTGRES_PASSWORD: pneuma-local
+      PNEUMA_SPACE_VOLUME_SIZE: 1Gi
+    networks: [space]
+
+  runner:
+    build:
+      context: *space-context
+      dockerfile: gateway/Dockerfile
+    restart: unless-stopped
+    command:
+      - node
+      - --disable-warning=ExperimentalWarning
+      - --disable-warning=SecurityWarning
+      - --permission
+      - --allow-fs-read=/data
+      - --allow-fs-read=/gateway
+      - --allow-fs-read=/shared
+      - --allow-fs-write=/data
+      - --allow-worker
+      - src/runner.ts
+    mem_limit: 2g
+    pids_limit: 512
+    environment:
+      PNEUMA_SPACE_RUNNER_WORKER_HEAP_MB: 256
+      PNEUMA_SPACE_RUNNER_WORKER_OFFHEAP_MB: 256
+      PNEUMA_SPACE_RUNNER_STUCK_LIMIT: 3
+    volumes:
+      - runner-data:/data
+    networks: [space]
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PNEUMA_SPACE_OBJECT_PORT:-9000}:9000"
+    volumes:
+      - rustfs-data:/data
+    environment:
+      RUSTFS_ACCESS_KEY: pneuma-local
+      RUSTFS_SECRET_KEY: pneuma-local-secret
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/health"]
+      interval: 2s
+      retries: 30
+    networks: [space]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - >-
+        touch /data/users.acl && sed -i "/^user default /d" /data/users.acl &&
+        echo "user default on >$$PNEUMA_SPACE_REDIS_PASSWORD ~* &* +@all" >> /data/users.acl &&
+        exec redis-server --appendonly yes --aclfile /data/users.acl
+    environment:
+      PNEUMA_SPACE_REDIS_PASSWORD: pneuma
+    volumes:
+      - redis-data:/data
+    networks: [space]
+
+  # As upstream: behind the postgres profile, so it runs only with --profile postgres. The gateway finds
+  # it as postgres:5432 on this network and provisions app_<id> roles and databases there once the
+  # global policy says db_backend=postgres. The password must match PNEUMA_SPACE_POSTGRES_PASSWORD above.
+  postgres:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: pneuma-local
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [space]
+
+  # Takes the pictures of apps on the owner page: a headless Chrome the Host asks, over the DevTools protocol,
+  # for a picture of an app when a version goes live, when a waiting change has a preview, and once a day.
+  # It sees apps as a visitor who is not signed in, through the gateway. A pictured page's own requests go only
+  # to its own origin or over https; a WebSocket, and any request from a frame of another site, is not filtered
+  # and can reach every service on this network (README, "Pictures"). Nothing about releasing, approving or
+  # undoing depends on it: stop it, or empty PNEUMA_SCREENSHOT_CDP, and the page shows placeholders. Not
+  # published on any port.
+  screenshot:
+    build:
+      context: .
+      dockerfile: screenshot.Dockerfile
+    restart: unless-stopped
+    mem_limit: 1g
+    networks: [space]
+
+  host:
+    build:
+      context: ../..
+      dockerfile: examples/space-all-in-one/host.Dockerfile
+      additional_contexts:
+        space: *space-context
+        # cli/ and templates/ are separate contexts because pneuma-space's .dockerignore keeps only
+        # gateway/ and shared/, and BuildKit applies it to a local checkout. A subdirectory context
+        # has no .dockerignore. Local checkout: "<dir>/cli". Pinned commit: "<repo>#<sha>:cli".
+        space-cli: "${PNEUMA_SPACE_CONTEXT:-https://github.com/pandazki/pneuma-space.git#6e7353809338901a604973e9fe90d1cafe4cb3cc:}${PNEUMA_SPACE_CONTEXT:+/}cli"
+        space-templates: "${PNEUMA_SPACE_CONTEXT:-https://github.com/pandazki/pneuma-space.git#6e7353809338901a604973e9fe90d1cafe4cb3cc:}${PNEUMA_SPACE_CONTEXT:+/}templates"
+    restart: unless-stopped
+    depends_on:
+      gateway: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${PNEUMA_HOST_PORT:-8090}:8090"
+    volumes:
+      # The app directories. The coding agent edits them on the machine; the Host reads them here.
+      - ${PNEUMA_APPS_DIR:-./apps}:/apps
+      # The Host's own state, outside every app directory: the pictures of apps, and the owner link's token.
+      - host-state:/state
+    environment:
+      # Where your machine reaches this Host. The Host records it in .pneuma/host.json of the apps directory
+      # and of every app, so the CLI copies there find it on any port without PNEUMA_HOST.
+      PNEUMA_HOST_URL: http://127.0.0.1:${PNEUMA_HOST_PORT:-8090}
+      # Where your browser reaches the PneumaSpace console; the owner page links to it.
+      PNEUMA_SPACE_CONSOLE: http://127.0.0.1:${PNEUMA_SPACE_ADMIN_PORT:-8081}/
+      PNEUMA_SPACE_ADMIN: http://gateway:8081
+      PNEUMA_SPACE_INGRESS: http://gateway:8080
+      PNEUMA_SPACE_PUBLIC: http://127.0.0.1:${PNEUMA_SPACE_HTTP_PORT:-8080}
+      PNEUMA_OWNER: ${PNEUMA_OWNER:-user:me}
+      PNEUMA_GOVERNANCE: ${PNEUMA_GOVERNANCE:-personal}
+      # A path inside the container. Mount your own preset and point this at it; empty uses policy/personal.json.
+      PNEUMA_POLICY_FILE: ${PNEUMA_POLICY_FILE:-}
+      PNEUMA_PREVIEW: ${PNEUMA_PREVIEW:-on}
+      # A preview is an ephemeral app on PneumaSpace that ends itself this many seconds after it is published;
+      # a change waiting for the owner keeps it until then. PneumaSpace refuses more than its global
+      # ephemeral_max_ttl_seconds (3600 unless raised with PUT /api/policy).
+      PNEUMA_PREVIEW_TTL: ${PNEUMA_PREVIEW_TTL:-3600}
+      # The name this Host goes by on PneumaSpace as the manager of what it publishes. A write to such an app
+      # that does not name it is refused there, the console's included.
+      PNEUMA_MANAGER: ${PNEUMA_MANAGER:-pneuma-host}
+      # A practice, not a promise of the framework or PneumaSpace. Empty: undo past a one-way change puts back
+      # code only. postgres-template: the Host copies an app's PostgreSQL database before a one-way change and
+      # puts it back on a confirmed undo. It needs the URL below, the postgres profile up, and apps on PostgreSQL.
+      PNEUMA_DATA_SNAPSHOT: ${PNEUMA_DATA_SNAPSHOT:-}
+      # Superuser access to every app's database on that server: acceptable on one trusted machine only.
+      # e.g. postgresql://postgres:pneuma-local@postgres:5432/postgres
+      PNEUMA_DATA_SNAPSHOT_URL: ${PNEUMA_DATA_SNAPSHOT_URL:-}
+      # The screenshot service above. Empty: no pictures, placeholders on the page; nothing else changes.
+      PNEUMA_SCREENSHOT_CDP: ${PNEUMA_SCREENSHOT_CDP-http://screenshot:9222}
+      PNEUMA_SCREENSHOT_REFRESH_HOURS: ${PNEUMA_SCREENSHOT_REFRESH_HOURS:-24}
+      PNEUMA_HOST_STATE: /state
+    networks: [space]
+
+networks:
+  space:
+    # A fixed name, because the gateway is told it (PNEUMA_SPACE_NETWORK above). A second stack needs another one.
+    name: ${PNEUMA_SPACE_NETWORK:-pneuma-all-in-one}
+
+volumes:
+  gateway-data:
+  rustfs-data:
+  redis-data:
+  runner-data:
+  postgres-data:
+  host-state:
