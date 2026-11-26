@@ -7,7 +7,7 @@ import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../h
 import { collectSteps, timedSync } from "../../host/src/steps";
 import { dataLeft, dataLeftLine } from "./data-left";
 import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
-import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, PAGE_CHANNEL, PRINCIPAL_HEADER, SECRET_HEADER, VIEW_SCHEMA, type Principal, type StoredView } from "./protocol";
+import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, HISTORY_KEPT, PAGE_CHANNEL, PLANS_KEPT, PRINCIPAL_HEADER, SECRET_HEADER, VIEW_SCHEMA, type Principal, type StoredView } from "./protocol";
 
 // ---------------------------------------------------------------------------
 // The Host's HTTP face inside the container.
@@ -84,6 +84,32 @@ function builtOnChain(history: readonly { kind?: string; version?: unknown; base
   const baseOf = (v: string) => history.find((entry) => entry.version === v && entry.kind !== "restore")?.base_version;
   for (let at = version ? baseOf(version) : undefined; typeof at === "string" && !out.includes(at) && at !== version; at = baseOf(at)) out.push(at);
   return out;
+}
+
+type Entry = { kind?: string; version?: unknown; base_version?: unknown; data_ref?: { ref?: unknown } };
+
+/**
+ * The history entries the owner page reads beside a plan for going back (local/src/page-views.ts `backModel`): the ones
+ * that made the current version and each version it was built on down to the one gone back to, the ones that made the
+ * versions the plan undoes, and the ones that saved the data it would bring back. In the history's order, and only
+ * those older than the first `skip` from the end: a plan stored with a view leaves out what the view's history holds.
+ */
+function planEntries(history: readonly Entry[], plan: { from: string | null; target: string; undone: readonly string[]; oneWay: readonly { version?: string }[]; dataRef?: { ref: string } }, skip = 0): Entry[] {
+  const versions = new Set<string>([plan.target, ...plan.undone, ...plan.oneWay.map((o) => String(o.version ?? ""))]);
+  if (plan.from) {
+    versions.add(plan.from);
+    for (const v of builtOnChain(history, plan.from)) {
+      versions.add(v);
+      if (v === plan.target) break;
+    }
+  }
+  const making = new Set<Entry>();
+  for (const v of versions) {
+    const made = history.find((entry) => entry.version === v && entry.kind !== "restore");
+    if (made) making.add(made);
+  }
+  const ref = plan.dataRef?.ref;
+  return history.slice(0, Math.max(0, history.length - skip)).filter((entry) => making.has(entry) || (ref !== undefined && entry.data_ref?.ref === ref));
 }
 
 /** How the record names the credential a request was authenticated with. */
@@ -183,26 +209,43 @@ export function createContainerServer(opts: ContainerServerOptions) {
     // The risks the standing rule lets through in this mode: the owner page lists only the others as why a change waits.
     return { ...status, auto_approved: host.autoApproved, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
   };
-  /** `GET /apps/<app>/undo-plan/<version>`: what going back to a version would do, without doing it. */
-  const planAnswer = (name: string, to: string) => {
+  /**
+   * `GET /apps/<app>/undo-plan/<version>`: what going back to a version would do, without doing it, with the history
+   * entries the owner page reads beside it (`planEntries`; for the stored view and StoredPlans, the ones older than
+   * the view's history).
+   */
+  const planAnswer = (name: string, to: string, history: readonly Entry[] = host.history(name) as readonly Entry[], skip = 0) => {
     const plan = host.undoPlan(name, to);
     const record = openRecord(appPaths(appsDir, name));
-    return { ...plan, data_left: plan.undone.length ? (dataLeft(plan.undone, to, (version) => record.versionDir(version)) ?? null) : null };
+    return { ...plan, data_left: plan.undone.length ? (dataLeft(plan.undone, to, (version) => record.versionDir(version)) ?? null) : null, entries: planEntries(history, plan, skip) };
   };
-  /** Everything a read of the app needs, for the Durable Object to store beside the folder (StoredView in protocol.ts). */
+  /** A plan for the stored view or StoredPlans: null where the Host would not plan it (not a version this one was built on). */
+  const planOrNull = (name: string, to: string, history: readonly Entry[]): Record<string, unknown> | null => {
+    try {
+      return planAnswer(name, to, history, HISTORY_KEPT) as unknown as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  /**
+   * What a read of the app needs without a further click, for the Durable Object to store beside the folder (StoredView
+   * in protocol.ts): the newest HISTORY_KEPT entries and plans for the PLANS_KEPT nearest versions, whatever the age of the app.
+   */
   const viewOf = async (name: string, etag: string): Promise<StoredView> => {
     const history = host.history(name);
     const status = await statusAnswer(name);
     const plans: Record<string, Record<string, unknown> | null> = {};
-    // Every version the current one was built on: the ones the owner page offers to go back to.
-    for (const version of builtOnChain(history, status.active_version)) {
-      try {
-        plans[version] = planAnswer(name, version) as unknown as Record<string, unknown>;
-      } catch {
-        plans[version] = null;
-      }
-    }
-    return { schema: VIEW_SCHEMA, app: name, folder_etag: etag, computed_at: new Date().toISOString(), status: status as unknown as Record<string, unknown>, history: history as unknown as Record<string, unknown>[], plans };
+    for (const version of builtOnChain(history, status.active_version).slice(0, PLANS_KEPT)) plans[version] = planOrNull(name, version, history as readonly Entry[]);
+    return {
+      schema: VIEW_SCHEMA,
+      app: name,
+      folder_etag: etag,
+      computed_at: new Date().toISOString(),
+      status: status as unknown as Record<string, unknown>,
+      history: history.slice(-HISTORY_KEPT) as unknown as Record<string, unknown>[],
+      history_total: history.length,
+      plans,
+    };
   };
   const withCopy = (name: string, result: unknown) =>
     existsSync(appPaths(appsDir, name).info)
@@ -229,11 +272,17 @@ export function createContainerServer(opts: ContainerServerOptions) {
       const summary = host.summaries().find((s) => s.app_id === name);
       return summary ? { status: 200, type: "application/json", body: JSON.stringify(summary) } : { status: 404, type: "application/json", body: JSON.stringify({ error: `no app named ${name}` }) };
     }
-    if ((url.pathname === "/folder/view" || url.pathname === "/folder/check") && method === "GET") {
+    if ((url.pathname === "/folder/view" || url.pathname === "/folder/check" || url.pathname === "/folder/plan") && method === "GET") {
       // Only of the folder the Durable Object read: otherwise it loads it first, as for any other route.
       const expected = String(req.headers[FOLDER_HEADER] ?? "");
       if (!expected || loaded.get(name) !== expected) throw new HostError(412, `the folder of ${name} on this container is not the one in R2; load it first`, "folder_not_loaded");
       if (url.pathname === "/folder/check") return { status: 204, type: "text/plain", body: "" };
+      if (url.pathname === "/folder/plan") {
+        // One plan the stored view does not carry, named with the folder it was worked out from (StoredPlans).
+        const to = url.searchParams.get("to") ?? "";
+        if (!/^v\d+$/.test(to)) throw new HostError(400, "to must be a version name, e.g. v3");
+        return { status: 200, type: "application/json", body: JSON.stringify({ app: name, folder_etag: expected, version: to, plan: planOrNull(name, to, host.history(name) as readonly Entry[]) }) };
+      }
       return { status: 200, type: "application/json", body: JSON.stringify(await viewOf(name, expected)) };
     }
     if (url.pathname === "/folder/saved" && method === "POST") {

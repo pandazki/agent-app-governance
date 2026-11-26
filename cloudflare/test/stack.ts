@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EDITION, editionHost, TEMPLATE } from "../src/edition";
-import { APP_HEADER, CHANNEL_HEADER, folderKey, PRINCIPAL_HEADER, SECRET_HEADER, viewKey } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, folderKey, plansKey, PRINCIPAL_HEADER, SECRET_HEADER, viewKey } from "../src/protocol";
+import { appSummaries } from "../worker/apps-index";
 import { createContainerServer } from "../src/server";
 import { CfSpace } from "../src/space-cf";
 import { operate, withTiming, type FolderBucket, type HostPort, type StoredObject } from "../worker/folders";
@@ -45,6 +46,10 @@ export class MemoryBucket implements FolderBucket {
     const etag = randomBytes(8).toString("hex");
     this.objects.set(key, { etag, bytes: typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value) });
     return { etag };
+  }
+
+  async list(prefix: string): Promise<{ key: string; etag: string }[]> {
+    return [...this.objects.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, value]) => ({ key, etag: value.etag }));
   }
 
   write(key: string, bytes: Uint8Array): void {
@@ -189,7 +194,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       return json({ app, running: container !== null });
     }
     operations.push(op);
-    if (options.buildBefore?.() && (op === "view" || op === "warm")) return json({ error: "unknown operation", reason: "bad_op" }, 400);
+    if (options.buildBefore?.() && (op === "view" || op === "warm" || op === "plan")) return json({ error: "unknown operation", reason: "bad_op" }, 400);
     await options.beforeOperation?.(request.method, new URL(request.url).pathname, op);
     const timing: Record<string, number> = {};
     const began = Date.now();
@@ -205,7 +210,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       if (value !== null) headers[name] = value;
     }
     const body = request.method === "POST" ? await request.text() : undefined;
-    const res = await operate(bucket, port, { app, op: op as "create" | "read" | "write" | "view" | "warm", method: request.method, path: new URL(request.url).pathname, headers, ...(body !== undefined ? { body } : {}) }, timing);
+    const res = await operate(bucket, port, { app, op: op as "create" | "read" | "write" | "view" | "warm" | "plan", method: request.method, path: new URL(request.url).pathname, headers, ...(body !== undefined ? { body } : {}) }, timing);
     return withTiming(res, timing);
   };
 
@@ -233,11 +238,14 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
         auth,
         governance: "personal",
         app: (name) => ({ fetch: (req) => queued(name, req) }),
-        summaries: async () =>
-          [...bucket.objects.entries()].filter(([key]) => key.startsWith("summaries/")).map(([, value]) => JSON.parse(new TextDecoder().decode(value.bytes))),
+        summaries: (steps) => appSummaries(bucket, (work) => void work.catch(() => {}), steps),
         views: {
           view: async (app) => {
             const found = bucket.objects.get(viewKey(app));
+            return found ? JSON.parse(new TextDecoder().decode(found.bytes)) : null;
+          },
+          plans: async (app) => {
+            const found = bucket.objects.get(plansKey(app));
             return found ? JSON.parse(new TextDecoder().decode(found.bytes)) : null;
           },
           folderEtag: async (app) => bucket.objects.get(folderKey(app))?.etag ?? null,

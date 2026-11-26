@@ -19,7 +19,7 @@ async function gateway(now = { value: Date.now() }) {
       fetch: async (req) => {
         forwarded.push({ path: new URL(req.url).pathname, method: req.method, principal: JSON.parse(req.headers.get(PRINCIPAL_HEADER)!), op: req.headers.get("x-appgov-op") });
         // Status and history are answered from the app's view, which a Durable Object computes when none is stored.
-        if (req.headers.get("x-appgov-op") === "view") return Response.json({ schema: VIEW_SCHEMA, app: "todo", folder_etag: "e1", computed_at: "", status: { ok: true }, history: [], plans: {} });
+        if (req.headers.get("x-appgov-op") === "view") return Response.json({ schema: VIEW_SCHEMA, app: "todo", folder_etag: "e1", computed_at: "", status: { ok: true }, history: [], history_total: 0, plans: {} });
         return Response.json({ ok: true });
       },
     }),

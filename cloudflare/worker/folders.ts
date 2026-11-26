@@ -1,4 +1,5 @@
-import { FOLDER_HEADER, folderKey, summaryKey, TIMING_HEADER, viewKey } from "../src/protocol";
+import { FOLDER_HEADER, folderKey, PLANS_KEPT, plansKey, summaryKey, TIMING_HEADER, VIEW_SCHEMA, viewKey, type StoredPlans } from "../src/protocol";
+import { putInIndex } from "./apps-index";
 
 // ---------------------------------------------------------------------------
 // One operation on one app, as its Durable Object runs it.
@@ -16,15 +17,19 @@ import { FOLDER_HEADER, folderKey, summaryKey, TIMING_HEADER, viewKey } from "..
 //      create). If another writer got there first, nothing is overwritten, the
 //      container forgets its copy, and the caller is told.
 //   4. Keep a small summary next to it, which `GET /apps` reads without a
-//      container, and the app's stored view (StoredView in src/protocol.ts),
-//      which the Worker answers the reads of one app from (worker/views.ts).
-//      The view names the etag of the folder it was computed from, so a reader
-//      can tell when it describes another folder than the one in R2.
+//      container (and the same summary in the index of all of them,
+//      worker/apps-index.ts), and the app's stored view (StoredView in
+//      src/protocol.ts), which the Worker answers the reads of one app from
+//      (worker/views.ts). The view names the etag of the folder it was
+//      computed from, so a reader can tell when it describes another folder
+//      than the one in R2.
 //
-// Two more operations serve the reads: `view` has the container compute the
+// Three more operations serve the reads: `view` has the container compute the
 // view of the folder in R2 and stores it (when the stored one is missing,
-// stale or of another shape), and `warm` only starts the container and loads
-// the folder, so a decision the owner is about to make does not wait for that.
+// stale or of another shape); `plan` has it work out one plan for going back
+// that the view does not carry and keeps it beside the view, for that folder
+// (StoredPlans); and `warm` only starts the container and loads the folder, so
+// a decision the owner is about to make does not wait for that.
 //
 // The Durable Object runs one operation at a time for its app; the condition
 // in 3 still holds if two ever ran. No Cloudflare binding here: the bucket and
@@ -40,6 +45,8 @@ export interface StoredObject {
 export interface FolderBucket {
   get(key: string): Promise<StoredObject | null>;
   put(key: string, value: ArrayBuffer | string, condition?: { etagMatches?: string; etagDoesNotMatch?: string }): Promise<{ etag: string } | null>;
+  /** Every object whose key starts with `prefix`, with its etag. */
+  list(prefix: string): Promise<{ key: string; etag: string }[]>;
 }
 
 /** The Host in the app's container. The caller adds the shared secret. */
@@ -49,7 +56,7 @@ export interface HostPort {
 
 export interface Operation {
   readonly app: string;
-  readonly op: "create" | "read" | "write" | "view" | "warm";
+  readonly op: "create" | "read" | "write" | "view" | "warm" | "plan";
   readonly method: string;
   /** The Host's route, e.g. /apps/todo/changes. */
   readonly path: string;
@@ -80,7 +87,10 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   if (op.op !== "create" && !stored) return answer({ error: `this Host has no app named ${op.app}`, reason: "no_app" }, 404);
   const etag = stored?.etag ?? "none";
 
-  const own = op.op === "view" ? `/folder/view?app=${op.app}` : op.op === "warm" ? `/folder/check?app=${op.app}` : null;
+  // `plan` is asked as GET /apps/<app>/undo-plan/<version>.
+  const version = op.op === "plan" ? (/^\/apps\/[^/]+\/undo-plan\/(v\d+)$/.exec(op.path)?.[1] ?? null) : null;
+  if (op.op === "plan" && !version) return answer({ error: "to must be a version name, e.g. v3", reason: "bad_version" }, 400);
+  const own = op.op === "view" ? `/folder/view?app=${op.app}` : op.op === "warm" ? `/folder/check?app=${op.app}` : op.op === "plan" ? `/folder/plan?app=${op.app}&to=${version}` : null;
   const ask = () =>
     host.fetch(own ?? op.path, { method: own ? "GET" : op.method, headers: { ...op.headers, [FOLDER_HEADER]: etag, "content-type": "application/json" }, ...(!own && op.body !== undefined ? { body: op.body } : {}) });
   let res = await ask();
@@ -97,7 +107,11 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
     await bucket.put(viewKey(op.app), text);
     lap("save");
   }
-  if (op.op === "view" || op.op === "warm") return withTiming(new Response(op.op === "warm" ? null : text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
+  if (op.op === "plan" && res.ok) {
+    await keepPlan(bucket, op.app, safeJson(text) as { folder_etag?: unknown; version?: unknown; plan?: unknown });
+    lap("save");
+  }
+  if (op.op === "view" || op.op === "warm" || op.op === "plan") return withTiming(new Response(op.op === "warm" ? null : text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
   if (op.op === "read" || NOTHING_WRITTEN.has(res.status)) return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 
   const saved = await host.fetch(`/folder/save?app=${op.app}`, { method: "POST" });
@@ -118,8 +132,11 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   }
   await host.fetch(`/folder/saved?app=${op.app}&etag=${encodeURIComponent(put.etag)}`, { method: "POST" });
   const summary = await host.fetch(`/folder/summary?app=${op.app}`, { method: "GET" });
-  if (summary.ok) await bucket.put(summaryKey(op.app), await summary.text());
-  else await summary.body?.cancel();
+  if (summary.ok) {
+    const body = await summary.text();
+    const put = await bucket.put(summaryKey(op.app), body);
+    if (put) await putInIndex(bucket, op.app, { etag: put.etag, summary: safeJson(body) as Record<string, unknown> });
+  } else await summary.body?.cancel();
   lap("save");
   // The view of the folder just saved, timed on its own (`view`). If it cannot be had, the one stored before names the
   // older folder's etag, and the next reader asks for a new one.
@@ -128,6 +145,27 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   else await view.body?.cancel();
   lap("view");
   return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
+}
+
+/**
+ * A plan the owner asked for, kept beside the view for the folder it was worked out from: with the others asked for
+ * that folder (the last PLANS_KEPT), or alone when those were for another folder. One app's Durable Object runs one
+ * operation at a time, so nothing else writes this object meanwhile.
+ */
+async function keepPlan(bucket: FolderBucket, app: string, answer: { folder_etag?: unknown; version?: unknown; plan?: unknown }): Promise<void> {
+  if (typeof answer.folder_etag !== "string" || typeof answer.version !== "string") return;
+  const found = await bucket.get(plansKey(app));
+  let kept: StoredPlans["plans"] = [];
+  if (found) {
+    try {
+      const value = JSON.parse(new TextDecoder().decode(await found.bytes())) as Partial<StoredPlans>;
+      if (value.schema === VIEW_SCHEMA && value.app === app && value.folder_etag === answer.folder_etag && Array.isArray(value.plans)) kept = value.plans;
+    } catch {}
+  }
+  const plan = typeof answer.plan === "object" && answer.plan !== null ? (answer.plan as Record<string, unknown>) : null;
+  const plans = [...kept.filter((entry) => entry.version !== answer.version), { version: answer.version, plan }].slice(-PLANS_KEPT);
+  const next: StoredPlans = { schema: VIEW_SCHEMA, app, folder_etag: answer.folder_etag, plans };
+  await bucket.put(plansKey(app), JSON.stringify(next));
 }
 
 /** The Host's answer with the Durable Object's own steps beside the Host's: `timing.centre`, in ms. */

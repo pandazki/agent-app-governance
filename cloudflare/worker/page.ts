@@ -1,5 +1,5 @@
 import { appModel, assetType, backModel, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
-import { asOf, readView, serverTiming, warm } from "./views";
+import { asOf, peekView, readPlan, readView, serverTiming, warm, type Peek } from "./views";
 import type { PageModel } from "../../local/src/page-model";
 import { chooseLang } from "../../local/src/page-words";
 import { APP_NAME, CHANNEL_HEADER, OWNER_SUBJECT, PAGE_CHANNEL } from "../src/protocol";
@@ -27,9 +27,12 @@ import { forward, json, ownerKeyRefusal, randomSecret, refuse, sameText, SESSION
 //     no Authorization header at all.
 //
 // What a view shows comes from R2, without a container: the list of apps from
-// the summaries, one app's status, history and plans for going back from its
+// the summaries (and their index, worker/apps-index.ts), one app's status,
+// newest history and plans for going back to the nearest versions from its
 // stored view (worker/views.ts), which the container computes again only when
-// it is missing, stale or of another shape. A decision or going back goes
+// it is missing, stale or of another shape. A plan for an older version is
+// worked out by the container when it is opened and kept for that folder; the
+// whole history of an app that has more is read from its folder. A decision or going back goes
 // through the app's Durable Object and container as the owner, marked as made on
 // the page; opening a waiting change or a plan starts the container meanwhile,
 // so the decision does not also wait for it.
@@ -156,13 +159,37 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
   // Where a view's time went in the Worker, in its Server-Timing header: the summaries, each R2 read of the stored view.
   const steps: Record<string, number> = {};
   let source: string | undefined;
+  let planned: string | undefined;
   const html = (status: number, model: PageModel) =>
-    new Response(renderShell(model, tag, { dir: "", files: versions }), { status, headers: { ...pageHeaders(tag), ...(session ? { "server-timing": serverTiming(steps, source) } : {}) } });
+    new Response(renderShell(model, tag, { dir: "", files: versions }), { status, headers: { ...pageHeaders(tag), ...(session ? { "server-timing": serverTiming(steps, source, planned) } : {}) } });
   const done = url.searchParams.get("done");
+  const parts = url.pathname.split("/").filter(Boolean).map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return "";
+    }
+  });
+  const name = parts[1] ?? "";
+  const shape =
+    url.pathname === "/"
+      ? null
+      : parts.length === 2
+        ? "app"
+        : parts.length === 3 && parts[2] === "history"
+          ? "history"
+          : parts.length === 4 && parts[2] === "change" && CHANGE_ID.test(parts[3]!)
+            ? "change"
+            : parts.length === 4 && parts[2] === "back" && VERSION.test(parts[3]!)
+              ? "back"
+              : null;
+  // One app's stored view is read from R2 beside the summaries; its Durable Object is asked only once the summaries
+  // list the app (a made-up name reaches no container).
+  const peeked: Promise<Peek> | null = session && shape && APP_NAME.test(name) ? peekView(deps, name, steps) : null;
   const listed = Date.now();
   // A summary saved by a build before summaries named the owner gets the subject every app here is created with.
   const summaries = session
-    ? ((await deps.summaries())
+    ? ((await deps.summaries(steps))
         .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? "")))
         .map((s) => ("error" in s || typeof s.owner === "string" ? s : { ...s, owner: OWNER_SUBJECT })) as unknown as Overview["summaries"])
     : [];
@@ -190,38 +217,47 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
     const overview: Overview = { governance: deps.governance, governance_note: "", data_snapshot: null, summaries, apps: [], generated_at: new Date(ctx.now).toISOString(), host_url: url.origin, ...(space ? { console_url: space } : {}), ...(page.manager ? { manager: page.manager } : {}) };
     return html(200, homeModel(overview, ctx));
   }
-  const parts = url.pathname.split("/").filter(Boolean).map((part) => {
-    try {
-      return decodeURIComponent(part);
-    } catch {
-      return "";
-    }
-  });
-  const name = parts[1] ?? "";
-  const shape =
-    parts.length === 2 ? "app" : parts.length === 4 && parts[2] === "change" && CHANGE_ID.test(parts[3]!) ? "change" : parts.length === 4 && parts[2] === "back" && VERSION.test(parts[3]!) ? "back" : null;
-  if (!APP_NAME.test(name) || !shape || !summaries.some((s) => s.app_id === name)) return html(404, missingModel(ctx));
+  if (!shape || !APP_NAME.test(name) || !summaries.some((s) => s.app_id === name)) return html(404, missingModel(ctx));
 
-  const viewed = await readView(deps, name, url.origin, { kind: "owner" }, steps);
+  let viewed = await readView(deps, name, url.origin, { kind: "owner" }, steps, peeked);
   if (viewed.ok) source = viewed.source;
   if (!viewed.ok) return viewed.missing ? html(404, missingModel(ctx)) : html(502, unreadableModel(name, viewed.error, ctx, true));
+  // A plan for going back that the view does not carry (an older version): kept for this folder, or worked out now.
+  // One worked out for a folder saved after the view was read is shown with the view of that folder.
+  const plan = shape === "back" ? await readPlan(deps, name, url.origin, viewed.view, parts[3]!, steps) : null;
+  if (plan && !plan.ok) return html(502, unreadableModel(name, plan.error, ctx, true));
+  if (plan?.ok) planned = plan.source;
+  if (plan?.etag && plan.etag !== viewed.view.folder_etag) {
+    const again = await readView(deps, name, url.origin, { kind: "owner" }, {});
+    if (again.ok) viewed = again;
+  }
   const status = asOf(viewed.view.status, ctx.now);
   const appStatus = status as unknown as Parameters<typeof appModel>[1];
-  const entries = viewed.view.history as unknown as Parameters<typeof appModel>[2];
+  const kept = viewed.view.history as unknown as Parameters<typeof appModel>[2];
   // The risks this mode's standing rule lets through, as the container reports them with status.
   const withRules: PageContext = { ...ctx, autoApproved: Array.isArray(status.auto_approved) ? (status.auto_approved as string[]) : [] };
-  if (shape === "app") return html(200, appModel(name, appStatus, entries, withRules));
+  const earlier = viewed.view.history_total - viewed.view.history.length;
+  if (shape === "app") return html(200, appModel(name, appStatus, kept, earlier > 0 ? { ...withRules, historyMore: earlier } : withRules));
+  if (shape === "history") {
+    // The whole history: from the view while it holds all of it, else read from the app's folder.
+    if (earlier <= 0) return html(200, appModel(name, appStatus, kept, { ...withRules, historyAll: true }));
+    const whole = await read(deps, url.origin, name, `/apps/${name}/history`);
+    if (!whole.ok) return whole.missing ? html(404, missingModel(ctx)) : html(502, unreadableModel(name, whole.error, ctx, true));
+    source = "container";
+    return html(200, appModel(name, appStatus, (Array.isArray(whole.value.history) ? whole.value.history : []) as Parameters<typeof appModel>[2], { ...withRules, historyAll: true }));
+  }
   if (shape === "change") {
     const model = changeModel(name, appStatus, parts[3]!, withRules);
     if (!model.gone) warm(deps, name, url.origin);
     return html(200, model);
   }
-  // A version the view has no plan for (it was not one the current version was built on when the view was computed)
-  // is asked about as before: the page then says it cannot go back there.
+  // A version the Host would not plan (not one the current version was built on): the page says it cannot go back there.
   const version = parts[3]!;
-  const stored = Object.hasOwn(viewed.view.plans, version);
-  const plan = stored ? viewed.view.plans[version] : await read(deps, url.origin, name, `/apps/${name}/undo-plan/${version}`).then((answer) => (answer.ok ? answer.value : null));
-  const planView: UndoPlanView | null = plan ? { ...(plan as unknown as UndoPlanView), dataLeft: (plan.data_left as UndoPlanView["dataLeft"]) ?? null } : null;
+  const found = plan?.ok ? plan.plan : null;
+  const planView: UndoPlanView | null = found ? { ...(found as unknown as UndoPlanView), dataLeft: (found.data_left as UndoPlanView["dataLeft"]) ?? null } : null;
+  // A plan carries the entries it needs that are older than the view's history (each version from the current one down
+  // to it), in the history's order; one from an object on the build before carries none, and its view has them all.
+  const entries = Array.isArray(found?.entries) ? ([...found.entries, ...kept] as Parameters<typeof backModel>[2]) : kept;
   const model = backModel(name, appStatus, entries, version, planView, withRules);
   if (model.kind === "plan") warm(deps, name, url.origin);
   return html(200, model);

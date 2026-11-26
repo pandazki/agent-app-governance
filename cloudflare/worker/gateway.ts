@@ -72,8 +72,8 @@ export interface GatewayDeps {
   readonly ownerKeyHash: string;
   readonly auth: AuthStore;
   readonly app: (name: string) => AppStub;
-  /** Every app's last summary, as the app's Durable Object saved it to R2. */
-  readonly summaries: () => Promise<unknown[]>;
+  /** Every app's last summary, as the app's Durable Object saved it to R2. `steps` gets how long each R2 read took, in ms. */
+  readonly summaries: (steps?: Record<string, number>) => Promise<unknown[]>;
   readonly governance: string;
   readonly now?: () => number;
   /** The owner page's files and what it says about the deployment; without it, the page's routes are not served. */
@@ -281,12 +281,20 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   const reason = ownerOnly(rest, method === "POST" ? parseObject(text) : {});
   if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; an agent token cannot do it`);
   // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
-  if (op === "read" && (rest.length === 0 || rest[0] === "history")) {
+  if (op === "read" && (rest.length === 0 || (rest.length === 1 && rest[0] === "history"))) {
     const steps: Record<string, number> = {};
     const viewed = await readView(deps, name, url.origin, principal, steps);
     // Where the time of a read went, in the Worker: each R2 read, and the container when the stored view was not usable.
     const header = { "server-timing": serverTiming(steps, viewed.ok ? viewed.source : undefined) };
     if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status, header);
+    if (rest.length === 1 && viewed.view.history_total > viewed.view.history.length) {
+      // The view holds the newest entries only: the whole history is read from the app's folder, as before stored views.
+      const at = Date.now();
+      const whole = await forward(deps, name, op, principal, url.origin, url.pathname, method, text);
+      const out = new Response(whole.body, whole);
+      out.headers.set("server-timing", serverTiming({ ...steps, container: Date.now() - at }, "container"));
+      return out;
+    }
     const timing = { centre: { view: viewed.ms }, view: viewed.source };
     return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing }, 200, header);
   }

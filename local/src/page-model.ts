@@ -201,6 +201,10 @@ export interface AppModel extends Common {
   readonly history: readonly HistoryRow[];
   /** The history could not be read at all. */
   readonly historyError: string | null;
+  /** `history` is the newest part only: this opens the whole history, after the rows "Show earlier" opens. */
+  readonly earlier?: { readonly label: string; readonly href: string };
+  /** Every row is shown from the start: this is the whole history, asked for. */
+  readonly historyAll?: boolean;
   readonly hint: Hint;
   readonly facts: readonly Fact[];
 }
