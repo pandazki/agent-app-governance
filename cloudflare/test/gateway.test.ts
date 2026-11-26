@@ -134,7 +134,8 @@ describe("the Worker's gateway", () => {
   test("the app list is answered without the app's Durable Object", async () => {
     const { call, login, forwarded } = await gateway();
     const res = await call("GET", "/apps", { secret: await login() });
-    expect(await res.json()).toEqual({ governance: "personal", apps: [{ app_id: "todo" }] });
+    // Without a listing of PneumaSpace to restate the summaries with, they are as stored, and the answer says no listing was had.
+    expect(await res.json()).toEqual({ governance: "personal", apps: [{ app_id: "todo" }], runtime_check: { checked_at: null, failed: null } });
     expect(forwarded).toEqual([]);
   });
 

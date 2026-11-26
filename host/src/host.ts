@@ -54,7 +54,7 @@ import {
 } from "./artifact";
 import { DECLARED_ONE_WAY_MARK, RUN_UNDO } from "./constants";
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
-import { choicesFor, downOf, LIFECYCLE_KINDS, runtimeFacts, standingOf, type DownFacts, type OwnerChoices, type RuntimeFacts, type Standing } from "./lifecycle";
+import { choicesFor, clearingWords, downOf, LIFECYCLE_KINDS, runtimeFacts, standingOf, type ClearingFacts, type DownFacts, type OwnerChoices, type RuntimeFacts, type Standing } from "./lifecycle";
 import { askApp, DEFAULT_MANAGER, managerFrom, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
 import { timed, timedSync } from "./steps";
@@ -397,15 +397,7 @@ export interface AppStatus {
 }
 
 /** What clearing an app does, as this Host's runtime allows it. */
-export interface ClearingFacts {
-  /** This Host's runtime may delete stored data for good (`SpaceRuntime.purge`): clearing purges the app on PneumaSpace. */
-  readonly purges: boolean;
-  /** The data snapshots this Host's capability made for the app (refs from its history): clearing leaves them where they are. */
-  readonly snapshots: readonly string[];
-  /** The same, in plain English lines, for the CLI: what is deleted, what stays, and where to finish. */
-  readonly deletes: readonly string[];
-  readonly keeps: readonly string[];
-}
+export type { ClearingFacts };
 
 /** An owner's act on the app's being there: who, through what, with what credential. */
 export interface OwnerAct {
@@ -2746,20 +2738,8 @@ function refuseNotThere(name: string, act: "submit" | "approval" | "undo", recor
 
 /** What clearing `name` would delete and keep, with this Host's runtime and data snapshot capability as they are. */
 export function clearingFacts(name: string, history: readonly HistoryEntry[], runtime: RuntimeFacts, space: Pick<SpaceRuntime, "purge">, snapshotCapability: string | null): ClearingFacts {
-  const purges = Boolean(space.purge);
   const snapshots = [...new Set(history.map((entry) => entry.data_ref?.ref).filter((ref): ref is string => typeof ref === "string" && ref.length > 0))];
-  const deletes = [`this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`];
-  const keeps: string[] = [];
-  if (runtime.state === "removed" && purges) deletes.push(`${name} on PneumaSpace, with all its stored data (purged): this cannot be undone`);
-  if (runtime.state === "removed" && !purges) {
-    keeps.push(
-      `${name} on PneumaSpace, removed, with all its stored data: this Host may not purge it there. Its name, its app slot and its storage stay taken until the PneumaSpace owner purges it in PneumaSpace's console`,
-    );
-  }
-  if (runtime.state === "gone") keeps.push(`nothing on PneumaSpace: it has no app named ${name} any more`);
-  if (snapshots.length) keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${snapshotCapability ?? "the snapshot capability"} keeps them: clearing does not delete them`);
-  keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
-  return { purges, snapshots, deletes, keeps };
+  return clearingWords(name, runtime, Boolean(space.purge), snapshots, snapshotCapability);
 }
 
 /** The one line status, list and the owner page show while `cannotVouch` holds; undefined otherwise. */

@@ -113,3 +113,84 @@ export function choicesFor(standing: Standing, runtime: RuntimeFacts): OwnerChoi
 export function newerRuntime(a: RuntimeFacts, b: RuntimeFacts | null | undefined): RuntimeFacts {
   return b && Date.parse(b.checked_at) > Date.parse(a.checked_at) ? b : a;
 }
+
+/** What clearing the app would delete and leave, as status says it before the owner types the name. */
+export interface ClearingFacts {
+  /** This Host's runtime may delete stored data for good (`SpaceRuntime.purge`): clearing purges the app on PneumaSpace. */
+  readonly purges: boolean;
+  /** The data snapshots this Host's capability made for the app (refs from its history): clearing leaves them where they are. */
+  readonly snapshots: readonly string[];
+  /** The capability that keeps them, by its id, or null where this Host has none. */
+  readonly snapshot_capability: string | null;
+  /** The same, in plain English lines, for the CLI: what is deleted, what stays, and where to finish. */
+  readonly deletes: readonly string[];
+  readonly keeps: readonly string[];
+}
+
+/**
+ * What clearing deletes and leaves, in plain lines, from what PneumaSpace said and whether this Host's runtime may purge
+ * (the capability the runtime declares, never the edition): the confirmation shows exactly these before the owner types
+ * the name.
+ */
+export function clearingWords(name: string, runtime: RuntimeFacts, purges: boolean, snapshots: readonly string[], snapshotCapability: string | null): ClearingFacts {
+  const deletes = [`this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`];
+  const keeps: string[] = [];
+  if (runtime.state === "removed" && purges) deletes.push(`${name} on PneumaSpace, with all its stored data (purged): this cannot be undone`);
+  if (runtime.state === "removed" && !purges) {
+    keeps.push(
+      `${name} on PneumaSpace, removed, with all its stored data: this Host may not purge it there. Its name, its app slot and its storage stay taken until the PneumaSpace owner purges it in PneumaSpace's console`,
+    );
+  }
+  if (runtime.state === "gone") keeps.push(`nothing on PneumaSpace: it has no app named ${name} any more`);
+  if (snapshots.length) keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${snapshotCapability ?? "the snapshot capability"} keeps them: clearing does not delete them`);
+  keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
+  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, deletes, keeps };
+}
+
+/**
+ * Every app PneumaSpace holds for this Host's tenant, from one listing at one moment: name to the platform's status.
+ * An app the Host knows that is not in it is gone. The Cloudflare edition's Worker keeps the last one (worker/runtime-check.ts).
+ */
+export interface RuntimeListing {
+  readonly checked_at: string;
+  readonly apps: Readonly<Record<string, string>>;
+}
+
+/** What the listing says about one app. */
+export function factsFromListing(listing: RuntimeListing, name: string): RuntimeFacts {
+  const status = Object.hasOwn(listing.apps, name) ? listing.apps[name] : undefined;
+  return runtimeFacts({ app: status === undefined ? null : { name, status: status as SpaceApp["status"], expiresAt: null, manager: null } }, new Date(listing.checked_at));
+}
+
+/** The presence fields status and the summaries carry, as far as this module reads and restates them. */
+interface Presence {
+  readonly app_id?: unknown;
+  readonly runtime?: unknown;
+  readonly taken_down?: unknown;
+  readonly standing?: unknown;
+  readonly choices?: unknown;
+  readonly clearing?: unknown;
+}
+
+const isFacts = (value: unknown): value is RuntimeFacts =>
+  typeof value === "object" && value !== null && typeof (value as RuntimeFacts).state === "string" && typeof (value as RuntimeFacts).checked_at === "string";
+
+/**
+ * Status or a summary as stored, restated from a newer listing when there is one: the newer fact about PneumaSpace
+ * wins, and the standing, the owner's choices and what clearing would do follow from it. Unchanged when the stored
+ * facts are as new, or when they carry no presence at all (written by a Host from before them).
+ */
+export function restated<T extends Presence>(fields: T, name: string, listing: RuntimeListing | null | undefined): T {
+  if (!listing || !isFacts(fields.runtime)) return fields;
+  const runtime = newerRuntime(fields.runtime, factsFromListing(listing, name));
+  if (runtime === fields.runtime) return fields;
+  const down = (typeof fields.taken_down === "object" && fields.taken_down !== null ? fields.taken_down : null) as DownFacts | null;
+  const standing = standingOf(down, runtime);
+  const out: Record<string, unknown> = { ...(fields as Record<string, unknown>), runtime, standing };
+  if (fields.choices !== undefined) out.choices = choicesFor(standing, runtime);
+  const clearing = fields.clearing as ClearingFacts | undefined;
+  if (clearing && Array.isArray(clearing.snapshots)) {
+    out.clearing = clearingWords(name, runtime, Boolean(clearing.purges), clearing.snapshots, typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null);
+  }
+  return out as T;
+}

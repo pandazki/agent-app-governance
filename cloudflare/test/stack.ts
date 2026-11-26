@@ -15,6 +15,7 @@ import type { PageModel } from "../../local/src/page-model";
 import { assetType } from "../../local/src/page-views";
 import { loadPageAssets } from "../../local/src/page";
 import { FAKE_TOKEN, FakePlane } from "./fake-plane";
+import { planeListing, RUNTIME_KEY } from "../worker/runtime-check";
 
 // The whole edition on one machine, without Cloudflare: the Worker's gateway (worker/gateway.ts) on a local port,
 // each app's Durable Object as a queue that runs worker/folders.ts, R2 as a map with etags and conditional writes,
@@ -50,6 +51,10 @@ export class MemoryBucket implements FolderBucket {
 
   async list(prefix: string): Promise<{ key: string; etag: string }[]> {
     return [...this.objects.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, value]) => ({ key, etag: value.etag }));
+  }
+
+  async delete(keys: readonly string[]): Promise<void> {
+    for (const key of keys) this.objects.delete(key);
   }
 
   write(key: string, bytes: Uint8Array): void {
@@ -255,6 +260,15 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
           folderEtag: async (app) => bucket.objects.get(folderKey(app))?.etag ?? null,
         },
         waitUntil: (work) => void work.catch(() => {}),
+        // The listing of every app on the plane, kept in the bucket as the Worker keeps it in R2.
+        runtime: {
+          read: async () => {
+            const found = bucket.objects.get(RUNTIME_KEY);
+            return found ? JSON.parse(new TextDecoder().decode(found.bytes)) : null;
+          },
+          list: () => planeListing(plane.origin, FAKE_TOKEN, plane.fetch),
+          write: async (listing) => void (await bucket.put(RUNTIME_KEY, JSON.stringify(listing))),
+        },
         ...(options.now ? { now: options.now } : {}),
         ...(hostUrl ? { hostUrl } : {}),
       });

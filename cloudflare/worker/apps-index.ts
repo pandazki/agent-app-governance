@@ -106,6 +106,22 @@ export async function putInIndex(bucket: FolderBucket, app: string, entry: Index
   return false;
 }
 
+/** After the app's objects were deleted (clearing it): its entry out of the index, as putInIndex puts one in. */
+export async function dropFromIndex(bucket: FolderBucket, app: string): Promise<boolean> {
+  for (let attempt = 0; attempt < TRIES; attempt++) {
+    if (attempt) await pause(5 + Math.random() * 20 * attempt);
+    try {
+      const found = await readIndex(bucket);
+      // None, or of another shape: the next reader builds it whole from the listing, where the app no longer is.
+      if (!found?.index || !(app in found.index.apps)) return true;
+      const apps = { ...found.index.apps };
+      delete apps[app];
+      if (await putIndex(bucket, apps, found.etag)) return true;
+    } catch {}
+  }
+  return false;
+}
+
 /**
  * The summaries the list of apps shows, as R2 has them now. `steps` gets how long each part took: `r2-list` and
  * `r2-index` (side by side), and `r2-summaries` when some summary had to be read itself. When the index differed, it is

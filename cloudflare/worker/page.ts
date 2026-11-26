@@ -1,5 +1,7 @@
 import { appModel, assetType, backModel, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
 import { asOf, peekView, readPlan, readView, serverTiming, warm, type Peek } from "./views";
+import { restated } from "../../host/src/lifecycle";
+import { currentListing } from "./runtime-check";
 import type { PageModel } from "../../local/src/page-model";
 import { chooseLang } from "../../local/src/page-words";
 import { APP_NAME, CHANNEL_HEADER, OWNER_SUBJECT, PAGE_CHANNEL } from "../src/protocol";
@@ -54,7 +56,8 @@ export const PAGE_SESSION_PREFIX = "apc_";
 /** The header a write in a session carries the session's own token in. */
 export const CSRF_HEADER = "x-appgov-csrf";
 const MAX_PAGE_BODY = 16 * 1024;
-const DONE = new Set(["live", "live_marked", "no", "back", "back_marked"]);
+const OWNER_LIFECYCLE = new Set(["take-down", "bring-back", "publish-again", "clear"]);
+const DONE = new Set(["live", "live_marked", "no", "back", "back_marked", "down", "up", "again", "cleared", "cleared_kept"]);
 const VERSION = /^v\d+$/;
 const CHANGE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
@@ -195,12 +198,14 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
   // list the app (a made-up name reaches no container).
   const peeked: Promise<Peek> | null = session && shape && APP_NAME.test(name) ? peekView(deps, name, steps) : null;
   const listed = Date.now();
+  // What PneumaSpace says about every app, from the listing kept beside the views: asked for again now on "Check now"
+  // (`?check=1`), meanwhile when it is old (worker/runtime-check.ts).
+  const checking = session ? currentListing(deps.runtime, { check: url.searchParams.get("check") === "1", ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}), ...(deps.now ? { now: deps.now } : {}), timing: steps }) : null;
   // A summary saved by a build before summaries named the owner gets the subject every app here is created with.
-  const summaries = session
-    ? ((await deps.summaries(steps))
-        .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? "")))
-        .map((s) => ("error" in s || typeof s.owner === "string" ? s : { ...s, owner: OWNER_SUBJECT })) as unknown as Overview["summaries"])
-    : [];
+  const [stored, check] = session ? await Promise.all([deps.summaries(steps), checking!]) : [[] as unknown[], null];
+  const summaries = stored
+    .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? "")))
+    .map((s) => restated("error" in s || typeof s.owner === "string" ? s : { ...s, owner: OWNER_SUBJECT }, String(s.app_id), check?.listing)) as unknown as Overview["summaries"];
   if (session) steps.summaries = Date.now() - listed;
   const space = page.spaceOrigin ? `${page.spaceOrigin.replace(/\/+$/, "")}/` : undefined;
   const ctx: PageContext = {
@@ -217,6 +222,8 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
     ...(page.manager ? { manager: page.manager } : {}),
     access: { kind: "session", csrf: session ? await csrfToken(session) : "" },
     appsSignIn: true,
+    // What the page says PneumaSpace said is from stored facts: it says when, and "Check now" asks again.
+    runtimeCheck: { href: `${url.pathname}?check=1${url.searchParams.get("lang") ? `&lang=${url.searchParams.get("lang")}` : ""}`, failed: check?.failed ?? null },
   };
   // Without a session: the sign-in view, whatever was asked for, and nothing else.
   if (!session) return html(401, signInModel(ctx, "/owner/signin"));
@@ -239,7 +246,7 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
     const again = await readView(deps, name, self, { kind: "owner" }, {});
     if (again.ok) viewed = again;
   }
-  const status = asOf(viewed.view.status, ctx.now);
+  const status = restated(asOf(viewed.view.status, ctx.now), name, check?.listing);
   const appStatus = status as unknown as Parameters<typeof appModel>[1];
   const kept = viewed.view.history as unknown as Parameters<typeof appModel>[2];
   // The risks this mode's standing rule lets through, as the container reports them with status.
@@ -308,6 +315,10 @@ async function write(request: Request, url: URL, deps: GatewayDeps, session: str
   let res: Response;
   if (parts.length === 6 && parts[3] === "changes" && CHANGE_ID.test(parts[4]!) && ["approve", "deny", "preview"].includes(parts[5]!)) {
     res = await asOwner(`/apps/${name}/changes/${parts[4]}/${parts[5]}`, parts[5] === "deny" && reason ? { reason } : {});
+  } else if (parts.length === 4 && OWNER_LIFECYCLE.has(parts[3]!)) {
+    // Taking the app down, bringing it back, publishing it again, clearing it (with the name typed): from the app's details.
+    const body = { ...(reason ? { reason } : {}), ...(parts[3] === "clear" ? { confirm: typeof input.confirm === "string" ? input.confirm : "" } : {}) };
+    res = await forward(deps, name, parts[3] === "clear" ? "clear" : "write", { kind: "owner" }, self, `/apps/${name}/${parts[3]}`, "POST", JSON.stringify(body), { [CHANNEL_HEADER]: PAGE_CHANNEL });
   } else if (parts.length === 4 && parts[3] === "undo") {
     if (typeof input.to !== "string" || !VERSION.test(input.to)) return refuse(400, "bad_version", "to must be a version name, e.g. v3");
     // Going back is tied to the plan the page showed: the version it started from comes with the click.

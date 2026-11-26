@@ -15,6 +15,7 @@ export const UI_KEYS = [
   "working", "failed", "not_released", "why_other", "preview_again_working", "preview_open_hint", "checked_title", "why_title", "back_undoes", "data_title", "back_go", "back_current", "back_not_earlier",
   "theme_light", "theme_dark", "language",
   "signin_title", "signin_lead", "signin_where", "signin_key", "signin_go", "signin_wrong", "signin_limited", "sign_out", "owner_signed_out", "loading",
+  "take_down", "bring_back", "publish_again", "clear", "clear_go", "life_title", "clear_deletes", "clear_keeps", "down_title", "not_running", "check_now",
 ] as const;
 export type UiKey = (typeof UI_KEYS)[number];
 export type Ui = Readonly<Record<UiKey, string>>;
@@ -29,7 +30,8 @@ export type Tone = "neutral" | "green" | "orange" | "red" | "accent";
  *     this session's own token, which only a page served to this session holds.
  */
 export type OwnerAccess = { readonly kind: "owner-link" } | { readonly kind: "session"; readonly csrf: string };
-export type AppState = "normal" | "waiting" | "not_live" | "uncertain" | "unpublished" | "unreadable";
+/** `down`: the owner took it down here; `removed`: taken down on PneumaSpace, not here; `gone`: PneumaSpace no longer has it; `unconfirmed`: PneumaSpace did not answer. */
+export type AppState = "normal" | "waiting" | "not_live" | "uncertain" | "unpublished" | "unreadable" | "down" | "removed" | "gone" | "unconfirmed";
 
 /** A moment, shown relative ("5 minutes ago") or absolute; the page keeps it current in the reader's time zone. */
 export interface Stamp {
@@ -155,7 +157,12 @@ export interface HomeModel extends Common {
   readonly view: "home";
   readonly waiting: readonly WaitingCard[];
   readonly problems: readonly Problem[];
+  /** Every app but those the owner took down. */
   readonly apps: readonly AppCard[];
+  /** The apps the owner took down, in their own collapsed section below the list; `show` labels it. */
+  readonly down: { readonly cards: readonly AppCard[]; readonly show: string };
+  /** When PneumaSpace last confirmed the states shown, where they come from stored facts, and how to ask again. */
+  readonly checked: Checked | null;
   readonly hint: Hint;
   readonly facts: readonly Fact[];
 }
@@ -185,6 +192,43 @@ export interface HistoryRow {
   readonly facts: readonly Fact[];
 }
 
+/** When PneumaSpace last confirmed what a view says about it: shown where the view is built from stored facts. */
+export interface Checked {
+  readonly text: Rich;
+  /** "Check now": asks PneumaSpace again and shows the view with its answer. */
+  readonly href: string | null;
+  /** The last asking did not answer: why, in one line. */
+  readonly failed: string | null;
+}
+
+export type LifeVerb = "take-down" | "bring-back" | "publish-again" | "clear";
+
+/** One of the owner's acts on whether the app is there, as the app's details offer it. */
+export interface LifeAction {
+  readonly verb: LifeVerb;
+  readonly label: string;
+  /** The write, on the owner page's own routes. */
+  readonly url: string;
+  /** Where the page goes once it went through. */
+  readonly done: string;
+  /** What it does, one line each, said before it is confirmed. */
+  readonly lines: readonly string[];
+  /** Clearing: what it deletes and what stays, exactly, and the name to type. */
+  readonly deletes?: readonly string[];
+  readonly keeps?: readonly string[];
+  readonly typeName?: string;
+  /** "Type the app's name, <name>, to clear it". */
+  readonly typeLabel?: string;
+  readonly variant: "accent" | "secondary";
+}
+
+/** Take down, bring back, publish again, clear: where the app's details are, open when the app is not there. */
+export interface LifeCard {
+  readonly body: string;
+  readonly actions: readonly LifeAction[];
+  readonly open: boolean;
+}
+
 export interface AppModel extends Common {
   readonly view: "app";
   readonly name: string;
@@ -196,6 +240,10 @@ export interface AppModel extends Common {
   readonly address: string | null;
   readonly addressText: string;
   readonly shot: Shot;
+  /** PneumaSpace serves the app; when not, the view says "Not running" and offers nothing to open. */
+  readonly serving: boolean;
+  readonly checked: Checked | null;
+  readonly life: LifeCard | null;
   readonly notices: readonly Notice[];
   readonly waiting: readonly { readonly intent: string; readonly href: string }[];
   readonly history: readonly HistoryRow[];

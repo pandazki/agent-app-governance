@@ -669,3 +669,65 @@ describe("the owner page: how it is served", () => {
     expect(json(model)).not.toContain("renamed");
   });
 });
+
+describe("whether the app is there, on the page", () => {
+  test("an app the owner took down sits in its own collapsed section, with nothing to open, and its page offers bring back and clear", async () => {
+    await host.create("todo");
+    await host.create("notes");
+    await host.takeDown("notes", { subject: "user:me", channel: "owner-page" });
+    const { ctx, overview } = await context();
+    const home = homeModel(overview, ctx);
+    expect(home.apps.map((card) => card.name)).toEqual(["todo"]);
+    expect(home.down).toMatchObject({ show: "Show the app you took down", cards: [{ name: "notes", state: "down", stateLabel: "Taken down", address: null }] });
+    // Every view here asks PneumaSpace as it is built: no age to show, nothing to check again.
+    expect(home.checked).toBeNull();
+    const homeHtml = draw(home, "yes");
+    expect(homeHtml).toContain("Taken down");
+    expect(homeHtml).toContain("Show the app you took down");
+
+    const app = appModel("notes", await host.status("notes"), host.history("notes"), { ...ctx, path: "/app/notes" });
+    expect(app).toMatchObject({ state: "down", serving: false, address: null, checked: null, life: { open: true } });
+    expect(app.notices[0]!.text).toMatch(/^You took this app down on /);
+    const clear = app.life!.actions.find((action) => action.verb === "clear")!;
+    // The local gateway may purge: clearing says it deletes the app on PneumaSpace with its data.
+    expect(clear).toMatchObject({
+      deletes: ["This Host's record of notes: its versions, its history, and the changes waiting for you, with their previews.", "notes on PneumaSpace, with all its stored data. This can't be undone."],
+      keeps: ["The working copies your agents hold: they stay where they are, and can no longer send changes."],
+      typeName: "notes",
+      typeLabel: "Type the app's name, notes, to clear it",
+      url: "/owner/apps/notes/clear",
+    });
+    expect(app.life!.actions.map((action) => action.verb)).toEqual(["clear", "bring-back"]);
+    const appHtml = draw(app, "yes");
+    expect(appHtml).toContain("Not running");
+    expect(appHtml).toContain("Take down or clear");
+    expect(appHtml).not.toContain("Open the app");
+  });
+
+  test("an app that vanished leads with it in both languages, and a waiting change cannot go live", async () => {
+    await host.create("todo");
+    edit("todo", "src/server.ts", "export const sql = 'DROP TABLE todos';\n");
+    const waiting = await host.submit({ name: "todo", intent: "start over", agent: "codex" });
+    space.vanish("todo");
+    for (const lang of ["en", "zh"] as const) {
+      const { ctx, overview } = await context(lang);
+      const status = await host.status("todo");
+      const card = homeModel(overview, ctx).apps[0]!;
+      expect(card.state).toBe("gone");
+      const app = appModel("todo", status, host.history("todo"), { ...ctx, path: "/app/todo" });
+      expect(app.notices[0]!.tone).toBe("red");
+      expect(app.notices[0]!.text).toContain(lang === "en" ? "This app is not on PneumaSpace." : "这个应用不在 PneumaSpace 上。");
+      expect(app.life!.actions.map((action) => action.label)).toEqual(lang === "en" ? ["Clear", "Publish again"] : ["清除", "重新发布"]);
+      const change = changeModel("todo", status, waiting.change_id, ctx);
+      expect(change.decision.blocked).toContain(lang === "en" ? "PneumaSpace no longer has this app" : "PneumaSpace 上已经没有这个应用");
+    }
+  });
+
+  test("a running app offers only taking it down, inside its details", async () => {
+    await host.create("todo");
+    const { ctx } = await context();
+    const app = appModel("todo", await host.status("todo"), host.history("todo"), { ...ctx, path: "/app/todo" });
+    expect(app).toMatchObject({ state: "normal", serving: true, life: { open: false } });
+    expect(app.life!.actions.map((action) => [action.verb, action.variant])).toEqual([["take-down", "secondary"]]);
+  });
+});

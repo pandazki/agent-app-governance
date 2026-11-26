@@ -1,6 +1,8 @@
 import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
 import { isPageRequest, servePage, type PageDeps } from "./page";
 import { asOf, readView, serverTiming, type ViewStore } from "./views";
+import { restated } from "../../host/src/lifecycle";
+import { currentListing, type RuntimeDeps } from "./runtime-check";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -89,6 +91,8 @@ export interface GatewayDeps {
   readonly views?: ViewStore;
   /** Keeps work going after the answer is out (a container started ahead of a decision); without it, none is started. */
   readonly waitUntil?: (work: Promise<unknown>) => void;
+  /** The listing of every app on PneumaSpace the reads restate stored facts with (worker/runtime-check.ts); without it, the stored facts alone. */
+  readonly runtime?: RuntimeDeps;
 }
 
 export const SESSION_PREFIX = "aps_";
@@ -185,21 +189,32 @@ function parseObject(text: string): Record<string, unknown> {
 }
 
 /** The kind of Durable Object operation a request about an app is, or null when no such route exists. */
-export function appOperation(method: string, rest: readonly string[]): "read" | "write" | "container" | null {
+export function appOperation(method: string, rest: readonly string[]): "read" | "write" | "clear" | "container" | null {
   if (method === "GET" && (rest.length === 0 || (rest.length === 1 && (rest[0] === "history" || rest[0] === "folder")))) return "read";
   if (method === "GET" && rest.length === 2 && rest[0] === "undo-plan") return "read";
-  if (method === "POST" && rest.length === 1 && ["changes", "undo", "discard"].includes(rest[0]!)) return "write";
+  if (method === "POST" && rest.length === 1 && ["changes", "undo", "discard", "take-down", "bring-back", "publish-again"].includes(rest[0]!)) return "write";
+  // Clearing ends with the app's objects deleted instead of its folder saved (worker/folders.ts).
+  if (method === "POST" && rest.length === 1 && rest[0] === "clear") return "clear";
   if (method === "POST" && rest.length === 3 && rest[0] === "changes" && ["approve", "deny", "preview"].includes(rest[2]!)) return "write";
   if (rest.length === 1 && rest[0] === "container" && method === "GET") return "container";
   if (rest.length === 2 && rest[0] === "container" && rest[1] === "stop" && method === "POST") return "container";
   return null;
 }
 
+/** Taking an app down, bringing it back, publishing it again and clearing it: the owner's, never an agent token's. */
+const OWNER_LIFECYCLE: Readonly<Record<string, string>> = {
+  "take-down": "Taking an app down",
+  "bring-back": "Bringing an app back",
+  "publish-again": "Publishing an app again",
+  clear: "Clearing an app",
+};
+
 /** Whether `principal` may make this request about an app; the reason it may not, otherwise. */
 export function ownerOnly(rest: readonly string[], body: Record<string, unknown>): string | null {
   if (rest[0] === "changes" && (rest[2] === "approve" || rest[2] === "deny")) return rest[2] === "approve" ? "Approving a change" : "Denying a change";
   if (rest[0] === "undo" && body.accept_one_way === true) return "Going back past a one-way change";
   if (rest[0] === "container") return "Looking at or stopping the Host's container";
+  if (rest.length === 1 && OWNER_LIFECYCLE[rest[0]!]) return OWNER_LIFECYCLE[rest[0]!]!;
   return null;
 }
 
@@ -284,7 +299,12 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
 
   if (parts[0] !== "apps") return refuse(404, "not_found", "not found");
 
-  if (parts.length === 1 && method === "GET") return json({ governance: deps.governance, apps: await deps.summaries() });
+  if (parts.length === 1 && method === "GET") {
+    // Each summary says what PneumaSpace said when it was saved; a newer listing of all apps restates it, and the answer says when that was.
+    const [summaries, check] = await Promise.all([deps.summaries(), currentListing(deps.runtime, { check: url.searchParams.get("check") === "1", ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}), ...(deps.now ? { now: deps.now } : {}) })]);
+    const apps = summaries.map((s) => (typeof s === "object" && s !== null && typeof (s as { app_id?: unknown }).app_id === "string" ? restated(s as Record<string, unknown>, (s as { app_id: string }).app_id, check.listing) : s));
+    return json({ governance: deps.governance, apps, runtime_check: { checked_at: check.listing?.checked_at ?? null, failed: check.failed } });
+  }
 
   if (parts.length === 1 && method === "POST") {
     const text = await readText(request);
@@ -304,7 +324,10 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
   if (op === "read" && (rest.length === 0 || (rest.length === 1 && rest[0] === "history"))) {
     const steps: Record<string, number> = {};
-    const viewed = await readView(deps, name, self, principal, steps);
+    const [viewed, check] = await Promise.all([
+      readView(deps, name, self, principal, steps),
+      rest.length === 0 ? currentListing(deps.runtime, { check: url.searchParams.get("check") === "1", ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}), ...(deps.now ? { now: deps.now } : {}), timing: steps }) : null,
+    ]);
     // Where the time of a read went, in the Worker: each R2 read, and the container when the stored view was not usable.
     const header = { "server-timing": serverTiming(steps, viewed.ok ? viewed.source : undefined) };
     if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status, header);
@@ -317,7 +340,8 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
       return out;
     }
     const timing = { centre: { view: viewed.ms }, view: viewed.source };
-    return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing }, 200, header);
+    const status = () => ({ ...restated(asOf(viewed.view.status, now), name, check?.listing), ...(check?.failed ? { runtime_check_failed: check.failed } : {}), timing });
+    return json(rest.length === 0 ? status() : { history: viewed.view.history, timing }, 200, header);
   }
   return forward(deps, name, op, principal, self, url.pathname, method, text);
 }

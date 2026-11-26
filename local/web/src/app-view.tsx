@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { buttonVariants } from "../beautifui/atoms/Button";
 import TaskRows, { TaskDetail, TaskPill, type TaskRow, type TaskStatus } from "../beautifui/primitives/TaskRows";
-import { FileChips, InlineChip } from "../beautifui/primitives/ToolChips";
+import { Collapsible, FileChips, InlineChip } from "../beautifui/primitives/ToolChips";
 import { Section, Surface } from "../beautifui/site";
 import { fill, useUi } from "./lib";
 import type { AppModel, HistoryRow, RowBadge, Tone } from "./model";
 import { noticeRow } from "./change-view";
-import { ArrowOut, ButtonLink, Details, DetailsBlock, Header, HintCard, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
+import { ArrowOut, ButtonLink, Details, Header, HintCard, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
+import { CheckedLine, LifeBlock } from "./life-view";
 
 const BADGE_STATUS: Record<RowBadge, TaskStatus> = { done: "done", failed: "failed", waiting: "waiting", plain: "plain", undo: "undo" };
 const TONE_TEXT: Record<Tone, string> = { green: "text-green", red: "text-red", orange: "text-orange", neutral: "text-ink-2", accent: "text-accent-ink" };
@@ -104,7 +105,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
           </Surface>
         </Section>
       )}
-      <Section number={number()} title={ui.running_now} note={model.shot.taken ? <RichText rich={model.shot.taken} /> : undefined} index={2}>
+      <Section number={number()} title={model.serving ? ui.running_now : ui.not_running} note={model.shot.taken ? <RichText rich={model.shot.taken} /> : undefined} index={2}>
         <Surface className="flex flex-col gap-3">
           <div className="mx-auto w-full max-w-[720px] overflow-hidden rounded-card bg-surface shadow-card">
             <div className={`primitive-card-bar flex items-center gap-2 ${model.picturesNever ? "" : "border-b border-line"}`}>
@@ -129,7 +130,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
                 <Picture shot={model.shot} name={model.name} />
               </a>
             ) : (
-              <Picture shot={model.shot} name={model.name} />
+              <Picture shot={model.shot} name={model.name} className={model.serving ? "" : "opacity-60 grayscale"} />
             )}
           </div>
           {model.address && model.opensElsewhere && (
@@ -142,6 +143,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
               <TaskRows rows={model.notices.map(noticeRow)} />
             </div>
           )}
+          {model.checked && <CheckedLine checked={model.checked} />}
         </Surface>
       </Section>
       <Section number={number()} title={ui.history_title} note={model.history.length ? String(model.history.length) : undefined} index={3}>
@@ -171,7 +173,15 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
           </div>
         </Surface>
       </Section>
-      <DetailsBlock facts={model.facts} />
+      {/* Taking the app down and clearing it are not everyday acts: they sit with the app's details, open while it is not there. */}
+      <div className="flex flex-col gap-1.5 px-5 py-6 sm:px-8 sm:py-8">
+        {model.life && (
+          <Collapsible label={ui.life_title} defaultOpen={model.life.open}>
+            <LifeBlock life={model.life} />
+          </Collapsible>
+        )}
+        <Details facts={model.facts} />
+      </div>
     </>
   );
 }

@@ -10,10 +10,13 @@ import type {
   AppState,
   BackModel,
   ChangeModel,
+  Checked,
   CheckRow,
   Fact,
   HistoryRow,
   HomeModel,
+  LifeAction,
+  LifeCard,
   MissingModel,
   Notice,
   OwnerAccess,
@@ -154,7 +157,7 @@ export interface PageContext {
   /** Every app, for search and for each app's plain state. */
   readonly apps: readonly AppSummary[];
   /** Set after one of the page's own decisions went through: the view says so once. `_marked`: it also made this Host the app's manager on PneumaSpace. */
-  readonly done?: "live" | "live_marked" | "no" | "back" | "back_marked";
+  readonly done?: "live" | "live_marked" | "no" | "back" | "back_marked" | "down" | "up" | "again" | "cleared" | "cleared_kept";
   readonly governance?: string;
   readonly governanceNote?: string;
   readonly dataSnapshot?: string | null;
@@ -174,6 +177,11 @@ export interface PageContext {
   readonly historyMore?: number;
   /** An app's view shows its whole history at once, every row open to scroll. */
   readonly historyAll?: boolean;
+  /**
+   * What the view says PneumaSpace said comes from stored facts (the Cloudflare edition): `href` asks again now ("Check
+   * now"), `failed` says why the last asking did not answer. Without it, every view asked PneumaSpace as it was built.
+   */
+  readonly runtimeCheck?: { readonly href: string; readonly failed: string | null };
 }
 
 // The record and the waiting changes come from files an agent can write: any field may be missing or of another type.
@@ -249,16 +257,145 @@ function guarded<T>(build: () => T, fallback: T): T {
 /** One plain state per app, the most pressing first. */
 export function appState(summary: AppSummary): AppState {
   if ("error" in summary) return "unreadable";
+  // Whether the app is there leads: a change waiting for an app that is not there cannot go live anyway.
+  const standing = str((summary as { standing?: unknown }).standing);
+  if (standing === "down") return "down";
+  if (standing === "removed_elsewhere") return "removed";
+  if (standing === "vanished") return "gone";
   if (items(summary.pending).length) return "waiting";
   if (summary.serving_uncertain) return "uncertain";
   if (summary.serves_other_version) return "not_live";
   if (!summary.active_version) return "unpublished";
   const last = summary.last_change;
   if (last && (last.outcome === "rejected" || last.outcome === "release_failed")) return "not_live";
+  if (standing === "unconfirmed") return "unconfirmed";
   return "normal";
 }
 
-const STATE_TONE: Record<AppState, Tone> = { normal: "green", waiting: "orange", not_live: "red", uncertain: "neutral", unpublished: "neutral", unreadable: "neutral" };
+const STATE_TONE: Record<AppState, Tone> = {
+  normal: "green",
+  waiting: "orange",
+  not_live: "red",
+  uncertain: "neutral",
+  unpublished: "neutral",
+  unreadable: "neutral",
+  down: "neutral",
+  removed: "orange",
+  gone: "red",
+  unconfirmed: "neutral",
+};
+
+// --- whether the app is there ----------------------------------------------------
+
+/** What status or a summary says about the app's being there (host/src/lifecycle.ts), as far as the page reads it. */
+interface Presence {
+  /** Null from a Host from before these fields: the page says nothing about it, as before. */
+  readonly standing: "running" | "down" | "removed_elsewhere" | "vanished" | "unconfirmed" | null;
+  readonly runtime: { readonly state: string; readonly checked_at: string; readonly note: string } | null;
+  readonly down: { readonly at: string; readonly by: string } | null;
+  readonly choices: { readonly take_down: boolean; readonly bring_back: boolean; readonly publish_again: boolean; readonly clear: boolean } | null;
+  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[] } | null;
+}
+
+const STANDINGS = ["running", "down", "removed_elsewhere", "vanished", "unconfirmed"] as const;
+
+function presenceOf(status: unknown): Presence {
+  const s = (typeof status === "object" && status !== null ? status : {}) as Record<string, unknown>;
+  const obj = (value: unknown) => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
+  const runtime = obj(s.runtime);
+  const down = obj(s.taken_down);
+  const choices = obj(s.choices);
+  const clearing = obj(s.clearing);
+  return {
+    standing: (STANDINGS as readonly unknown[]).includes(s.standing) ? (s.standing as Presence["standing"]) : null,
+    runtime: runtime && typeof runtime.state === "string" ? { state: runtime.state, checked_at: str(runtime.checked_at), note: str(runtime.note) } : null,
+    down: down ? { at: str(down.at), by: str(down.by) } : null,
+    choices: choices ? { take_down: choices.take_down === true, bring_back: choices.bring_back === true, publish_again: choices.publish_again === true, clear: choices.clear === true } : null,
+    clearing: clearing ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean) } : null,
+  };
+}
+
+/** Whether PneumaSpace serves the app, as far as anyone knows: also when it did not answer and nothing says otherwise. */
+const servesNow = (p: Presence) => p.standing === null || p.standing === "running" || p.standing === "unconfirmed" || (p.standing === "down" && p.runtime?.state === "serving");
+
+/** The one notice that leads an app's view while it is not running, or PneumaSpace did not answer. */
+function presenceNotice(ctx: PageContext, status: AppStatus): Notice | null {
+  const w = wordsFor(ctx.lang, ctx.access);
+  const p = presenceOf(status);
+  if (p.standing === "down") {
+    if (p.runtime?.state === "serving") return { tone: "orange", text: w.life_body_back_elsewhere };
+    const vars = { who: agentWords(w, p.down?.by, status.owner), when: absoluteTime(ctx.lang, p.down?.at) };
+    const text = fill(p.runtime?.state === "gone" ? w.life_notice_down_gone : w.life_notice_down, vars);
+    // "you took ..." opens the sentence.
+    return { tone: p.runtime?.state === "gone" ? "red" : "neutral", text: text.charAt(0).toUpperCase() + text.slice(1) };
+  }
+  if (p.standing === "removed_elsewhere") return { tone: "orange", text: w.life_notice_removed };
+  if (p.standing === "vanished") return { tone: "red", text: w.life_notice_gone };
+  if (p.standing === "unconfirmed") return { tone: "neutral", text: w.life_notice_unconfirmed };
+  return null;
+}
+
+/** What blocks letting a change go live (`decide`) or going back (`back`) while the app is not there; null otherwise. */
+function presenceBlock(w: Words, status: AppStatus, what: "decide" | "back"): string | null {
+  const standing = presenceOf(status).standing;
+  const key = standing === "down" ? "down" : standing === "removed_elsewhere" ? "removed" : standing === "vanished" ? "gone" : null;
+  if (!key) return null;
+  return w[what === "decide" ? (`blocked_${key}` as const) : (`back_blocked_${key}` as const)];
+}
+
+/** When PneumaSpace last confirmed it, where the view is built from stored facts (`ctx.runtimeCheck`); null where every view asks as it is built. */
+function checkedOf(ctx: PageContext, at: string | null | undefined): Checked | null {
+  if (!ctx.runtimeCheck || !at) return null;
+  const w = wordsFor(ctx.lang, ctx.access);
+  return { text: rich(ctx, w.checked_at, {}, { when: { iso: at, mode: "rel" } }), href: ctx.runtimeCheck.href, failed: ctx.runtimeCheck.failed ? fill(w.check_failed, { why: ctx.runtimeCheck.failed }) : null };
+}
+
+/** What PneumaSpace said, for Details. */
+function presenceFact(ctx: PageContext, p: Presence): Fact | null {
+  if (!p.runtime) return null;
+  const w = wordsFor(ctx.lang, ctx.access);
+  const when = absoluteTime(ctx.lang, p.runtime.checked_at);
+  const template = p.runtime.state === "serving" ? w.d_presence_serving : p.runtime.state === "removed" ? w.d_presence_removed : p.runtime.state === "gone" ? w.d_presence_gone : w.d_presence_unknown;
+  return { label: w.d_presence, value: fill(template, { when, why: p.runtime.note }) };
+}
+
+/** Take down, bring back, publish again and clear, as the owner may now, each with what it does said first. */
+function lifeCard(ctx: PageContext, name: string, status: AppStatus): LifeCard | null {
+  const w = wordsFor(ctx.lang, ctx.access);
+  const p = presenceOf(status);
+  if (!p.choices || !p.standing) return null;
+  const version = str(status.active_version);
+  const url = (verb: string) => `/owner/apps/${name}/${verb}`;
+  const back = (done: string) => link(`/app/${name}?done=${done}`, ctx.lang);
+  const removed = p.runtime?.state === "removed";
+  const gone = p.runtime?.state === "gone";
+  const actions: LifeAction[] = [];
+  // Clearing is offered only with what it would delete and keep, which a Host from before these fields does not say.
+  if (p.choices.clear && p.clearing) {
+    const deletes = [fill(w.clear_del_record, { name }), ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : [])];
+    const keeps = [
+      ...(removed && !p.clearing.purges ? [fill(w.clear_keep_space, { name })] : []),
+      ...(gone ? [fill(w.clear_keep_none, { name })] : []),
+      ...(p.clearing.snapshots.length ? [fill(w.clear_keep_snapshots, { name, refs: p.clearing.snapshots.join(", ") })] : []),
+      w.clear_keep_copies,
+    ];
+    actions.push({ verb: "clear", label: w.clear, url: url("clear"), done: link(`/?done=${removed && !p.clearing.purges ? "cleared_kept" : "cleared"}`, ctx.lang), lines: [], deletes, keeps, typeName: name, typeLabel: fill(w.clear_type, { name }), variant: "secondary" });
+  }
+  if (p.choices.take_down) actions.push({ verb: "take-down", label: w.take_down, url: url("take-down"), done: back("down"), lines: [w.life_take_down_1, w.life_take_down_2, w.life_take_down_3], variant: "secondary" });
+  if (p.choices.publish_again) actions.push({ verb: "publish-again", label: w.publish_again, url: url("publish-again"), done: back("again"), lines: [fill(w.life_publish_again_1, { version }), w.life_publish_again_2], variant: "accent" });
+  if (p.choices.bring_back) actions.push({ verb: "bring-back", label: w.bring_back, url: url("bring-back"), done: back("up"), lines: [fill(w.life_bring_back_1, { version })], variant: "accent" });
+  const body =
+    p.runtime?.state === "unknown"
+      ? w.life_body_unknown
+      : p.standing === "running"
+        ? w.life_body_running
+        : p.standing === "down" && p.runtime?.state === "serving"
+          ? w.life_body_back_elsewhere
+          : gone
+            ? fill(w.life_body_gone, { version })
+            : w.life_body_kept;
+  return { body, actions, open: !servesNow(p) };
+}
 
 function stateWords(w: Words, state: AppState): string {
   return w[`state_${state}`];
@@ -376,9 +513,25 @@ function uiWords(w: Words): Ui {
 }
 
 /** The Host's refusals a write from the page can meet, each with its sentence (refuse_<code>). */
-const REFUSAL_CODES = ["preview_gone", "preview_unknown", "managed_elsewhere", "serving_uncertain", "malformed_pending", "previews_off", "preview_failed", "preview_refused", "draft_changed_after_check", "crosses_one_way_change", "plan_changed"] as const;
+const REFUSAL_CODES = [
+  "preview_gone", "preview_unknown", "managed_elsewhere", "serving_uncertain", "malformed_pending", "previews_off", "preview_failed", "preview_refused", "draft_changed_after_check", "crosses_one_way_change", "plan_changed",
+  "app_down", "app_removed_elsewhere", "app_vanished", "clear_running", "confirm_name", "owner_required", "space_unknown",
+] as const;
+/** The Host's refusal of an act on whether the app is there that no longer fits where it is: one sentence for all. */
+const CANNOT_CODES = ["cannot_take_down", "cannot_bring_back", "cannot_publish_again", "cannot_clear"] as const;
 
-const DONE_WORDS = { live: "done_live", live_marked: "done_live_marked", no: "done_no", back: "done_back", back_marked: "done_back_marked" } as const;
+const DONE_WORDS = {
+  live: "done_live",
+  live_marked: "done_live_marked",
+  no: "done_no",
+  back: "done_back",
+  back_marked: "done_back_marked",
+  down: "done_down",
+  up: "done_up",
+  again: "done_again",
+  cleared: "done_cleared",
+  cleared_kept: "done_cleared_kept",
+} as const;
 
 const REASON_CODES = ["verify_failed", "preview_refused", "protected_file_changed", "outside_writable_roots", "no_change", "draft_changed_after_check", "base_changed", "invalid_manifest", "publish_failed", "published_unhealthy", "data_snapshot_failed", "record_failed", "agent_failed", "data_snapshot_refused", "data_restore_failed", "unhealthy_after_data_restore"];
 
@@ -388,12 +541,12 @@ function common(ctx: PageContext, title: string) {
     lang: ctx.lang,
     ui: uiWords(w),
     reasons: Object.fromEntries(REASON_CODES.map((code) => [code, reasonWords(w, code)])),
-    refusals: Object.fromEntries(REFUSAL_CODES.map((code) => [code, w[`refuse_${code}`]])),
+    refusals: Object.fromEntries([...REFUSAL_CODES.map((code) => [code, w[`refuse_${code}`]]), ...CANNOT_CODES.map((code) => [code, w.refuse_cannot_act])]),
     title,
     now: ctx.now,
     links: { home: link("/", ctx.lang), zh: link(ctx.path, "zh"), en: link(ctx.path, "en") },
     search: searchEntries(ctx),
-    ...(ctx.done ? { done: w[DONE_WORDS[ctx.done]] } : {}),
+    ...(ctx.done ? { done: fill(w[DONE_WORDS[ctx.done]], { console: ctx.consoleUrl ?? "PneumaSpace" }) } : {}),
     ownerOff: Boolean(ctx.ownerOff),
     picturesOn: ctx.pictures.enabled,
     picturesNever: Boolean(ctx.pictures.never),
@@ -467,7 +620,7 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
         })),
   );
 
-  const apps: AppCard[] = sorted.flatMap((summary) =>
+  const cards: AppCard[] = sorted.flatMap((summary) =>
     guarded<AppCard[]>(() => {
       const name = summary.app_id;
       const base = { name, title: appTitle(name), href: link(`/app/${name}`, ctx.lang) };
@@ -485,13 +638,19 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
           tone: STATE_TONE[state],
           meta: last ? rich(ctx, `${w.updated} · {who}`, { who: agentWords(w, last.agent, owners.get(name)) }, { when: { iso: last.at, mode: "rel" } }) : plain(w.never_changed),
           shot: shotOf(ctx, name, ctx.pictures.latest(name), liveKey(summary)),
-          address: safeHref(summary.address),
+          // Nothing to open while PneumaSpace does not serve it.
+          address: servesNow(presenceOf(summary)) ? safeHref(summary.address) : null,
           review: state === "waiting" && first ? link(`/app/${name}/change/${encodeURIComponent(str(first.change_id))}`, ctx.lang) : null,
           unreadable: null,
         },
       ];
     }, []),
   );
+  // The apps the owner took down sit apart, below the list; an app gone or taken down elsewhere stays in it, saying so.
+  const down = cards.filter((card) => card.state === "down");
+  const apps = cards.filter((card) => card.state !== "down");
+  // How old the oldest claim about PneumaSpace on the list is, where they come from stored facts.
+  const oldest = summaries.flatMap((summary) => ("error" in summary ? [] : [presenceOf(summary).runtime?.checked_at ?? ""])).filter(Boolean).sort()[0];
 
   const host = safeHref(ctx.hostUrl);
   const console = safeHref(ctx.consoleUrl);
@@ -501,6 +660,8 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
     waiting,
     problems,
     apps,
+    down: { cards: down, show: down.length === 1 ? w.down_show_one : fill(w.down_show_other, { n: down.length }) },
+    checked: checkedOf(ctx, oldest),
     hint: { body: w.hint_body, example: w.hint_new },
     facts: facts([
       { label: w.d_governance, value: ctx.governanceNote ? `${str(ctx.governance)}: ${str(ctx.governanceNote)}` : str(ctx.governance) },
@@ -516,7 +677,10 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
 
 // --- the history, as a person would tell it ------------------------------------
 
-type ItemKind = "created" | "change" | "waiting" | "stale" | "denied" | "rejected" | "not_live" | "undo" | "undo_failed" | "release" | "snapshot" | "other";
+type ItemKind = "created" | "change" | "waiting" | "stale" | "denied" | "rejected" | "not_live" | "undo" | "undo_failed" | "release" | "snapshot" | "life" | "other";
+
+/** The owner's take down, bring back and publish again, as the history records them (host/src/lifecycle.ts LIFECYCLE_KINDS). */
+const LIFE_KINDS: readonly string[] = ["take_down", "bring_back", "publish_again"];
 
 export interface TimelineItem {
   readonly id: string;
@@ -577,8 +741,9 @@ export function timeline(history: readonly HistoryEntry[], pendingIds: ReadonlyS
     let at = entries.length - 1;
     while (at > 0 && entries[at]!.kind === "snapshot") at--;
     const main = entries[at]!;
-    const kind: ItemKind =
-      main.kind === "snapshot"
+    const kind: ItemKind = LIFE_KINDS.includes(str(main.kind))
+      ? "life"
+      : main.kind === "snapshot"
         ? "snapshot"
         : main.kind === "restore"
           ? main.outcome === "rolled_back"
@@ -714,6 +879,8 @@ function itemTitle(w: Words, item: TimelineItem, history: readonly HistoryEntry[
     }
     case "snapshot":
       return w.item_snapshot;
+    case "life":
+      return item.main.kind === "take_down" ? w.item_take_down : item.main.kind === "bring_back" ? w.item_bring_back : w.item_publish_again;
     default:
       return intent ? quoted(intent) : w.item_created;
   }
@@ -790,7 +957,8 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
   const canGoBack = m.goBack.has(item.id);
   const stand = itemStanding(ctx, item, status.owner, history);
   const pill =
-    m.live === item.id
+    // "Running now" only while PneumaSpace serves it: a version the app was on when it was taken down runs nowhere.
+    m.live === item.id && servesNow(presenceOf(status))
       ? { label: w.running_now, tone: "green" as Tone }
       : item.kind === "waiting"
         ? { label: w.waiting_for_you_pill, tone: "orange" as Tone }
@@ -801,7 +969,9 @@ function historyRow(ctx: PageContext, item: TimelineItem, name: string, status: 
             : ["rejected", "not_live", "undo_failed"].includes(item.kind)
               ? { label: w.not_live_pill, tone: "red" as Tone }
               : null;
-  const undoReason = item.kind === "undo" || item.kind === "undo_failed" ? str(main.intent) : "";
+  // The owner's reason, which the Host writes after the act's own words ("Take todo down: <reason>").
+  const lifeReason = item.kind === "life" ? str(main.intent).split(": ").slice(1).join(": ") : "";
+  const undoReason = item.kind === "undo" || item.kind === "undo_failed" ? str(main.intent) : lifeReason;
   // On a decision, `agent` is who decided and `author` the agent that made the change, which the entry submitting it names with its credential.
   const maker = main.author !== undefined ? { agent: main.author, credential: item.entries.find((entry) => entry !== main && entry.change_id === main.change_id && entry.credential !== undefined)?.credential } : { agent: main.agent, credential: main.credential };
   const standingRich: Rich | null = stand ? (typeof stand.text === "string" ? plain(stand.text) : stand.text) : null;
@@ -841,7 +1011,10 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
   const last = summary && !("error" in summary) ? summary.last_change : null;
   const pending = items<Record<string, unknown>>(status.pending);
   const uncommitted = items<string>(status.uncommitted);
-  const notices: Notice[] = situation(w, status);
+  const presence = presenceOf(status);
+  const serving = servesNow(presence);
+  const lead = presenceNotice(ctx, status);
+  const notices: Notice[] = [...(lead ? [lead] : []), ...situation(w, status)];
   const malformed = items(status.malformed_pending).map(str);
   for (const line of malformed) notices.push({ tone: "orange", text: fill(w.malformed_body, { file: `${PENDING_DIR}${malformedFile(line) || "?"}` }) });
   if (uncommitted.length) notices.push({ tone: "neutral", text: uncommitted.length === 1 ? w.working_here_one : fill(w.working_here_other, { n: uncommitted.length }) });
@@ -874,7 +1047,7 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
   } catch {
     historyError = w.item_unreadable;
   }
-  const address = safeHref(status.address);
+  const address = serving ? safeHref(status.address) : null;
   return {
     view: "app",
     ...common(ctx, title),
@@ -887,6 +1060,9 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
     address,
     addressText: str(status.address),
     shot: shotOf(ctx, name, ctx.pictures.latest(name), liveKey(status), true),
+    serving,
+    checked: checkedOf(ctx, presence.runtime?.checked_at),
+    life: guarded<LifeCard | null>(() => lifeCard(ctx, name, status), null),
     notices,
     waiting: pending.map((p) => ({ intent: quoted(p.intent), href: link(`/app/${name}/change/${encodeURIComponent(str(p.change_id))}`, ctx.lang) })),
     history,
@@ -903,6 +1079,8 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
       uncommitted.length ? { label: w.d_uncommitted, value: list(uncommitted), mono: true } : null,
       { label: w.d_governance, value: `${str(status.governance)}: ${str(status.governance_note)}` },
       { label: w.d_manager, value: managerOf(status).note },
+      presenceFact(ctx, presence),
+      presence.clearing ? { label: w.d_clearing, value: presence.clearing.purges ? w.d_clearing_purges : w.d_clearing_keeps } : null,
       ...malformed.map((line, i) => ({ label: i === 0 ? w.d_malformed : "", value: line })),
       { label: w.d_terminal, value: `${cli(`status ${name}`)} · ${cli(`history ${name}`)}`, mono: true },
     ]),
@@ -1024,7 +1202,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   // Approving is refused, in the Host's order, while an undo is unfinished, while another manager runs the app, and while no
   // preview stands; and it ends in "didn't go live" when the change was made on a version the app has since left.
   const behind = typeof pending.base_version === "string" && typeof status.active_version === "string" && pending.base_version !== status.active_version;
-  const blocked = undoUnfinished
+  const blocked = presenceBlock(w, status, "decide") ?? (undoUnfinished
     ? w.blocked_undo
     : manager.other
       ? fill(w.blocked_elsewhere, { manager: manager.other })
@@ -1034,7 +1212,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
           : w.blocked_preview
         : behind
           ? w.blocked_behind
-          : null;
+          : null);
 
   const signal = signalOf(w, checks);
   const signInDropped = risks.includes("policy_change");
@@ -1169,14 +1347,14 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     undone,
     data,
     check,
-    // The Host asks who runs the app before it looks at the working tree.
-    blocked: manager.other
+    // The Host asks whether the app is there, then who runs it, before it looks at the working tree.
+    blocked: presenceBlock(w, status, "back") ?? (manager.other
       ? fill(w.back_blocked_elsewhere, { manager: manager.other })
       : uncommitted.length
         ? uncommitted.length === 1
           ? w.back_blocked_one
           : fill(w.back_blocked_other, { n: uncommitted.length })
-        : null,
+        : null),
     marks: manager.unmanaged ? w.marks_back : null,
     accept: Boolean(plan.crossing),
     from: plan.from,

@@ -1339,3 +1339,74 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect(JSON.parse((await here(["list", "--json"])).stdout).apps.map((a: { app_id: string }) => a.app_id)).toContain("odd");
   });
 });
+
+describe("the owner's take-down, bring-back, publish-again and clear in a terminal", () => {
+  /** The CLI as the owner runs it in a terminal, answering each "Type ..." prompt with the next of `answers`. */
+  async function asOwner(cwd: string, args: string[], answers: string[]): Promise<{ code: number; out: string }> {
+    let out = "";
+    let answered = 0;
+    const child = Bun.spawn(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], {
+      cwd,
+      env: { PATH: process.env.PATH ?? "", APPGOV_HOST: hostUrl, APPGOV_AGENT: "codex" },
+      terminal: {
+        cols: 400,
+        rows: 50,
+        data(terminal, chunk) {
+          out += new TextDecoder().decode(chunk);
+          const asked = out.split("Type ").length - 1;
+          while (answered < asked && answered < answers.length) terminal.write(`${answers[answered++]}\r`);
+        },
+      },
+    });
+    const code = await child.exited;
+    return { code, out: out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r/g, "") };
+  }
+
+  test("each is refused without a terminal; in one, the owner types the word, and status and list lead with what it did", async () => {
+    await host.create("shelf");
+    const appDir = join(work, "apps", "shelf");
+    for (const verb of ["take-down", "bring-back", "publish-again", "clear"]) {
+      const piped = await cli(appDir, verb);
+      expect(piped.code).toBe(1);
+      expect(piped.output).toContain("must be run by a person in a terminal");
+    }
+    const down = await asOwner(appDir, ["take-down", "not now"], ["take-down"]);
+    expect(down.code).toBe(0);
+    expect(down.out).toContain("shelf is taken down");
+    expect(space.live.get("shelf")!.status).toBe("removed");
+    expect(host.history("shelf").at(-1)).toMatchObject({ kind: "take_down", intent: "Take shelf down: not now" });
+
+    const status = (await cli(appDir, "status")).output;
+    expect(status).toMatch(/^shelf: v1 \(not serving\)\nTAKEN DOWN: user:me took shelf down/);
+    expect((await cli(work, "list")).output).toMatch(/shelf +v1 {2}not serving\n {2}TAKEN DOWN/);
+
+    // Clearing asks for the app's name, after saying what goes and what stays; a wrong name changes nothing.
+    const wrong = await asOwner(work, ["clear", "shelf"], ["shelve"]);
+    expect(wrong.code).not.toBe(0);
+    expect(wrong.out).toContain("shelf on PneumaSpace, with all its stored data (purged): this cannot be undone");
+    expect(wrong.out).toContain("not confirmed; nothing changed");
+    expect(existsSync(appDir)).toBe(true);
+    const cleared = await asOwner(work, ["clear", "shelf"], ["shelf"]);
+    expect(cleared.code).toBe(0);
+    expect(cleared.out).toContain("cleared: this Host no longer has shelf.");
+    expect(existsSync(appDir)).toBe(false);
+    expect(space.live.has("shelf")).toBe(false);
+  });
+
+  test("an app that vanished: status says so, a submit is refused, and the owner publishes it again", async () => {
+    await host.create("ghost");
+    const appDir = join(work, "apps", "ghost");
+    space.vanish("ghost");
+    expect((await cli(appDir, "status")).output).toContain("NOT ON PNEUMASPACE: it has no app named ghost any more, and this Host did not take it down");
+    writeFileSync(join(appDir, "src", "server.ts"), "export const x = 1;\n");
+    const submit = await cli(appDir, "submit", "into nothing");
+    expect(submit.code).not.toBe(0);
+    expect(submit.output).toContain("PneumaSpace has no app named ghost any more");
+    expect(space.live.has("ghost")).toBe(false);
+    await cli(appDir, "discard");
+    const again = await asOwner(appDir, ["publish-again"], ["publish-again"]);
+    expect(again.code).toBe(0);
+    expect(again.out).toContain("ghost is on PneumaSpace again, serving v1, with no stored data");
+    expect(space.live.get("ghost")!.status).toBe("registered");
+  });
+});

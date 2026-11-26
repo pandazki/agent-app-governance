@@ -8,6 +8,7 @@ import { HostError, type AppHost } from "../../host/src/host";
 import { appModel, assetType, backModel, changeModel, homeModel, loadPageAssets, missingModel, NO_PICTURES, PAGE_ICON, pageHeaders, renderShell, unreadableModel, type PageAssets, type PageContext, type PictureLookup } from "./page";
 import type { PageModel } from "./page-model";
 import { chooseLang } from "./page-words";
+import { LIFECYCLE_VERBS, lifecycle } from "./lifecycle-routes";
 
 // ---------------------------------------------------------------------------
 // The owner page's routes, and the owner link that lets its writes act.
@@ -291,6 +292,9 @@ async function ownerWrite(req: IncomingMessage, path: string, opts: PageRouteOpt
   } else if (parts.length === 6 && parts[3] === "changes" && parts[5] === "preview") {
     // Publish the checked draft again as a preview once the last one ended itself; nothing is decided by it.
     result = await host.preview(name, parts[4]!);
+  } else if (parts.length === 4 && LIFECYCLE_VERBS.has(parts[3]!)) {
+    // Taking the app down, bringing it back, publishing it again or clearing it: the owner's, from the app's details.
+    result = await lifecycle(host, name, parts[3]!, { subject: owner, channel: PAGE_CHANNEL, ...(reason ? { reason } : {}) }, input.confirm);
   } else if (parts.length === 4 && parts[3] === "undo") {
     if (typeof input.to !== "string" || !/^v\d+$/.test(input.to)) throw new HostError(400, "to must be a version name, e.g. v3");
     // Going back is tied to the plan the page showed: the version it started from comes with the click.

@@ -39,7 +39,8 @@ const SELF = (() => {
 
 const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--host <url>] [--owner] [--json] [--timing]
 
-  status [<name>]        active version, address, files changed here and not submitted, changes waiting for the owner
+  status [<name>]        active version, address, files changed here and not submitted, changes waiting for the owner,
+    [--check]            and whether the app is on PneumaSpace: as last confirmed, or asked now with --check
   history [<name>]       every attempt so far, oldest first, with what was guaranteed for each
   submit "<intent>"      send this working copy to the centre, take it through the Host's loop, and release it
     [--one-way "<what is lost>"]  this change deletes or rewrites data the app already stored, in any
@@ -54,7 +55,7 @@ const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--
   create <name>          create and publish a new app, and put its working copy in ./<name> (or --into <dir>)
   fetch [<name>]         in a working copy: bring it up to date (refused while you have edits it would overwrite).
                          elsewhere: put the app's working copy in ./<name> (or --into <dir>)
-  list                   every app the centre keeps
+  list [--check]         every app the centre keeps, and whether each is on PneumaSpace (--check: asked now)
   update                 replace this CLI with the centre's own (when it says it is at another API level)
 
 Owner only:
@@ -67,9 +68,18 @@ Owner only:
   token list | token revoke <id>
   container [<name>] [stop]
                          whether the app's Host container runs; stop it (the next operation starts from R2)
+  take-down [<name>]     stop serving the app and keep everything: PneumaSpace keeps it removed, with its stored
+                         data, and the centre keeps its record. Agents' submits are refused meanwhile
+  bring-back [<name>]    serve it again, with the data PneumaSpace kept
+  publish-again [<name>] create it again on PneumaSpace from its current version, once PneumaSpace no longer has
+                         it: it starts with no stored data
+  clear [<name>]         forget the app here (type its name), once it does not serve. On this edition the app
+                         stays on PneumaSpace, removed, with its stored data, until you purge it in PneumaSpace's
+                         console as its owner: the Host's token may not purge
 
 Who acts: a command that changes something goes with the agent token and is recorded as the agent's, unless it acts
-as the owner: approve, deny, undo --accept-one-way, token create and revoke, container stop, and create, submit,
+as the owner: approve, deny, undo --accept-one-way, token create and revoke, container stop, take-down,
+bring-back, publish-again and clear, and create, submit,
 discard, undo or preview given --owner. Those send the owner's session, and only after a person in an interactive
 terminal types the command's name; without a terminal they are refused before anything is sent. login needs a
 terminal too. Reading (status, history, list, fetch) uses the agent token, or the owner's session when there is none.
@@ -101,6 +111,7 @@ function parse(argv) {
     else if (arg === "--timing") flags.timing = true;
     else if (arg === "--accept-one-way") flags.acceptOneWay = true;
     else if (arg === "--owner") flags.owner = true;
+    else if (arg === "--check") flags.check = true;
     else if (Object.hasOwn(VALUE_FLAGS, arg)) {
       const [key, missing] = VALUE_FLAGS[arg];
       if (i + 1 >= argv.length) fail(missing);
@@ -573,7 +584,45 @@ function behindLine({ holds, centre, went_back_past: back, released }) {
   return `${start} Since this copy was last brought up to date, the centre ${moves.join(" and then ")}. ${end}`;
 }
 
-function printApps({ governance, apps }) {
+const OWNER_VERB = (verb) => `node ${SELF} ${verb}`;
+
+/**
+ * What status and list say first when an app is not running: what PneumaSpace said about it and when, what the centre
+ * knows, and what the owner can do. None while it runs. A centre from before these fields sends none.
+ */
+function standingLines(s) {
+  const when = s.runtime?.checked_at ? ` (PneumaSpace, ${readableTime(s.runtime.checked_at)})` : "";
+  const name = s.app_id;
+  if (s.standing === "down") {
+    const down = s.taken_down ?? {};
+    if (s.runtime?.state === "serving") return [`TAKEN DOWN here by ${down.by ?? "the owner"}, but PneumaSpace serves it again${when}. The owner records it as back (${OWNER_VERB("bring-back")}) or takes it down again.`];
+    const gone = s.runtime?.state === "gone";
+    return [
+      `TAKEN DOWN: ${down.by ?? "the owner"} took ${name} down${down.at ? ` ${readableTime(down.at)}` : ""}. It serves nothing and takes no changes; ${gone ? "PneumaSpace no longer has it, so the data it stored there is gone" : "PneumaSpace keeps its stored data"}${when}.`,
+      gone ? `The owner publishes it again (${OWNER_VERB("publish-again")}) or clears it (${OWNER_VERB("clear")}).` : `The owner brings it back (${OWNER_VERB("bring-back")}) or clears it (${OWNER_VERB("clear")}).`,
+    ];
+  }
+  if (s.standing === "removed_elsewhere") {
+    return [
+      `TAKEN DOWN ON PNEUMASPACE, not through this centre: ${name} serves nothing, and PneumaSpace keeps its stored data${when}. Changes are refused.`,
+      `The owner brings it back (${OWNER_VERB("bring-back")}) or clears it (${OWNER_VERB("clear")}).`,
+    ];
+  }
+  if (s.standing === "vanished") {
+    return [
+      `NOT ON PNEUMASPACE: it has no app named ${name} any more, and this centre did not take it down, so the data it stored there is gone${when}. Changes are refused.`,
+      `The owner publishes it again from ${s.active_version ?? "its current version"}, with no stored data (${OWNER_VERB("publish-again")}), or clears it (${OWNER_VERB("clear")}).`,
+    ];
+  }
+  if (s.standing === "unconfirmed") return [`PneumaSpace did not answer, so whether ${name} is there is not confirmed${s.runtime?.note ? ` (${s.runtime.note})` : ""}.`];
+  return [];
+}
+const serves = (s) => !s.standing || s.standing === "running" || s.standing === "unconfirmed" || (s.standing === "down" && s.runtime?.state === "serving");
+/** When PneumaSpace last confirmed what is said about it, where the centre answers from stored facts. */
+const checkedLine = (at, failed) =>
+  `${at ? `PneumaSpace confirmed this ${readableTime(at)}` : "PneumaSpace has not been asked about these yet"}${failed ? `; asking it again just now failed (${failed})` : ""}. --check asks it now.`;
+
+function printApps({ governance, apps, runtime_check }) {
   if (!apps.length) return console.log(`no apps yet. Create one with: node ${SELF} create <name>`);
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));
   console.log(
@@ -587,13 +636,17 @@ function printApps({ governance, apps }) {
       console.log(`${String(app.app_id).padEnd(width)}  could not be read: ${app.error}`);
       continue;
     }
-    console.log(`${String(app.app_id).padEnd(width)}  ${app.active_version ?? "unpublished"}  ${app.address}`);
+    console.log(`${String(app.app_id).padEnd(width)}  ${app.active_version ?? "unpublished"}  ${serves(app) ? app.address : "not serving"}`);
+    for (const line of standingLines(app)) console.log(`  ${line}`);
     const last = app.last_change;
     if (last) console.log(`  last change ${readableTime(last.at)} by ${clip(last.agent, 40)}: "${clip(last.intent)}" (${last.kind} ${last.outcome}${last.version ? ` ${last.version}` : ""})`);
     for (const p of items(app.pending)) console.log(`  waiting for the owner: ${p.change_id} "${clip(p.intent)}" (${items(p.risks).join(", ")})`);
     if (app.serving_uncertain) console.log(`  the Host cannot vouch for what the address serves: ${app.serving_uncertain}`);
     else if (app.serves_other_version) console.log(`  the address serves ${app.serving_version}, not ${app.active_version}: the last release did not go live`);
   }
+  // The oldest claim on the list about PneumaSpace: each app's is as new as its last write or the last listing.
+  const oldest = apps.map((app) => app.runtime?.checked_at).filter((at) => typeof at === "string").sort()[0];
+  if (runtime_check) console.log(`\n${checkedLine(oldest, runtime_check.failed)}`);
 }
 
 const AGENT_MARKERS = [
@@ -756,7 +809,7 @@ if (command === "token") {
 }
 
 if (command === "list") {
-  out(await call("GET", "/apps"), printApps);
+  out(await call("GET", `/apps${flags.check ? "?check=1" : ""}`), printApps);
   process.exit(0);
 }
 
@@ -784,7 +837,11 @@ if (command === "fetch" && !COPY) {
 // --- commands on one app ----------------------------------------------------------------------------------
 
 const words = command === "container" ? args.filter((word) => word !== "stop") : args;
-const named = (command === "status" || command === "history" || command === "container") && words[0] ? words[0] : undefined;
+// take-down, bring-back, publish-again and clear take the app's name as a word too, outside a working copy (or its own
+// name inside one): any other words are the owner's reason.
+const LIFECYCLE = ["take-down", "bring-back", "publish-again", "clear"];
+const lifeNamed = LIFECYCLE.includes(command) && /^[a-z][a-z0-9-]{0,29}$/.test(words[0] ?? "") && (!COPY || words[0] === COPY.app);
+const named = ((command === "status" || command === "history" || command === "container") && words[0]) || lifeNamed ? words[0] : undefined;
 const app = flags.app ?? named ?? COPY?.app;
 if (!app) fail(`not inside a working copy (no ${STATE_DIR}/app.json here or above). Name the app with --app <name> (status and history also take it as a word); list shows every app.`);
 const base = `/apps/${app}`;
@@ -795,7 +852,7 @@ const baseVersion = synced?.active_version ?? undefined;
 
 switch (command) {
   case "status": {
-    const s = await call("GET", base);
+    const s = await call("GET", `${base}${flags.check ? "?check=1" : ""}`);
     // A working copy last brought in line with another version than the centre's is behind: its files are that
     // version's, so the edits here are what differs from it, not what differs from the centre's version.
     const behind = DIR && baseVersion && s.active_version && baseVersion !== s.active_version ? { holds: baseVersion, centre: s.active_version } : null;
@@ -805,7 +862,9 @@ switch (command) {
     const mine = DIR ? signature(localEntries(DIR)) : null;
     const waitingHere = mine ? s.pending.find((p) => p.tree_signature === mine) : undefined;
     out({ ...s, ...(here ? { uncommitted_here: here } : {}), ...(behind ? { behind } : {}), ...(waitingHere ? { waiting_here: waitingHere.change_id } : {}) }, () => {
-      console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} at ${s.address}`);
+      console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} ${serves(s) ? `at ${s.address}` : "(not serving)"}`);
+      for (const line of standingLines(s)) console.log(line);
+      if (s.runtime) console.log(checkedLine(s.runtime.checked_at, s.runtime_check_failed));
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
       else if (s.serving_version && s.serving_version !== s.active_version) {
         console.log(`the address serves ${s.serving_version}, not ${s.active_version}: the last release did not go live. Submitting with no new edits releases ${s.active_version} as it is.`);
@@ -919,6 +978,36 @@ switch (command) {
       // What the submitter said it did to stored data, which the Host's rules could not see.
       for (const declared of items(d.declared_one_way)) console.log(`${declared.version} was declared one-way when it was submitted: "${declared.reason}". Going back put back its code, not what it did to stored data.`);
       if (d.note) console.log(d.note);
+    });
+    break;
+  }
+  case "take-down":
+  case "bring-back":
+  case "publish-again":
+  case "clear": {
+    // The owner's, by a person: refused here without a terminal or a session, before anything is sent. The centre
+    // refuses an agent token on its own as well.
+    const what = { "take-down": `Taking ${app} down`, "bring-back": `Bringing ${app} back`, "publish-again": `Publishing ${app} again`, clear: `Clearing ${app}` }[command];
+    if (!TERMINAL) fail(`${what} is the owner's to do, by a person in a terminal; this command has none, so nothing was sent. ${NOT_FOR_AGENTS}`, 2);
+    if (!ownerSession()) fail(`${what} is the owner's to do: sign in first, in your terminal, with node ${SELF} login. Nothing was sent.`, 2);
+    const s = await call("GET", `${base}?check=1`, undefined, { owner: true });
+    for (const line of standingLines(s)) console.log(line);
+    const said = {
+      "take-down": [`${what}: it stops serving. PneumaSpace keeps it removed, with its stored data, and the centre keeps its record and history. Agents' submits are refused until you bring it back.`],
+      "bring-back": [`${what}: it serves ${s.active_version} again, with the data PneumaSpace kept.`],
+      "publish-again": [`${what}: PneumaSpace creates it anew from ${s.active_version}. The data it stored there before is not there any more: it starts with none.`],
+      clear: [`${what}. This deletes:`, ...items(s.clearing?.deletes).map((line) => `  - ${line}`), "This stays:", ...items(s.clearing?.keeps).map((line) => `  - ${line}`)],
+    }[command];
+    for (const line of said) console.log(line);
+    // Clearing asks for the app's name, as the page does; the others for the command's own word.
+    await confirmAsOwner(command === "clear" ? app : command, what);
+    const reason = words.slice(named ? 1 : 0).join(" ");
+    const result = await call("POST", `${base}/${command}`, { ...(command === "clear" ? { confirm: app } : {}), ...(reason ? { reason } : {}) }, { owner: true });
+    out(result, (d) => {
+      if (command !== "clear") return console.log(d.note);
+      console.log(`cleared: the centre no longer has ${app}.`);
+      for (const line of items(d.kept)) console.log(`still there: ${line}`);
+      if (d.space_holds) console.log(`To finish, purge ${app} in PneumaSpace's console, as its owner: until then its name, its app slot and its storage stay taken there.`);
     });
     break;
   }
