@@ -146,13 +146,7 @@ export default function SearchPalette({
 
         {/* results / empty state */}
         {empty ? (
-          <div className="flex flex-col items-center justify-center gap-1 px-4 py-8" style={{ animation: "fade-in 250ms ease-out both" }}>
-            <span className="mb-1.5 flex size-8 items-center justify-center rounded-control bg-inset text-ink-3 shadow-hairline">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M21 21l-4.3-4.3" />
-              </svg>
-            </span>
+          <div className="flex flex-col items-center justify-center gap-1 px-4 py-4" style={{ animation: "fade-in 250ms ease-out both" }}>
             <span className="text-[13px] font-medium text-ink">{labels.emptyTitle}</span>
             <span className="text-[12px] text-ink-3">{labels.emptyHint}</span>
           </div>

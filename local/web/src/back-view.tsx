@@ -50,11 +50,10 @@ function BackCard({ model, changed }: { model: BackModel; changed: string | null
   };
 
   return (
-    <div className="w-full overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}>
+    <div className="w-full overflow-hidden rounded-card bg-surface shadow-card">
       <div className="primitive-card-pad">
-        <span className="text-[14px] font-medium text-ink">{ui.data_title}</span>
         {model.data && (
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">
+          <p className="text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">
             <RichText rich={model.data} />
           </p>
         )}
@@ -116,7 +115,7 @@ export function BackView({ model, onSearch }: { model: BackModel; onSearch: () =
     return (
       <>
         {header}
-        <Section number="01" title={model.appTitle} index={1}>
+        <Section title={model.appTitle}>
           <Surface>
             <div className="mx-auto max-w-[480px] overflow-hidden rounded-card bg-surface shadow-card">
               <p className="primitive-card-pad text-[13px] leading-relaxed text-ink-2">{model.kind === "current" ? ui.back_current : ui.back_not_earlier}</p>
@@ -134,6 +133,7 @@ export function BackView({ model, onSearch }: { model: BackModel; onSearch: () =
   const undone: TaskRow[] = model.undone.map((row, i) => ({
     key: `u${i}`,
     label: row.title,
+    wrap: true,
     amount: row.when ? <RichText rich={row.when} /> : undefined,
     status: "undo",
     pill: row.oneWay ? <TaskPill tone="red">{ui.one_way}</TaskPill> : undefined,
@@ -142,18 +142,14 @@ export function BackView({ model, onSearch }: { model: BackModel; onSearch: () =
     <>
       {header}
       {undone.length > 0 && (
-        <Section number="01" title={ui.back_undoes} note={String(undone.length)} index={1}>
+        <Section title={ui.back_undoes} note={String(undone.length)}>
           <Surface>
             <TaskRows rows={undone} />
           </Surface>
         </Section>
       )}
-      <Section number={undone.length ? "02" : "01"} title={ui.back_go} index={2}>
-        <Surface>
-          <div className="mx-auto max-w-[480px]">
-            <BackCard model={model} changed={changed} />
-          </div>
-        </Surface>
+      <Section title={ui.data_title}>
+        <div className="mx-auto max-w-[640px]"><BackCard model={model} changed={changed} /></div>
       </Section>
       <DetailsBlock facts={model.facts} />
     </>
@@ -164,17 +160,8 @@ export function MissingView({ model, onSearch }: { model: MissingModel; onSearch
   const ui = useUi();
   return (
     <>
-      <Header crumbs={[{ text: ui.my_apps, href: model.links.home }]} title={model.message} onSearch={onSearch} />
-      <div className="px-5 py-8 sm:px-8 sm:py-10">
-        <Surface>
-          <EmptyState title={model.message} />
-          <div className="-mt-4 flex justify-center pb-6">
-            <ButtonLink href={model.links.home} variant="secondary" size="sm">
-              {ui.my_apps}
-            </ButtonLink>
-          </div>
-        </Surface>
-      </div>
+      <Header crumbs={[{ text: ui.my_apps, href: model.links.home }]} title={model.message} onSearch={onSearch}
+        action={<ButtonLink href={model.links.home} variant="secondary">{ui.my_apps}</ButtonLink>} />
     </>
   );
 }

@@ -12,37 +12,14 @@ export function PageColumn({ children }: { children: ReactNode }) {
   return <main className="relative mx-auto min-h-screen max-w-[960px] bg-page shadow-[0_0_0_1px_var(--line)]">{children}</main>;
 }
 
-/** One section of the site: a dashed rule below, a mono number, a title and a quiet line. */
-export function Section({
-  id,
-  number,
-  title,
-  note,
-  aside,
-  children,
-  index = 0,
-}: {
-  id?: string;
-  number: string;
-  title: ReactNode;
-  note?: ReactNode;
-  aside?: ReactNode;
-  children: ReactNode;
-  index?: number;
-}) {
+/** A section title, its count or context, and an optional action for the whole section. */
+export function Section({ title, note, aside, children }: { title: ReactNode; note?: ReactNode; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section
-      id={id}
-      className="group flex w-full scroll-mt-8 flex-col border-b border-dashed border-line px-5 py-8 sm:px-8 sm:py-10"
-      style={{ animation: `fade-up 600ms cubic-bezier(0.23,1,0.32,1) ${index * 60}ms both` }}
-    >
-      <div className="mb-3 flex items-start gap-2 sm:items-baseline">
-        <span className="mt-0.5 font-mono text-[11px] text-ink-3 tabular-nums sm:mt-0">{number}</span>
-        <div className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-2">
-          <h2 className="whitespace-nowrap text-[13px] font-semibold text-ink">{title}</h2>
-          {note && <p className="mt-0.5 text-[12.5px] text-ink-3 text-pretty sm:mt-0 sm:truncate">{note}</p>}
-        </div>
-        {aside && <div className="-my-1 shrink-0">{aside}</div>}
+    <section className="border-b border-dashed border-line px-5 py-5 sm:px-8 sm:py-6">
+      <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h2 className="text-[15px] font-semibold leading-snug text-ink">{title}</h2>
+        {note && <span className="text-[12px] text-ink-3">{note}</span>}
+        {aside && <div className="-my-1 ml-auto flex items-center">{aside}</div>}
       </div>
       {children}
     </section>

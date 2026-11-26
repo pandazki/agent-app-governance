@@ -6,7 +6,7 @@
 //   - a row's label may wrap to two lines (a person's own words are not cut), so a row is at least, not exactly, 44px;
 //     a row marked `wrap` (a notice the owner has to read whole) is not cut at all;
 //   - the pill and the expanded detail are the caller's (a ReactNode), and a row without detail does not expand.
-// Badge, SpinnerRing, the staggered entry, the chevron and the expanding detail are the library's.
+// Badge, SpinnerRing, the chevron and the expanding detail are the library's.
 
 import { useState, type ReactNode } from "react";
 
@@ -37,17 +37,16 @@ function SpinnerRing({ active, children }: { active?: boolean; children?: ReactN
 type BadgeTone = "red" | "green" | "orange" | "neutral";
 
 const BADGE: Record<BadgeTone, string> = {
-  red: "bg-red text-white",
-  green: "bg-green text-white",
-  orange: "bg-orange text-white",
-  neutral: "bg-field text-ink-3 shadow-hairline",
+  red: "bg-red-tint text-red",
+  green: "bg-green-tint text-green",
+  orange: "bg-orange-tint text-orange",
+  neutral: "bg-field text-ink-3",
 };
 
 export function Badge({ tone, children }: { tone: BadgeTone; children: ReactNode }) {
   return (
     <span
       className={`flex size-5.5 shrink-0 items-center justify-center rounded-full ${BADGE[tone]}`}
-      style={{ animation: "pop-in 300ms cubic-bezier(0.23,1,0.32,1) both" }}
     >
       {children}
     </span>
@@ -140,7 +139,7 @@ export default function TaskRows({
         list ? "gap-0 self-start overflow-hidden rounded-card bg-surface shadow-card" : "gap-2"
       }${className ? ` ${className}` : ""}`}
     >
-      {rows.map((row, i) => {
+      {rows.map((row) => {
         const open = Boolean(row.details) && (manualOpen[row.key] ?? row.defaultOpen ?? false);
         const head = (
           <>
@@ -158,7 +157,6 @@ export default function TaskRows({
             }`}
             style={{
               borderRadius: list ? 0 : open ? 14 : 22,
-              animation: `fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${Math.min(i, 8) * 80}ms both`,
             }}
           >
             {row.details ? (
