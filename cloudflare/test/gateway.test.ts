@@ -77,8 +77,8 @@ describe("the Worker's gateway", () => {
     const { call, login, token } = await gateway();
     const session = await login();
     for (const secret of [session, (await token(session)).token]) {
-      const starter = (await (await call("GET", "/starter", { secret })).json()) as { api_level: number; cli: string; agents: string };
-      expect(starter).toEqual({ api_level: API_LEVEL, cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at https://host.test.\n" });
+      const starter = (await (await call("GET", "/starter", { secret })).json()) as { api_level: number; cli: string; agents: string; host_url: string };
+      expect(starter).toEqual({ api_level: API_LEVEL, cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at https://host.test.\n", host_url: "https://host.test" });
     }
   });
 

@@ -72,6 +72,13 @@ export interface GatewayDeps {
   readonly ownerKeyHash: string;
   readonly auth: AuthStore;
   readonly app: (name: string) => AppStub;
+  /**
+   * The Host's own address, as the installer configured it (APPGOV_HOST_URL): the owner's domain when it has one, else
+   * its workers.dev address. It is the one the Host tells anyone: the address an agent token is written with, the
+   * manager url apps are registered with on PneumaSpace, the origin the owner page's writes must come from. Requests
+   * may still come by another address of the same Worker (workers.dev); without this, the address a request came to.
+   */
+  readonly hostUrl?: string;
   /** Every app's last summary, as the app's Durable Object saved it to R2. `steps` gets how long each R2 read took, in ms. */
   readonly summaries: (steps?: Record<string, number>) => Promise<unknown[]>;
   readonly governance: string;
@@ -92,8 +99,10 @@ export const LOGIN_FAILURES_ALLOWED = 20;
 const MAX_BODY = 48 * 1024 * 1024;
 /** What each Durable Object request is: `create` and `write` save the folder afterwards, `read` does not. */
 export const OP_HEADER = "x-appgov-op";
-/** The Worker's own origin, which the Host names as its manager url on PneumaSpace. */
+/** The Host's own address (hostOrigin), which the Host in the container names as its manager url on PneumaSpace. */
 export const ORIGIN_HEADER = "x-appgov-origin";
+/** On every API answer: the Host's own address, so a CLI that came by another one (workers.dev) can say where it lives now. */
+export const HOST_HEADER = "x-appgov-host";
 
 export async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -194,6 +203,16 @@ export function ownerOnly(rest: readonly string[], body: Record<string, unknown>
   return null;
 }
 
+/** The Host's own address (GatewayDeps.hostUrl), or the one `url` came to when none is configured. */
+export function hostOrigin(deps: GatewayDeps, url: URL): string {
+  if (deps.hostUrl) {
+    try {
+      return new URL(deps.hostUrl).origin;
+    } catch {}
+  }
+  return url.origin;
+}
+
 export async function handle(request: Request, deps: GatewayDeps): Promise<Response> {
   let res: Response;
   try {
@@ -201,15 +220,17 @@ export async function handle(request: Request, deps: GatewayDeps): Promise<Respo
   } catch (err) {
     res = err instanceof GatewayRefusal ? refuse(err.status, err.reason, err.message) : refuse(500, "internal", err instanceof Error ? err.message : String(err));
   }
-  // Every answer, refusals included, says which level of the API this centre speaks.
+  // Every answer, refusals included, says which level of the API this centre speaks, and where the Host lives.
   const answer = new Response(res.body, res);
   answer.headers.set(API_HEADER, String(API_LEVEL));
+  answer.headers.set(HOST_HEADER, hostOrigin(deps, new URL(request.url)));
   return answer;
 }
 
 async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   const now = deps.now?.() ?? Date.now();
   const url = new URL(request.url);
+  const self = hostOrigin(deps, url);
   const method = request.method;
   const parts = url.pathname.split("/").filter(Boolean);
 
@@ -239,7 +260,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   }
   if (method === "GET" && url.pathname === "/me") return json({ principal });
   if (method === "GET" && url.pathname === "/starter") {
-    return json({ api_level: API_LEVEL, cli: deps.starter.cli, agents: deps.starter.agents.replaceAll("{{CENTRE}}", url.origin) });
+    return json({ api_level: API_LEVEL, cli: deps.starter.cli, agents: deps.starter.agents.replaceAll("{{CENTRE}}", self), host_url: self });
   }
 
   if (parts[0] === "tokens") {
@@ -269,7 +290,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
     const text = await readText(request);
     const body = parseObject(text);
     if (typeof body.name !== "string" || !APP_NAME.test(body.name)) return refuse(400, "bad_name", `name must match ${APP_NAME}`);
-    return forward(deps, body.name, "create", principal, url.origin, url.pathname, "POST", text);
+    return forward(deps, body.name, "create", principal, self, url.pathname, "POST", text);
   }
 
   const name = parts[1] ?? "";
@@ -283,14 +304,14 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
   if (op === "read" && (rest.length === 0 || (rest.length === 1 && rest[0] === "history"))) {
     const steps: Record<string, number> = {};
-    const viewed = await readView(deps, name, url.origin, principal, steps);
+    const viewed = await readView(deps, name, self, principal, steps);
     // Where the time of a read went, in the Worker: each R2 read, and the container when the stored view was not usable.
     const header = { "server-timing": serverTiming(steps, viewed.ok ? viewed.source : undefined) };
     if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status, header);
     if (rest.length === 1 && viewed.view.history_total > viewed.view.history.length) {
       // The view holds the newest entries only: the whole history is read from the app's folder, as before stored views.
       const at = Date.now();
-      const whole = await forward(deps, name, op, principal, url.origin, url.pathname, method, text);
+      const whole = await forward(deps, name, op, principal, self, url.pathname, method, text);
       const out = new Response(whole.body, whole);
       out.headers.set("server-timing", serverTiming({ ...steps, container: Date.now() - at }, "container"));
       return out;
@@ -298,7 +319,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
     const timing = { centre: { view: viewed.ms }, view: viewed.source };
     return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing }, 200, header);
   }
-  return forward(deps, name, op, principal, url.origin, url.pathname, method, text);
+  return forward(deps, name, op, principal, self, url.pathname, method, text);
 }
 
 /** A request about app `name`, to its Durable Object, as `principal`; `path` is the Host's route. `extra` adds headers the Worker sets. */

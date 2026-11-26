@@ -38,6 +38,8 @@ interface Env {
   APPGOV_CONTAINER_INSTANCE: string;
   /** Where the app Durable Objects (and so their containers) are placed first, e.g. wnam, near the bucket. */
   APPGOV_LOCATION_HINT?: string;
+  /** The Host's own address: the owner's domain when the installer was given one, else the workers.dev address. */
+  APPGOV_HOST_URL?: string;
 }
 
 const READY_WAIT_MS = 180_000;
@@ -93,6 +95,7 @@ export default {
       ownerKeyHash: env.APPGOV_OWNER_KEY_HASH,
       auth: store,
       governance: env.APPGOV_GOVERNANCE,
+      ...(env.APPGOV_HOST_URL ? { hostUrl: env.APPGOV_HOST_URL } : {}),
       app: (name) => env.APPS.get(env.APPS.idFromName(name), env.APPGOV_LOCATION_HINT ? { locationHint: env.APPGOV_LOCATION_HINT as DurableObjectLocationHint } : {}),
       summaries: (steps) => appSummaries(r2(env.FOLDERS), (work) => ctx.waitUntil(work), steps),
       views: {

@@ -33,6 +33,8 @@ node cloudflare/scripts/install.mjs https://space.example.com \
 
 如果你的 Docker 跑在别的 context 下，先设好 `DOCKER_CONTEXT`（colima 的话：`DOCKER_CONTEXT=colima`）。
 
+要让 Host 用你自己的域名而不是 workers.dev 地址，加上 `--domain host.example.com`。这个主机名所在的 zone 必须在同一个 Cloudflare 账号里；已经是别的 Worker 的自定义域名的主机名会被拒绝，绝不会被抢过来（自己带有 DNS 记录的主机名也一样）。安装程序把这个主机名作为自定义域名挂到 Worker 上（Worker 已经存在时，在部署之前挂上，这样在任何东西把你引到那里之前，域名就已经能访问），等到它能通过 HTTPS 访问，之后这个域名就是 Host 在所有地方给出的地址：安装程序的输出、主人凭据文件和 CLI 的会话文件、`token create`、`create` 和 `fetch` 写进 `centre.json` 的地址、给 agent 的起步说明、应用页面上的链接、页面写操作必须来自的 origin，以及应用在 PneumaSpace 上创建时登记的管理者地址。workers.dev 地址继续响应 API，所以还记着它的工作副本照常能用，而且每个回答都写明 Host 的地址：那里的 CLI 会说一次 Host 已经搬了，`node .appgov/appgov.mjs update`（如果是这次改动之前的 CLI，要运行两次：第一次取回新的 CLI）会把最近的 `centre.json` 改到这个域名，令牌不变。workers.dev 地址上的应用页面会把你转到域名；页面的会话 cookie 只属于一个地址，所以要在那里重新登录。不带 `--domain` 重跑会保留域名。要换到另一个域名或回到 workers.dev：在 Cloudflare 控制台里把这个主机名从 Worker 上移除（Workers、这个 Worker、Settings、Domains & Routes），删掉 `~/.appgov/hosts/<prefix>/install.json` 里的 `"domain"`，再运行一次安装程序（带上新的 `--domain`，或者不带）；还记着旧域名的工作副本需要 `update` 或新的 `centre.json`。之前创建的应用在 PneumaSpace 上保留创建时登记的管理者地址。
+
 重跑部署了新构建之后，Durable Object 还在活动的应用会继续用之前的构建，直到它空闲下来；想让它马上换上新构建，以主人身份运行 `node cloudflare/bin/appgov.mjs container <app> stop`：它停掉这个应用的容器并重启它的 Durable Object，下一条命令就会用新构建启动 Host（`container <app>` 会显示正在用的镜像和 Worker 版本）。还在 2026-11-25 之前构建上的应用没有这个重启，只能等它空闲几分钟之后才换上。
 
 ## 登录，并给 agent 一个令牌
@@ -41,6 +43,8 @@ node cloudflare/scripts/install.mjs https://space.example.com \
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev login
 node cloudflare/bin/appgov.mjs --host https://appgov-host.<subdomain>.workers.dev token create --label laptop --write ~/apps
 ```
+
+（用了 `--domain` 的话，用 `--host https://host.example.com`：安装程序打印出的那个地址。）
 
 `login` 读取主人凭据文件，把会话（12 小时）存在它旁边。`token create --write ~/apps` 把中心的地址和一个新的 agent 令牌写进 `~/apps/.appgov/centre.json`（权限 0600），不会把令牌打印出来。它还在旁边写下这个中心部署时带的 CLI（`~/apps/.appgov/appgov.mjs`），以及一个 `AGENTS.md`（Claude Code 通过 `CLAUDE.md` 读到它），告诉在 `~/apps` 里启动的 agent：这个目录是什么，怎样列出、创建和取回应用，以及 `centre.json` 是凭据，不能打印、复制或提交。你在这个 `AGENTS.md` 里、它写的那一段之外留下的文字会保留。你的 agent 在 `~/apps` 里工作。`token list` 和 `token revoke <id>` 用来管理令牌。
 

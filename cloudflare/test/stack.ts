@@ -101,6 +101,8 @@ interface Container {
 
 export interface Stack {
   url: string;
+  /** With StackOptions.domain: the Worker's other address, which is not the Host's own. */
+  otherUrl?: string;
   /** Operations the apps' Durable Objects ran, by kind (create, read, write, view, warm), in order. */
   operations: string[];
   ownerKey: string;
@@ -143,6 +145,11 @@ export interface StackOptions {
   readonly now?: () => number;
   /** While true, the apps' Durable Objects answer as the build before stored views: they refuse `view` and `warm`. */
   readonly buildBefore?: () => boolean;
+  /**
+   * The Worker answers at two addresses, as one with the owner's domain does: `url` is the Host's own (its configured
+   * address, the domain) and `otherUrl` the one it had before (workers.dev).
+   */
+  readonly domain?: boolean;
 }
 
 export async function startStack(options: StackOptions = {}): Promise<Stack> {
@@ -226,11 +233,8 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     return run;
   };
 
-  const gateway = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    idleTimeout: 0,
-    fetch: (request) =>
+  let hostUrl: string | undefined;
+  const gatewayFetch = (request: Request) =>
       handle(request, {
         starter: { cli: readFileSync(join(EDITION, "bin", "appgov.mjs"), "utf8"), agents: readFileSync(join(EDITION, "overlay", "AGENTS.start.md"), "utf8") },
         page: pageFromDist(plane.origin),
@@ -252,11 +256,15 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
         },
         waitUntil: (work) => void work.catch(() => {}),
         ...(options.now ? { now: options.now } : {}),
-      }),
-  });
+        ...(hostUrl ? { hostUrl } : {}),
+      });
+  const gateway = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, fetch: gatewayFetch });
+  const domain = options.domain ? Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, fetch: gatewayFetch }) : null;
+  if (domain) hostUrl = `http://127.0.0.1:${domain.port}`;
 
   return {
-    url: `http://127.0.0.1:${gateway.port}`,
+    url: hostUrl ?? `http://127.0.0.1:${gateway.port}`,
+    ...(domain ? { otherUrl: `http://127.0.0.1:${gateway.port}` } : {}),
     operations,
     ownerKey,
     plane,
@@ -269,6 +277,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     close: async () => {
       await dropContainer();
       gateway.stop(true);
+      domain?.stop(true);
     },
   };
 }
