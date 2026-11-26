@@ -209,14 +209,52 @@ function changedAgainst(root, version) {
   return changed.sort();
 }
 
+/** Every file under `root`, relative, sorted: a version's directory holds exactly what the Host recorded. */
+function allFiles(root) {
+  const out = [];
+  const walk = (at) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const full = join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) out.push(full.slice(root.length + 1).split(sep).join("/"));
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return out.sort();
+}
+
+const versionSignature = (root) => signature(allFiles(root).map((path) => [path, readFileSync(join(root, path))]));
+const versionsHere = (dir) => {
+  const root = join(dir, FRAMEWORK_DIR, "versions");
+  return existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name) : [];
+};
+
+/**
+ * What this working copy holds of the app already, sent with a command whose answer carries the working copy, so the
+ * centre leaves out what is here byte for byte: the signature of `sent` (the source files this command sends, or the
+ * ones here), and of each version directory in .pneuma-framework/versions/.
+ */
+function heldBy(dir, sent) {
+  return { tree: signature(sent), versions: Object.fromEntries(versionsHere(dir).map((v) => [v, versionSignature(join(dir, FRAMEWORK_DIR, "versions", v))])) };
+}
+
+/** Whether the version directories here are the centre's, by the signatures its answer gave for them. */
+function recordMatches(dir, signatures) {
+  const here = versionsHere(dir);
+  return here.length === Object.keys(signatures).length && here.every((v) => signatures[v] === versionSignature(join(dir, FRAMEWORK_DIR, "versions", v)));
+}
+
 /**
  * Bring the working copy in `dir` in line with the centre's `copy`. `.pneuma-framework/` and the Host's files in
  * `.appgov/` always follow the centre. The source files follow it only when nothing here would be lost: they are
- * what the copy was last brought in line with, what this command sent, or already what the centre holds.
+ * what the copy was last brought in line with, what this command sent, or already what the centre holds. What the
+ * copy leaves out (`omitted`, when this command said what it holds) is taken from here: `sent`, the source files
+ * this command sent or held, and the version directories it already had.
  */
-function applyCopy(dir, copy, uploaded) {
+function applyCopy(dir, copy, uploaded, sent = []) {
+  const omitted = copy.omitted;
   const incoming = copy.files.map((file) => [file.path, Buffer.from(file.body, "base64")]);
-  const incomingSource = incoming.filter(([path]) => isSource(path));
+  const incomingSource = omitted?.source ? sent : incoming.filter(([path]) => isSource(path));
   const synced = readJson(join(dir, STATE_DIR, SYNCED_FILE));
   const here = signature(localEntries(dir));
   const there = signature(incomingSource);
@@ -224,12 +262,21 @@ function applyCopy(dir, copy, uploaded) {
   for (const [path] of incoming) {
     if (path.split("/").some((part) => !part || part === "." || part === "..") || path.startsWith("/")) fail(`the centre sent a path this CLI will not write: ${path}`, 3);
   }
-  rmSync(join(dir, FRAMEWORK_DIR), { recursive: true, force: true });
-  for (const [path, body] of incoming) {
-    if (isSource(path) && !replace) continue;
+  // The record follows the centre: every version directory the answer left out as held here stays, the rest goes.
+  const keep = new Set(Object.entries(omitted?.versions ?? {}).filter(([, from]) => from === "held").map(([v]) => v));
+  const record = join(dir, FRAMEWORK_DIR);
+  if (!keep.size || !existsSync(record)) rmSync(record, { recursive: true, force: true });
+  else {
+    for (const entry of readdirSync(record)) if (entry !== "versions") rmSync(join(record, entry), { recursive: true, force: true });
+    for (const version of readdirSync(join(record, "versions"))) if (!keep.has(version)) rmSync(join(record, "versions", version), { recursive: true, force: true });
+  }
+  const write = (path, body) => {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     writeFileSync(join(dir, path), body);
-  }
+  };
+  for (const [path, body] of incoming) if (!isSource(path) || replace) write(path, body);
+  if (omitted?.source && replace) for (const [path, body] of sent) write(path, body);
+  for (const [version, from] of Object.entries(omitted?.versions ?? {})) if (from === "tree") for (const [path, body] of sent) write(join(FRAMEWORK_DIR, "versions", version, path), body);
   if (replace) {
     const wanted = new Set(incomingSource.map(([path]) => path));
     for (const path of sourceFiles(dir)) if (!wanted.has(path)) rmSync(join(dir, path), { force: true });
@@ -436,9 +483,13 @@ async function call(method, path, payload, options) {
 }
 
 /** Bring the working copy in line with the copy the centre sent back, and say so when edits here were kept. */
-function sync(dir, data, uploaded) {
+async function sync(dir, data, uploaded, sent) {
   if (!dir || !data?.working_copy) return;
-  const replaced = applyCopy(dir, data.working_copy, uploaded);
+  let replaced = applyCopy(dir, data.working_copy, uploaded, sent);
+  // What the answer left out was taken from here; if the record here is not the centre's now, take the whole copy.
+  if (data.working_copy.omitted && !recordMatches(dir, data.working_copy.omitted.signatures)) {
+    replaced = applyCopy(dir, await call("GET", `/apps/${encodeURIComponent(data.working_copy.app)}/folder`), uploaded);
+  }
   if (!replaced) console.log(`kept your edits in ${dir}: they differ from what was sent and from the centre. The record in ${FRAMEWORK_DIR}/ is up to date; run fetch once the edits are submitted or discarded.`);
 }
 
@@ -991,10 +1042,11 @@ switch (command) {
         ...(flags.oneWay !== undefined ? { one_way: flags.oneWay } : {}),
         ...(baseVersion ? { base_version: baseVersion } : {}),
         tree: { files: entries.map(([path, body]) => ({ path, body: body.toString("base64") })) },
+        held: heldBy(DIR, entries),
       },
       { owner: Boolean(flags.owner) },
     );
-    sync(DIR, result, uploaded);
+    await sync(DIR, result, uploaded, entries);
     let code = result.status === "published" ? 0 : result.status === "needs_approval" ? 2 : 1;
     out(result, (data) => (code = printChange(data)));
     process.exit(code);
@@ -1002,10 +1054,11 @@ switch (command) {
   case "discard": {
     // No base check: putting the centre's working tree back to its active version loses nothing that was released.
     if (flags.owner) await confirmAsOwner("discard", "Discarding as the owner");
-    const data = await call("POST", `${base}/discard`, {}, { owner: Boolean(flags.owner) });
+    const here = DIR ? localEntries(DIR) : [];
+    const data = await call("POST", `${base}/discard`, DIR ? { held: heldBy(DIR, here) } : {}, { owner: Boolean(flags.owner) });
     // Discarding throws away the edits here too: that is what was asked for.
-    if (DIR) writePrivate(join(DIR, STATE_DIR, SYNCED_FILE), { ...(synced ?? {}), signature: signature(localEntries(DIR)) });
-    sync(DIR, data);
+    if (DIR) writePrivate(join(DIR, STATE_DIR, SYNCED_FILE), { ...(synced ?? {}), signature: signature(here) });
+    await sync(DIR, data, undefined, here);
     out(data, (d) => console.log(`working tree is back at ${d.active_version}${d.restored.length ? `; restored: ${d.restored.join(", ")}` : ""}`));
     break;
   }
@@ -1015,7 +1068,8 @@ switch (command) {
     const owner = Boolean(flags.owner || flags.acceptOneWay);
     if (owner) await confirmAsOwner("undo", flags.acceptOneWay ? "Going back past a one-way change" : "Going back as the owner");
     const actor = owner ? { name: "owner" } : identifyAgent();
-    const payload = { reason: args.join(" ") || "undo", actor: actor.name, ...(flags.to ? { to: flags.to } : {}), ...(baseVersion ? { base_version: baseVersion } : {}) };
+    const here = DIR ? localEntries(DIR) : [];
+    const payload = { reason: args.join(" ") || "undo", actor: actor.name, ...(flags.to ? { to: flags.to } : {}), ...(baseVersion ? { base_version: baseVersion } : {}), ...(DIR ? { held: heldBy(DIR, here) } : {}) };
     let { status, data } = await send("POST", `${base}/undo`, payload, { owner });
     if (flags.acceptOneWay && status === 409 && data.reason === "crosses_one_way_change") {
       console.log(data.error);
@@ -1027,7 +1081,7 @@ switch (command) {
       ({ status, data } = await send("POST", `${base}/undo`, { ...payload, accept_one_way: true, ...(data.from ? { from: data.from } : {}) }, { owner: true }));
     }
     if (status < 200 || status >= 300) fail(refusalText(data, `POST ${base}/undo answered ${status}`), refusalCode(data.reason));
-    sync(DIR, data);
+    await sync(DIR, data, undefined, here);
     out(data, (d) => {
       console.log(`now on ${d.active_version} (was ${d.undone_version}) at ${d.address}.${d.undone.length > 1 ? ` Went back past ${d.undone.join(", ")}.` : ""}`);
       if (d.confirmed_by) console.log(`Code only; stored data was not put back, as ${d.confirmed_by} confirmed. This version may fail on it.`);
@@ -1088,8 +1142,9 @@ switch (command) {
     if (pending.preview_requests) console.log(pending.preview_requests.note);
     if (pending.preview) console.log(previewLine(pending.preview, args[0]));
     await confirmAsOwner(command, what);
-    const result = await call("POST", `${base}/changes/${args[0]}/${command}`, { reason: args.slice(1).join(" ") || undefined }, { owner: true });
-    sync(DIR, result);
+    const here = DIR ? localEntries(DIR) : [];
+    const result = await call("POST", `${base}/changes/${args[0]}/${command}`, { reason: args.slice(1).join(" ") || undefined, ...(DIR ? { held: heldBy(DIR, here) } : {}) }, { owner: true });
+    await sync(DIR, result, undefined, here);
     let code = 0;
     out(result, (data) => (code = command === "deny" ? (console.log("denied; nothing was released"), 0) : printChange(data)));
     process.exit(code);

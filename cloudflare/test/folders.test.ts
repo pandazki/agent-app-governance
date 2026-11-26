@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TREE } from "../../host/src/artifact";
-import { packFolder, unpackFolder } from "../src/folder";
+import { copySignature, dirSignature, exportWorkingCopy, packFolder, unpackFolder } from "../src/folder";
 import { FOLDER_HEADER, folderKey, summaryKey } from "../src/protocol";
 import { operate, type HostPort } from "../worker/folders";
 import { MemoryBucket } from "./stack";
@@ -125,5 +125,56 @@ describe("an app's folder in R2", () => {
     const refusing: HostPort = { fetch: async (path, init) => (path.startsWith("/apps/") ? Response.json({ error: "no" }, { status: 403 }) : container.port.fetch(path, init)) };
     expect((await operate(bucket, refusing, { app: "todo", op: "write", method: "POST", path: "/apps/todo/changes", headers: {}, body: "x" })).status).toBe(403);
     expect(bucket.objects.get(folderKey("todo"))!.etag).toBe(etag);
+  });
+});
+
+describe("the working copy an answer carries", () => {
+  /** An app folder with the source of v3 and versions v1 to v3, v3 the same files as the source. */
+  function folder() {
+    const root = temp();
+    const put = (rel: string, text: string) => {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    };
+    for (const [v, text] of [["v1", "one"], ["v2", "two"], ["v3", "three"]] as const) {
+      put(`.pneuma-framework/versions/${v}/app/server.mjs`, text);
+      put(`.pneuma-framework/versions/${v}/pneuma-space.json`, "{}");
+    }
+    put("app/server.mjs", "three");
+    put("pneuma-space.json", "{}");
+    put(".pneuma-framework/history.jsonl", "{}\n");
+    put(".appgov/app.json", "{}");
+    return root;
+  }
+  const versionsDir = (root: string, v: string) => join(root, ".pneuma-framework", "versions", v);
+  const paths = (copy: { files: readonly { path: string }[] }) => copy.files.map((f) => f.path);
+
+  test("without what the copy holds, it is the whole working copy", () => {
+    const root = folder();
+    const copy = exportWorkingCopy(root, "todo", "v3");
+    expect(copy.omitted).toBeUndefined();
+    expect(paths(copy)).toContain(".pneuma-framework/versions/v1/app/server.mjs");
+    expect(paths(copy)).toContain("app/server.mjs");
+  });
+
+  test("what the copy holds byte for byte is left out and named; anything else is sent", () => {
+    const root = folder();
+    const tree = copySignature(root)!;
+    // The copy holds v1 as it is, and a v2 that differs; v3 is the source files it sent.
+    const copy = exportWorkingCopy(root, "todo", "v3", { tree, versions: { v1: dirSignature(versionsDir(root, "v1")), v2: "0".repeat(40) } });
+    expect(copy.omitted).toEqual({
+      source: true,
+      versions: { v1: "held", v3: "tree" },
+      signatures: { v1: dirSignature(versionsDir(root, "v1")), v2: dirSignature(versionsDir(root, "v2")), v3: dirSignature(versionsDir(root, "v3")) },
+    });
+    expect(paths(copy).sort()).toEqual([".appgov/app.json", ".pneuma-framework/history.jsonl", ".pneuma-framework/versions/v2/app/server.mjs", ".pneuma-framework/versions/v2/pneuma-space.json"]);
+  });
+
+  test("source files the copy did not send are sent", () => {
+    const root = folder();
+    const copy = exportWorkingCopy(root, "todo", "v3", { tree: "1".repeat(40), versions: {} });
+    expect(copy.omitted?.source).toBe(false);
+    expect(paths(copy)).toContain("app/server.mjs");
+    expect(paths(copy)).toContain(".pneuma-framework/versions/v3/app/server.mjs");
   });
 });

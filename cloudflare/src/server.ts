@@ -6,7 +6,7 @@ import { appPaths, openRecord } from "../../host/src/artifact";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
 import { collectSteps, timedSync } from "../../host/src/steps";
 import { dataLeft, dataLeftLine } from "./data-left";
-import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
+import { copySignature, exportWorkingCopy, packFolder, parseHeld, replaceWorkingTree, unpackFolder, type Held } from "./folder";
 import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, HISTORY_KEPT, PAGE_CHANNEL, PLANS_KEPT, PRINCIPAL_HEADER, SECRET_HEADER, VIEW_SCHEMA, type Principal, type StoredView } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -255,9 +255,10 @@ export function createContainerServer(opts: ContainerServerOptions) {
       plans,
     };
   };
-  const withCopy = (name: string, result: unknown) =>
+  /** The answer with the working copy the CLI mirrors; `held` (from the request) leaves out what that copy has already. */
+  const withCopy = (name: string, result: unknown, held?: Held) =>
     existsSync(appPaths(appsDir, name).info)
-      ? { ...(result as object), working_copy: timedSync("export the working copy", () => exportWorkingCopy(appRoot(name), name, current(name))) }
+      ? { ...(result as object), working_copy: timedSync("export the working copy", () => exportWorkingCopy(appRoot(name), name, current(name), held)) }
       : result;
 
   const folderRoute = async (req: IncomingMessage, url: URL): Promise<{ status: number; type: string; body: string | Buffer } | null> => {
@@ -374,7 +375,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
           byOwner: owner,
           ...(typeof input.one_way === "string" ? { oneWay: input.one_way } : {}),
         });
-        const answer = withCopy(name, result);
+        const answer = withCopy(name, result, parseHeld(input.held));
         await settle(name, result);
         return answer;
       }
@@ -397,11 +398,11 @@ export function createContainerServer(opts: ContainerServerOptions) {
         // Stored data stays as it is; say when the versions gone back past wrote data the older code may not show.
         const record = openRecord(appPaths(appsDir, name));
         const left = result.data_restored ? undefined : dataLeft(result.undone, result.active_version, (version) => record.versionDir(version));
-        return withCopy(name, { ...result, ...(left ? { data_left: dataLeftLine(left), data_left_facts: left } : {}) });
+        return withCopy(name, { ...result, ...(left ? { data_left: dataLeftLine(left), data_left_facts: left } : {}) }, parseHeld(input.held));
       }
       if (parts[2] === "discard") {
         checkBase(name, input.base_version);
-        return withCopy(name, await host.discard(name));
+        return withCopy(name, await host.discard(name), parseHeld(input.held));
       }
       // Whether the app is there: the owner's, with the owner session (the Worker refuses agent tokens before this, too).
       if (LIFECYCLE[parts[2]!]) {
@@ -425,7 +426,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
       requireOwner(principal, parts[4] === "approve" ? "Approving a change" : "Denying a change");
       const input = await jsonBody(req);
       const result = await host.resolve(name, parts[3]!, parts[4] === "approve" ? "approved" : "denied", subjectOf(principal), typeof input.reason === "string" ? input.reason : undefined, channelOf(req), credentialOf(principal));
-      const answer = withCopy(name, result);
+      const answer = withCopy(name, result, parseHeld(input.held));
       await settle(name, result);
       return answer;
     }

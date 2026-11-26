@@ -62,6 +62,45 @@ export interface WorkingCopy {
   readonly app: string;
   readonly active_version: string | null;
   readonly files: readonly TreeFile[];
+  /**
+   * Set when the request said what the working copy holds (`Held`): what `files` leaves out because the copy has it
+   * byte for byte. `source`: the source files are the ones it sent. `versions`: each version directory left out, and
+   * where the copy has it: `held` (its own copy of that version) or `tree` (the source files it sent). `signatures`:
+   * every version directory here, signed as `dirSignature` signs one, for the copy to check its record against.
+   */
+  readonly omitted?: { readonly source: boolean; readonly versions: Readonly<Record<string, "held" | "tree">>; readonly signatures: Readonly<Record<string, string>> };
+}
+
+/**
+ * What a working copy holds already, as its CLI says in a request: the signature of the source files it sent or holds
+ * (`copySignature`'s), and of each version directory in its `.pneuma-framework/versions/` (`dirSignature`'s).
+ */
+export interface Held {
+  readonly tree?: string;
+  readonly versions?: Readonly<Record<string, string>>;
+}
+
+/** `held` from a request body, or undefined when it is not in that shape. */
+export function parseHeld(value: unknown): Held | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { tree, versions } = value as { tree?: unknown; versions?: unknown };
+  const sig = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{40}$/.test(v);
+  const named = typeof versions === "object" && versions !== null && !Array.isArray(versions) ? Object.entries(versions as Record<string, unknown>).filter(([name, v]) => /^v\d+$/.test(name) && sig(v)) : [];
+  return { ...(sig(tree) ? { tree } : {}), versions: Object.fromEntries(named) as Record<string, string> };
+}
+
+/** SHA-1 over each path and the SHA-1 of its bytes, in path order: `copySignature`'s form, over the files `paths` names. */
+function signFiles(root: string, paths: readonly string[]): string {
+  const hash = createHash("sha1");
+  for (const path of [...paths].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) hash.update(`${path}\0${createHash("sha1").update(readFileSync(join(root, path))).digest("hex")}\n`);
+  return hash.digest("hex");
+}
+
+/** Every file of a version directory, signed: a version holds exactly the source files that were recorded, so it signs as they do. */
+export function dirSignature(dir: string): string {
+  const paths: string[] = [];
+  walkAll(dir, dir, paths);
+  return signFiles(dir, paths);
 }
 
 function walkAll(root: string, base: string, out: string[]): void {
@@ -73,11 +112,38 @@ function walkAll(root: string, base: string, out: string[]): void {
   }
 }
 
-export function exportWorkingCopy(appRoot: string, app: string, activeVersion: string | null): WorkingCopy {
-  const paths = [...sourceFiles(appRoot)];
-  walkAll(join(appRoot, FRAMEWORK_DIR), appRoot, paths);
-  for (const rel of [`${STATE_DIR}/app.json`, `${STATE_DIR}/appgov.mjs`]) if (existsSync(join(appRoot, rel))) paths.push(rel);
-  return { app, active_version: activeVersion, files: paths.sort().map((path) => ({ path, body: readFileSync(join(appRoot, path)).toString("base64") })) };
+/**
+ * The working copy of the app in `appRoot`. With `held`, what the copy has byte for byte is left out and named in
+ * `omitted`: the source files when they are the ones it sent, and each version directory it holds or that is those
+ * source files. A version is never changed once recorded, and each one left out is matched by its signature.
+ */
+export function exportWorkingCopy(appRoot: string, app: string, activeVersion: string | null, held?: Held): WorkingCopy {
+  const source = [...sourceFiles(appRoot)];
+  const framework: string[] = [];
+  walkAll(join(appRoot, FRAMEWORK_DIR), appRoot, framework);
+  const state = [`${STATE_DIR}/app.json`, `${STATE_DIR}/appgov.mjs`].filter((rel) => existsSync(join(appRoot, rel)));
+  const body = (paths: readonly string[]) => [...paths].sort().map((path) => ({ path, body: readFileSync(join(appRoot, path)).toString("base64") }));
+  if (!held) return { app, active_version: activeVersion, files: body([...source, ...framework, ...state]) };
+  const sameSource = held.tree !== undefined && held.tree === signFiles(appRoot, source);
+  const versionsDir = join(appRoot, FRAMEWORK_DIR, "versions");
+  const signatures: Record<string, string> = {};
+  const versions: Record<string, "held" | "tree"> = {};
+  for (const entry of existsSync(versionsDir) ? readdirSync(versionsDir, { withFileTypes: true }) : []) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const signed = (signatures[entry.name] = dirSignature(join(versionsDir, entry.name)));
+    if (held.versions?.[entry.name] === signed) versions[entry.name] = "held";
+    else if (held.tree === signed) versions[entry.name] = "tree";
+  }
+  const left = (path: string) => {
+    const version = path.startsWith(`${FRAMEWORK_DIR}/versions/`) ? path.split("/")[2]! : null;
+    return version !== null && version in versions;
+  };
+  return {
+    app,
+    active_version: activeVersion,
+    files: body([...(sameSource ? [] : source), ...framework.filter((path) => !left(path)), ...state]),
+    omitted: { source: sameSource, versions, signatures },
+  };
 }
 
 /** A path a working tree may hold: relative, no dot segments, nothing the Host keeps for itself. */
@@ -103,12 +169,7 @@ export const TREE_LIMIT_BYTES = 32 * 1024 * 1024;
  * are a change waiting for the owner. Null when `root` is not there.
  */
 export function copySignature(root: string): string | null {
-  if (!existsSync(root)) return null;
-  const hash = createHash("sha1");
-  for (const path of [...sourceFiles(root)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
-    hash.update(`${path}\0${createHash("sha1").update(readFileSync(join(root, path))).digest("hex")}\n`);
-  }
-  return hash.digest("hex");
+  return existsSync(root) ? signFiles(root, sourceFiles(root)) : null;
 }
 
 export function replaceWorkingTree(appRoot: string, files: unknown): string[] {
