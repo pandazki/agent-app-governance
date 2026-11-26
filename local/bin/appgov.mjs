@@ -695,9 +695,11 @@ switch (command) {
       console.log(`previous: ${s.previous_version ? `${s.previous_version} (undo goes back here)` : "none (this is the first version)"}; owner: ${s.owner}; governance: ${s.governance}`);
       console.log(s.governance_note);
       console.log(
-        s.data_snapshot
-          ? `data snapshot: ${s.data_snapshot} (undo past a one-way change puts stored data back, with the owner's confirmation)`
-          : "data snapshot: none (undo past a one-way change puts back code only, with the owner's confirmation)",
+        !s.data_snapshot
+          ? "data snapshot: none (undo past a one-way change puts back code only, with the owner's confirmation)"
+          : s.data_snapshot_coverage?.state === "not_covered"
+            ? `data snapshot: ${s.data_snapshot}, which does not cover ${s.app_id}: ${s.data_snapshot_coverage.reason} Undo past a one-way change puts back code only, with the owner's confirmation.`
+            : `data snapshot: ${s.data_snapshot} (undo past a one-way change puts stored data back, with the owner's confirmation)`,
       );
       console.log(`on PneumaSpace: ${s.space_manager.note}`);
       console.log(`uncommitted: ${s.uncommitted.length ? s.uncommitted.join(", ") : "none"}`);
@@ -858,6 +860,7 @@ switch (command) {
     out(result, (d) => {
       if (command !== "clear") return console.log(d.note);
       console.log(`cleared: this Host no longer has ${app}.`);
+      if (items(d.data_discarded).length) console.log(`deleted first, where the data snapshot capability kept them: ${items(d.data_discarded).join(", ")}`);
       for (const line of items(d.kept)) console.log(`still there: ${line}`);
       if (d.space_holds) console.log(`To finish, purge ${app} in PneumaSpace's console, as its owner.`);
     });

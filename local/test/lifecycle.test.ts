@@ -284,7 +284,86 @@ describe("clearing an app", () => {
     const status = await host.status("todo");
 
     expect(status.clearing.snapshots).toEqual(["snap-1"]);
+    expect(status.clearing.discards_snapshots).toBe(false);
     expect(status.clearing.keeps).toContain("the data snapshots this Host made of todo (snap-1), where fake-snapshot keeps them: clearing does not delete them");
+    // Not asked, since it cannot be: the clear goes through and says what stays.
+    const cleared = await host.clear("todo", { ...owner(), confirm: "todo" });
+    expect(cleared.data_discarded).toBeUndefined();
+    expect(cleared.kept).toContain("the data snapshots this Host made of todo (snap-1), where fake-snapshot keeps them: clearing does not delete them");
+  });
+
+  /** A capability that can be asked to let go, writing what it is asked into the fake's log, so its order beside the purge shows. */
+  function letting(fail = false): HostDataSnapshot & { held: string[] } {
+    const held: string[] = [];
+    return {
+      id: "fake-snapshot",
+      held,
+      snapshot: async () => {
+        held.push(`snap-${held.length + 1}`);
+        return { ref: held.at(-1)! };
+      },
+      restore: async () => {},
+      discardAll: async ({ refs }) => {
+        space.log.push(`discardAll ${refs.join(",")}`);
+        if (fail) throw new Error("dropped snap-0, but could not drop snap-1 (the server went away)");
+        return { discarded: held.splice(0), refused: [] };
+      },
+    };
+  }
+
+  test("a capability that can let go is asked, with every ref in the history, before PneumaSpace purges the app; the confirmation says so", async () => {
+    const cap = letting();
+    host = makeHost(space, { dataSnapshot: cap });
+    edit("src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
+    const waiting = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
+    await host.resolve("todo", waiting.change_id, "approved", OWNER);
+    await host.takeDown("todo", owner());
+    const status = await host.status("todo");
+
+    expect(status.clearing).toMatchObject({ snapshots: ["snap-1"], snapshot_capability: "fake-snapshot", discards_snapshots: true });
+    expect(status.clearing.deletes).toContain("the data snapshots this Host made of todo (snap-1), with the data its undos set aside, where fake-snapshot keeps them: fake-snapshot lets go of them first");
+    expect(status.clearing.keeps.join(" ")).not.toContain("snap-1");
+
+    space.log.length = 0;
+    const cleared = await host.clear("todo", { ...owner(), confirm: "todo" });
+    expect(cleared).toMatchObject({ cleared: true, space_holds: false, data_discarded: ["snap-1"] });
+    expect(space.log.filter((line) => line.startsWith("discardAll") || line.startsWith("purge"))).toEqual(["discardAll snap-1", "purge todo"]);
+    expect(cap.held).toEqual([]);
+    expect(existsSync(app())).toBe(false);
+  });
+
+  test("when the capability cannot let go, nothing else is cleared: no purge, the record stays, and clearing again asks again", async () => {
+    host = makeHost(space, { dataSnapshot: letting(true) });
+    edit("src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
+    const waiting = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
+    await host.resolve("todo", waiting.change_id, "approved", OWNER);
+    await host.takeDown("todo", owner());
+    space.log.length = 0;
+
+    const err = await refusal(host.clear("todo", { ...owner(), confirm: "todo" }));
+    expect(err).toMatchObject({ status: 502, reason: "data_snapshot_discard_failed" });
+    expect(err.message).toBe(
+      "fake-snapshot could not let go of what it saved of todo (dropped snap-0, but could not drop snap-1 (the server went away)). Nothing else was cleared: todo is still taken down, with its data, and this Host keeps its record, so clearing again tries again.",
+    );
+    expect(space.log.some((line) => line.startsWith("purge"))).toBe(false);
+    expect(existsSync(app())).toBe(true);
+    expect((await host.status("todo")).standing).toBe("down");
+  });
+
+  test("a purge that fails after the capability let go says what is already gone", async () => {
+    host = makeHost(space, { dataSnapshot: letting() });
+    edit("src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
+    const waiting = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
+    await host.resolve("todo", waiting.change_id, "approved", OWNER);
+    await host.takeDown("todo", owner());
+    space.purgeRefuses = true;
+
+    const err = await refusal(host.clear("todo", { ...owner(), confirm: "todo" }));
+    expect(err).toMatchObject({ status: 502, reason: "space_refused" });
+    expect(err.message).toBe(
+      "PneumaSpace did not purge todo (it refused or did not answer). Nothing else was cleared; todo is still taken down, with its data. fake-snapshot has already dropped what it saved of todo (snap-1).",
+    );
+    expect(existsSync(app())).toBe(true);
   });
 });
 
@@ -296,7 +375,7 @@ describe("stored facts restated from a newer listing of PneumaSpace (the Cloudfl
     taken_down: null,
     standing: "running",
     choices: { take_down: true, bring_back: false, publish_again: false, clear: false },
-    clearing: { purges: false, snapshots: [] as string[], snapshot_capability: null, copies_apart: true, deletes: [] as string[], keeps: [] as string[] },
+    clearing: { purges: false, snapshots: [] as string[], snapshot_capability: null, discards_snapshots: false, copies_apart: true, deletes: [] as string[], keeps: [] as string[] },
   };
 
   test("a newer listing without the app makes a stored 'running' vanished, with what the owner may do and what clearing leaves", async () => {
@@ -304,6 +383,21 @@ describe("stored facts restated from a newer listing of PneumaSpace (the Cloudfl
     const out = restated(runningStatus, "todo", listing("2026-11-26T10:05:00.000Z", { other: "registered" }), true);
     expect(out).toMatchObject({ standing: "vanished", runtime: { state: "gone", checked_at: "2026-11-26T10:05:00.000Z" }, choices: { publish_again: true, clear: true, take_down: false } });
     expect(out.clearing.keeps).toContain("nothing on PneumaSpace: it has no app named todo any more");
+  });
+
+  test("restated, the clearing words keep saying whether the capability lets go of the snapshots", async () => {
+    const { restated } = await import("../../host/src/lifecycle");
+    const down = {
+      ...runningStatus,
+      taken_down: { at: "2026-11-26T09:30:00.000Z", by: OWNER },
+      standing: "down",
+      clearing: { ...runningStatus.clearing, purges: true, snapshots: ["snap-1"], snapshot_capability: "fake-snapshot", discards_snapshots: true },
+    };
+    const out = restated(down, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "removed" }), true);
+    expect(out.clearing).toMatchObject({ discards_snapshots: true });
+    expect(out.clearing.deletes.join(" ")).toContain("fake-snapshot lets go of them first");
+    const kept = restated({ ...down, clearing: { ...down.clearing, discards_snapshots: false } }, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "removed" }), true);
+    expect(kept.clearing.keeps.join(" ")).toContain("clearing does not delete them");
   });
 
   test("an older listing changes nothing; a removed app the owner took down stays down", async () => {

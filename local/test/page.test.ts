@@ -427,6 +427,15 @@ describe("the owner page: what it shows", () => {
     const withSnapshot = changeModel("notes", await host.status("notes"), id, (await context()).ctx);
     expect(withSnapshot.decision.consequence).toContain("Before it goes live, the Host saves a copy of your data.");
     expect(withSnapshot.decision.check).toBe("I understand: if I go back later, anything saved after this won't be in the app.");
+    // Unless the capability said it does not cover this app: then the owner was told the data can't come back, and so is the page.
+    host = new AppHost(
+      options({ dataSnapshot: { id: "copy", covers: async () => ({ covered: false, reason: "notes keeps its data in SQLite." }), snapshot: async () => ({ ref: "snap" }), restore: async () => {} } }),
+    );
+    const file = join(work, "apps", "notes", ".appgov", "pending", `${id}.json`);
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), data_snapshot_coverage: "not_covered" }));
+    const uncovered = changeModel("notes", await host.status("notes"), id, (await context()).ctx);
+    expect(uncovered.decision.consequence).toContain("If you go back later, only the app goes back. The data this change removes stays removed");
+    expect(uncovered.decision.check).toBe("I understand: going back later won't bring this data back.");
     const zh = changeModel("notes", status, id, { ...ctx, lang: "zh" });
     expect(zh.oneWay?.title).toBe("这个改动无法撤回");
     expect(zh.decision.check).toBe("我明白：以后回退也找不回这些数据。");
@@ -699,6 +708,16 @@ describe("whether the app is there, on the page", () => {
       url: "/owner/apps/notes/clear",
     });
     expect(app.life!.actions.map((action) => action.verb)).toEqual(["clear", "bring-back"]);
+    // Snapshots the Host's capability can let go of are among what clearing deletes; others are among what stays.
+    const status = await host.status("notes");
+    const snapshotted = (discards: boolean) =>
+      appModel("notes", { ...status, clearing: { ...status.clearing, snapshots: ["snap-1", "snap-2"], snapshot_capability: "copy", discards_snapshots: discards } } as AppStatus, host.history("notes"), { ...ctx, path: "/app/notes" })
+        .life!.actions.find((action) => action.verb === "clear")!;
+    expect(snapshotted(true).deletes).toContain(
+      "The data snapshots this Host made of notes (snap-1, snap-2), and the data set aside when you went back past a change. They're deleted first, so nothing of notes is left behind.",
+    );
+    expect(snapshotted(true).keeps).toEqual([]);
+    expect(snapshotted(false).keeps).toEqual(["The data snapshots this Host made of notes (snap-1, snap-2): clearing doesn't delete them."]);
     // No invitation to ask the agent for a change the Host would refuse; the notice says changes are not taken.
     expect(app.hint).toBeNull();
     const appHtml = draw(app, "yes");

@@ -118,10 +118,15 @@ export function newerRuntime(a: RuntimeFacts, b: RuntimeFacts | null | undefined
 export interface ClearingFacts {
   /** This Host's runtime may delete stored data for good (`SpaceRuntime.purge`): clearing purges the app on PneumaSpace. */
   readonly purges: boolean;
-  /** The data snapshots this Host's capability made for the app (refs from its history): clearing leaves them where they are. */
+  /** The data snapshots this Host's capability made for the app (refs from its history). */
   readonly snapshots: readonly string[];
   /** The capability that keeps them, by its id, or null where this Host has none. */
   readonly snapshot_capability: string | null;
+  /**
+   * The capability can be asked to let go of what it made for the app (`discardAll`): clearing asks it before the purge,
+   * so the snapshots, and what undos set aside, are deleted. Otherwise clearing leaves them where they are.
+   */
+  readonly discards_snapshots: boolean;
   /** Agents work in copies held apart (they stay); otherwise the app's directory, where agents work, is deleted with the record. */
   readonly copies_apart: boolean;
   /** The same, in plain English lines, for the CLI: what is deleted, what stays, and where to finish. */
@@ -134,7 +139,15 @@ export interface ClearingFacts {
  * (the capability the runtime declares, never the edition): the confirmation shows exactly these before the owner types
  * the name.
  */
-export function clearingWords(name: string, runtime: RuntimeFacts, purges: boolean, snapshots: readonly string[], snapshotCapability: string | null, copiesApart = false): ClearingFacts {
+export function clearingWords(
+  name: string,
+  runtime: RuntimeFacts,
+  purges: boolean,
+  snapshots: readonly string[],
+  snapshotCapability: string | null,
+  copiesApart = false,
+  discards = false,
+): ClearingFacts {
   const deletes = [
     copiesApart
       ? `this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`
@@ -148,9 +161,14 @@ export function clearingWords(name: string, runtime: RuntimeFacts, purges: boole
     );
   }
   if (runtime.state === "gone") keeps.push(`nothing on PneumaSpace: it has no app named ${name} any more`);
-  if (snapshots.length) keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${snapshotCapability ?? "the snapshot capability"} keeps them: clearing does not delete them`);
+  const holder = snapshotCapability ?? "the snapshot capability";
+  if (snapshots.length && discards) {
+    deletes.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), with the data its undos set aside, where ${holder} keeps them: ${holder} lets go of them first`);
+  } else if (snapshots.length) {
+    keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${holder} keeps them: clearing does not delete them`);
+  }
   if (copiesApart) keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
-  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, copies_apart: copiesApart, deletes, keeps };
+  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, discards_snapshots: discards, copies_apart: copiesApart, deletes, keeps };
 }
 
 /**
@@ -199,7 +217,15 @@ export function restated<T extends Presence>(fields: T, name: string, listing: R
   if (fields.choices !== undefined || status) out.choices = choicesFor(standing, runtime);
   const clearing = fields.clearing as ClearingFacts | undefined;
   if (clearing && Array.isArray(clearing.snapshots)) {
-    out.clearing = clearingWords(name, runtime, Boolean(clearing.purges), clearing.snapshots, typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null, clearing.copies_apart === true);
+    out.clearing = clearingWords(
+      name,
+      runtime,
+      Boolean(clearing.purges),
+      clearing.snapshots,
+      typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null,
+      clearing.copies_apart === true,
+      clearing.discards_snapshots === true,
+    );
   }
   return out as T;
 }

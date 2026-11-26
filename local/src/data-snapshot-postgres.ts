@@ -25,6 +25,13 @@ import type { SpaceBinding, SpaceRuntime } from "../../host/src/space";
 // app, the version and the database it was copied from. `check` makes the same
 // checks, through the same function, before the Host releases anything; `restore`
 // makes them again, because the server can change in between.
+//
+// What it makes for an app is its own to end (ADR-0039, amendment of 2026-11-26).
+// `covers` says, before the Host promises anything, whether the app's database is
+// on PostgreSQL at all. `discardAll` drops, when the app is cleared, every
+// snapshot marked as this app's and every database a restore renamed aside:
+// their tables belong to the app's role, so while one is left, PneumaSpace's
+// purge cannot drop that role.
 // ---------------------------------------------------------------------------
 
 export const POSTGRES_TEMPLATE = "postgres-template";
@@ -134,13 +141,28 @@ const ON_POSTGRES =
   `(on the compose stack: curl -X PUT http://127.0.0.1:8081/api/policy -H 'content-type: application/json' -d '{"db_backend":"postgres"}'). ` +
   "An app that already has a database keeps it: switching that app with PUT /api/apps/<name>/policy gives it a new, empty PostgreSQL database and does not move its data.";
 
-/** Why an app without an active PostgreSQL `db` binding cannot be handled here, and what to do about it. */
-function notOnPostgres(name: string, dbBindings: readonly SpaceBinding[]): string {
+/**
+ * Why an app without an active PostgreSQL `db` binding cannot be handled here. With `how`, also what an operator does
+ * about it; without, the reason alone, as `covers` gives it for a person deciding on a change.
+ */
+function notOnPostgres(name: string, dbBindings: readonly SpaceBinding[], how = true): string {
   const active = dbBindings.find((binding) => binding.state === "active");
   const where = active
     ? `${name} keeps its data in ${active.provider === "sqlite" ? "SQLite, PneumaSpace's default database engine" : `a ${active.provider} database`}.`
     : `${name} declares no database ("db" in pneuma-space.json), so its stored data, if any, is files or key-value data.`;
-  return `${where} This Host's data snapshot capability (${POSTGRES_TEMPLATE}) handles PostgreSQL databases only, so it cannot save ${name}'s data. ${ON_POSTGRES}`;
+  return `${where} This Host's data snapshot capability (${POSTGRES_TEMPLATE}) handles PostgreSQL databases only, so it cannot save ${name}'s data.${how ? ` ${ON_POSTGRES}` : ""}`;
+}
+
+/** A superuser owns the database, as `pg_roles.rolsuper` reads back through either client. */
+const superuser = (value: unknown): boolean => value === true || value === "t";
+
+/**
+ * Whether `database` is one `restore` renamed aside from `source`: `<source>_replaced_<yyyymmdd>t<hhmmss>`, with `_<n>`
+ * after it when that name was taken.
+ */
+function setAsideFrom(source: string, database: string): boolean {
+  if (!database.startsWith(`${source}_replaced_`)) return false;
+  return /^\d{8}t\d{6}(?:_\d+)?$/.test(database.slice(`${source}_replaced_`.length));
 }
 
 /**
@@ -160,20 +182,29 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
   /** The PneumaSpace name of the app in `appRoot`: the Host keeps each app at <apps dir>/<name>. */
   const appName = (appRoot: string): string => basename(resolve(appRoot));
 
-  /** The app's database, as PneumaSpace says, not as a guess from its name. */
-  async function appDatabase(name: string): Promise<string> {
-    let bindings: readonly SpaceBinding[];
+  /** The app's `db` bindings, as PneumaSpace says. */
+  async function dbBindings(name: string): Promise<SpaceBinding[]> {
     try {
-      bindings = (await opts.space.state(name)).bindings;
+      return (await opts.space.state(name)).bindings.filter((binding) => binding.kind === "db");
     } catch (err) {
       throw new Error(`cannot ask PneumaSpace where ${name} keeps its data (${message(err)})`);
     }
-    const db = bindings.filter((binding) => binding.kind === "db");
+  }
+
+  /** The app's active PostgreSQL database, as PneumaSpace says, not as a guess from its name; or, when it has none, why. */
+  async function whereData(name: string, how = true): Promise<{ readonly database: string } | { readonly reason: string }> {
+    const db = await dbBindings(name);
     const postgres = db.find((binding) => binding.provider === "postgres" && binding.state === "active");
-    if (!postgres) throw new Error(notOnPostgres(name, db));
+    if (!postgres) return { reason: notOnPostgres(name, db, how) };
     const database = postgres.location.database;
     if (typeof database !== "string" || !database) throw new Error(`PneumaSpace lists a PostgreSQL database for ${name} but does not say its name, so there is nothing to copy`);
-    return database;
+    return { database };
+  }
+
+  async function appDatabase(name: string): Promise<string> {
+    const where = await whereData(name);
+    if ("reason" in where) throw new Error(where.reason);
+    return where.database;
   }
 
   async function open(): Promise<SqlSession> {
@@ -281,6 +312,13 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
 
   return {
     id: POSTGRES_TEMPLATE,
+
+    async covers({ appRoot }) {
+      // Only reads. Throws only when PneumaSpace does not answer: then nobody can tell yet.
+      const where = await whereData(appName(appRoot), false);
+      return "reason" in where ? { covered: false, reason: where.reason } : { covered: true };
+    },
+
     setAsideNote: "The database in use now is not dropped: it is renamed to <its name>_replaced_<date and time of the undo> on the same PostgreSQL server.",
 
     setAsideAfter({ appRoot }) {
@@ -357,6 +395,62 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
         setAside.set(resolve(appRoot), aside);
         log(`${name}: stored data put back from ${ref}; the database that was in use is kept as ${aside} on ${opts.server}`);
       });
+    },
+
+    /**
+     * The app is being cleared: drop what this capability made for it, so nothing of it is left on the server and
+     * nothing keeps PneumaSpace from dropping the app's role. What it made is found on the server, not in the record:
+     * every snapshot a superuser owns whose mark names this app, and every database renamed aside from a database
+     * of this app's (the one PneumaSpace names now, in whatever state, and each one a snapshot's mark says it was
+     * copied from), which the app's own role still owns. The app's own database is never among them: PneumaSpace's
+     * purge drops it. The refs from the record are only checked against that: one that is on the server and is not
+     * among them is left as it is and listed in `refused`.
+     */
+    async discardAll({ appRoot, refs }) {
+      const name = appName(appRoot);
+      // PneumaSpace may no longer know the app (a purge that stopped half-way); the marks still say what is its.
+      let named: string | undefined;
+      try {
+        const database = (await dbBindings(name)).find((binding) => binding.provider === "postgres")?.location.database;
+        if (typeof database === "string" && database) named = database;
+      } catch {
+        named = undefined;
+      }
+      const session = await open();
+      const discarded: string[] = [];
+      const failed: string[] = [];
+      try {
+        const rows = await session.run(
+          "SELECT d.datname, shobj_description(d.oid, 'pg_database') AS marker, r.rolsuper AS superuser_owner FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba",
+        );
+        const on = rows.map((row) => ({ database: String(row.datname), marker: row.marker, superuser: superuser(row.superuser_owner) }));
+        const snapshots = on.filter((row) => row.superuser && row.database.startsWith(snapshotPrefix(name)) && readMark(row.marker)?.app === name);
+        const sources = new Set([...snapshots.map((row) => readMark(row.marker)!.source), ...(named ? [named] : [])]);
+        const asides = on.filter((row) => !row.superuser && [...sources].some((source) => setAsideFrom(source, row.database)));
+        const mine = [...snapshots, ...asides].map((row) => row.database).filter((database) => !sources.has(database));
+        const present = new Set(on.map((row) => row.database));
+        const refused = [...new Set(refs)]
+          .filter((ref) => present.has(ref) && !mine.includes(ref))
+          .map((ref) => `${ref}: this capability did not make it for ${name} (no mark of ${name}'s, and not renamed aside from ${name}'s database), so it is left as it is`);
+        for (const database of mine) {
+          try {
+            await session.run(`DROP DATABASE IF EXISTS ${ident(database)} WITH (FORCE)`);
+            discarded.push(database);
+          } catch (err) {
+            failed.push(`${database} (${message(err)})`);
+          }
+        }
+        if (failed.length) {
+          throw new Error(
+            `${discarded.length ? `dropped ${discarded.join(", ")}, but ` : ""}could not drop ${failed.join(", ")} on ${opts.server}. ` +
+              `While ${failed.length === 1 ? "it is" : "they are"} there, PneumaSpace cannot drop ${name}'s role, so its purge fails`,
+          );
+        }
+        log(discarded.length ? `${name}: dropped ${discarded.join(", ")} on ${opts.server} before ${name} is cleared` : `${name}: nothing of ${name}'s to drop on ${opts.server}`);
+        return { discarded, refused };
+      } finally {
+        await session.close().catch(() => {});
+      }
     },
   };
 }

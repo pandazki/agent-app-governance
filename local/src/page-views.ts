@@ -316,7 +316,7 @@ interface Presence {
   readonly runtime: { readonly state: string; readonly checked_at: string; readonly note: string } | null;
   readonly down: { readonly at: string; readonly by: string } | null;
   readonly choices: { readonly take_down: boolean; readonly bring_back: boolean; readonly publish_again: boolean; readonly clear: boolean } | null;
-  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[]; readonly copiesApart: boolean } | null;
+  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[]; readonly discards: boolean; readonly copiesApart: boolean } | null;
 }
 
 const STANDINGS = ["running", "down", "removed_elsewhere", "vanished", "unconfirmed"] as const;
@@ -333,7 +333,9 @@ function presenceOf(status: unknown): Presence {
     runtime: runtime && typeof runtime.state === "string" ? { state: runtime.state, checked_at: str(runtime.checked_at), note: str(runtime.note) } : null,
     down: down ? { at: str(down.at), by: str(down.by) } : null,
     choices: choices ? { take_down: choices.take_down === true, bring_back: choices.bring_back === true, publish_again: choices.publish_again === true, clear: choices.clear === true } : null,
-    clearing: clearing ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean), copiesApart: clearing.copies_apart === true } : null,
+    clearing: clearing
+      ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean), discards: clearing.discards_snapshots === true, copiesApart: clearing.copies_apart === true }
+      : null,
   };
 }
 
@@ -394,11 +396,17 @@ function lifeCard(ctx: PageContext, name: string, status: AppStatus): LifeCard |
   const actions: LifeAction[] = [];
   // Clearing is offered only with what it would delete and keep, which a Host from before these fields does not say.
   if (p.choices.clear && p.clearing) {
-    const deletes = [fill(p.clearing.copiesApart ? w.clear_del_record : w.clear_del_folder, { name }), ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : [])];
+    // The snapshots go with the app when the Host's capability can be asked to let go of them; otherwise they stay.
+    const snapshots = p.clearing.snapshots.length ? fill(p.clearing.discards ? w.clear_del_snapshots : w.clear_keep_snapshots, { name, refs: p.clearing.snapshots.join(", ") }) : null;
+    const deletes = [
+      fill(p.clearing.copiesApart ? w.clear_del_record : w.clear_del_folder, { name }),
+      ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : []),
+      ...(snapshots && p.clearing.discards ? [snapshots] : []),
+    ];
     const keeps = [
       ...(removed && !p.clearing.purges ? [fill(w.clear_keep_space, { name })] : []),
       ...(gone ? [fill(w.clear_keep_none, { name })] : []),
-      ...(p.clearing.snapshots.length ? [fill(w.clear_keep_snapshots, { name, refs: p.clearing.snapshots.join(", ") })] : []),
+      ...(snapshots && !p.clearing.discards ? [snapshots] : []),
       ...(p.clearing.copiesApart ? [w.clear_keep_copies] : []),
     ];
     actions.push({ verb: "clear", label: w.clear, url: url("clear"), done: link(`/?done=${removed && !p.clearing.purges ? "cleared_kept" : "cleared"}`, ctx.lang), lines: [], deletes, keeps, typeName: name, typeLabel: fill(w.clear_type, { name }), variant: "secondary" });
@@ -1229,7 +1237,8 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   const declared = typeof pending.declared_one_way === "string" && pending.declared_one_way.trim() ? pending.declared_one_way : null;
   const found = oneWay ? foundOneWay(oneWay, declared) : null;
   const submitter = agentWords(w, pending.agent, status.owner);
-  const snapshotHost = Boolean(status.data_snapshot);
+  // The Host saves the data first only where its capability covers the app; the change says what the owner was told.
+  const snapshotHost = Boolean(status.data_snapshot) && pending.data_snapshot_coverage !== "not_covered";
 
   const checked: CheckRow[] = [];
   if (tests?.status === "passed") {

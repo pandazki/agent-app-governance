@@ -48,7 +48,7 @@
         "host": {
           "dockerfile": "./container/Dockerfile",
           "build_context": "..",
-          "build_vars": { "FRAMEWORK_COMMIT": "22d0e36eaf326a7d3fb98a44da727afb660d5bff" }
+          "build_vars": { "FRAMEWORK_COMMIT": "0b511e612a6f0293373d6bcac86c8bb1b0c4611a" }
         }
       }
     }

@@ -160,7 +160,7 @@ node bin/appgov.mjs publish-again todo     # only when PneumaSpace no longer has
 node bin/appgov.mjs clear todo             # forget it; only once it does not serve
 ```
 
-While an app is taken down, your agent's `submit` is refused with a sentence saying you took it down. `clear` works only on an app that does not serve, so a serving app has to be taken down first. It deletes the app's folder, `apps/<name>/` (the source, every version, the history and the changes that wait), and on this edition it also purges the app on PneumaSpace with all its stored data. That cannot be undone. Data snapshots from the PostgreSQL option are not deleted, and the confirmation names them.
+While an app is taken down, your agent's `submit` is refused with a sentence saying you took it down. `clear` works only on an app that does not serve, so a serving app has to be taken down first. It deletes the app's folder, `apps/<name>/` (the source, every version, the history and the changes that wait), and on this edition it also purges the app on PneumaSpace with all its stored data. That cannot be undone. With the PostgreSQL option, the app's data snapshots and the databases its undos set aside are deleted first, so that the purge can go through; the confirmation names the snapshots.
 
 If an app was removed and purged on PneumaSpace without the Host, `status` and the page say it is not on PneumaSpace and that its stored data is gone. You choose: publish it again (it starts with no stored data) or clear it.
 
