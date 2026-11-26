@@ -23,6 +23,8 @@ The part after this one, "PneumaSpace app template", describes the platform, the
 
 A request to change the app is finished only when `submit` has answered. Files you edited and did not submit are not live; the next agent finds them listed as uncommitted and cannot tell whether they were meant.
 
+Once live, the app runs on PneumaSpace, which keeps its stored data in Docker volumes, not in this directory. PneumaSpace stops the app after a minute without requests (its default), and it then shows as asleep; the next request, trigger delivery or WebSocket connection starts it again, with its data. That is normal: do not add a process, container or schedule to keep it awake.
+
 `npm test` opens a port on 127.0.0.1 and `submit` calls the host. The CLI finds the host at the address the host recorded in `.appgov/host.json`; `--host <url>` or `APPGOV_HOST` overrides it. If you run in a sandbox that blocks either connection, ask for permission to run that command outside it; do not skip the step. If `status` cannot reach the host, the message names the address it tried and where that address came from. The host may be running on another address, or not running: ask the user for its address rather than starting anything yourself, then pass `--host <url>`.
 
 ## Writing a test

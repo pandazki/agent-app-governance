@@ -11,10 +11,16 @@ import { ButtonLink, DetailsBlock, EmptyState, Header, RichText, StatePill } fro
 
 const PLAN_CHANGED = "appgov-plan-changed";
 
+/** A go-back that did not go through, by the Host's reason. The Host's own words stay under Details. */
+const BACK_FAILED: Readonly<Record<string, "back_failed_start" | "back_failed_platform">> = {
+  published_unhealthy: "back_failed_start",
+  publish_failed: "back_failed_platform",
+};
+
 /** Going back, as a card in the RecommendationCard's grammar: what happens to the data, then the decision. */
 function BackCard({ model, changed }: { model: BackModel; changed: string | null }) {
   const ui = useUi();
-  const { refusals } = usePage();
+  const { refusals, lang } = usePage();
   const owner = useOwner();
   const [ticked, setTicked] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -46,7 +52,11 @@ function BackCard({ model, changed }: { model: BackModel; changed: string | null
       location.reload();
       return;
     }
-    setFailure({ text: refusalText(refusals, result.data, ui.failed), detail: String(result.data.detail ?? result.data.error ?? "") });
+    // The older version went out and did not answer, or PneumaSpace did not take it: what happened, and where the app is now.
+    const what = BACK_FAILED[String(result.data.reason ?? "")];
+    const where = result.data.serving_version ? ui.back_failed_kept : ui.back_failed_unsure;
+    const text = what ? [ui[what], where].join(lang === "zh" ? "" : " ") : refusalText(refusals, result.data, ui.failed);
+    setFailure({ text, detail: String(result.data.detail ?? result.data.error ?? "") });
   };
 
   return (

@@ -123,7 +123,10 @@ describe("the artifact CLI against a served Host", () => {
   test("the owner is shown the preview of a waiting change; once it has ended, status says so and preview publishes it again", async () => {
     await cli(work, "create", "shown");
     const appDir = join(work, "apps", "shown");
-    expect((await cli(appDir, "status")).output).toContain("on PneumaSpace: managed on PneumaSpace by this Host (appgov)");
+    const status = (await cli(appDir, "status")).output;
+    expect(status).toContain("on PneumaSpace: managed on PneumaSpace by this Host (appgov)");
+    // An agent that sees the app asleep reads here that it wakes on the next request.
+    expect(status).toContain("asleep is normal: PneumaSpace stops the app after a minute without requests (its default) and wakes it, with its data, on the next request; nothing needs to keep it awake");
     writeFileSync(join(appDir, "src", "server.ts"), "export const sql = 'DROP TABLE todos';\n");
     const submitted = await cli(appDir, "submit", "clear everything");
     const changeId = /needs_approval (\S+):/.exec(submitted.output)![1]!;
