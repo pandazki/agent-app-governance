@@ -5,7 +5,7 @@ This part describes the platform the app runs on: PneumaSpace's Cloudflare plane
 ## What is here
 
 - `pneuma-space.json`: the manifest. `contract` is `pneuma-space.cf/1`, `runtime` is `node`, `entry` is the server file inside `app/`, and `capabilities` declares the native services the app uses.
-- `app/`: everything the platform runs, and nothing else. `app/server.mjs` is the data API; `app/public/` is the page shell (HTML, CSS, browser JavaScript, icons), which the platform serves from storage without starting Node.
+- `app/`: everything the platform runs, and nothing else. `app/server.mjs` is the data API; `app/public/` is the page shell (HTML, CSS, browser JavaScript, icons), which the platform serves from storage without starting Node. `app/space.mjs` calls the native services and runs the app's [scheduled jobs](#scheduled-jobs), one file each in `app/jobs/`.
 - `tests/`: the app's tests, `*.test.mjs`, run by `npm test` with Node's test runner. They are not published.
 - `PRODUCT.md` and `DESIGN.md`: what the starter app is for and how it looks.
 
@@ -15,7 +15,7 @@ This part describes the platform the app runs on: PneumaSpace's Cloudflare plane
 - Every visitor signs in to the workspace first; PneumaSpace answers requests without a session with a sign-in page or 401. With `identity` declared, requests carry `X-Pneuma-Space-Subject`, `X-Pneuma-Space-Name` and `X-Pneuma-Space-Owner`. `"identity": { "required": true }` states that the app relies on knowing who the visitor is.
 - Node 24, prebuilt JavaScript only, built-in modules. Bundle any dependency into `app/`. The package (manifest plus `app/`) is at most 4 MiB and 256 files.
 - The server listens on `process.env.PNEUMA_SPACE_PORT`. Its files are temporary: the container stops after a few idle minutes and starts again on the next request, which takes seconds. Keep state in the native services, never on disk.
-- The container has no public Internet egress. Native services answer at `http://pneuma-space.internal/broker`:
+- The container has no public Internet egress. Native services answer at `http://pneuma-space.internal/broker`; `native(command)` in `app/space.mjs` does this:
 
 ```js
 const response = await fetch('http://pneuma-space.internal/broker', {
@@ -58,8 +58,38 @@ Declare each in `pneuma-space.json` under `capabilities` before using it: `kv` (
 - A refusal answers an HTTP status with `{"error": {"code", "message"}}`: 400 `input` (a field is wrong), 400 `command` (no such command), 400 `sql_statement` (a statement that fails, several statements, or `BEGIN` and the like), 403 `capability` (not declared in the manifest), 404 for an object or upload that is not there, 409 as above, 410 `upload_expired`, 413 `body_limit` (a command over 256 KiB), 413 `file_limit` or `result_limit`, 429 `storage_quota` (the app's storage is full). A 500 adds `requestId`.
 - `db`: one statement per query, parameters for values, small results. Create tables with `CREATE TABLE IF NOT EXISTS`; never drop or rewrite existing columns.
 - `static`: `{"dir": "public"}` names the page shell's directory inside `app/`. A GET for a file there is answered without starting Node, even while the app sleeps; a path ending in `/` serves that directory's `index.html`.
-- `ws` and `cron` have no broker command; the server subscribes to what `kv.publish` sends with a WebSocket to `ws://pneuma-space.internal/subscribe/<channel>`. See PneumaSpace's Cloudflare application contract.
+- `ws` has no broker command; the server subscribes to what `kv.publish` sends with a WebSocket to `ws://pneuma-space.internal/subscribe/<channel>`. See PneumaSpace's Cloudflare application contract. `cron` has none either: see [Scheduled jobs](#scheduled-jobs).
+
+## Scheduled jobs
+
+A job runs inside the app on a schedule, with no visitor. Declare it in `pneuma-space.json`, beside the other capabilities:
+
+```json
+"cron": { "triggers": { "digest": { "schedule": "0 6 * * *" } } }
+```
+
+Then write `app/jobs/digest.mjs`:
+
+```js
+import { native } from '../space.mjs';
+
+// What the job computes, without the network, so that a test can import it and call it.
+export function summarize(items) {
+  return { entries: items.length, pinned: items.filter((item) => item.pinned).length };
+}
+
+export default async function ({ id, attempt, payload }) {
+  const saved = await native({ type: 'kv.get', key: 'shelf:items' });
+  await native({ type: 'kv.put', key: 'digest', value: summarize(saved?.value ?? []) });
+}
+```
+
+- The schedule has five fields in UTC: minute, hour, day of the month, month and day of the week. A trigger without a schedule (`"digest": {}`) runs only when the PneumaSpace owner invokes it in PneumaSpace's console. At most 16 triggers; a name is lowercase letters, digits and hyphens, starting with a letter.
+- `app/space.mjs` runs each delivery with the file of the same name. Every `.mjs` file directly in `app/jobs/` is a job; keep shared code elsewhere. A test in `tests/server.test.mjs` fails when a declared job has no file, or a file has no declaration.
+- A run wakes the app if it sleeps. The job can use the app's stored data and the native services. It has no Internet access, so it cannot fetch anything from outside.
+- PneumaSpace delivers each run at least once. `app/space.mjs` records a finished delivery in kv for a day, under `job:done:`, and does not run it again, so keep `kv` declared. A delivery that stopped partway arrives again, so write the job so that a second run does no harm: compute a result and overwrite it, as above, instead of appending. A job that throws is retried with growing delays, up to five attempts.
+- An ephemeral app never runs its schedules.
 
 ## Testing
 
-`npm test` runs `node --test "tests/**/*.test.mjs"`. The server talks to `pneuma-space.internal`, which does not exist on your machine, so a test that starts `app/server.mjs` can check routing, validation and errors, but a route that reads storage answers 500 there. Put logic you want to test in a module under `app/` that a test can import without the network.
+`npm test` runs `node --test "tests/**/*.test.mjs"`. The server talks to `pneuma-space.internal`, which does not exist on your machine, so a test that starts `app/server.mjs` can check routing, validation and errors, but a route that reads storage answers 500 there. Put logic you want to test in a module under `app/` that a test can import without the network. A job file is such a module: importing it runs nothing, so a test imports `summarize` from `../app/jobs/digest.mjs` and checks what it returns.

@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEMPLATE } from "../src/edition";
 import { folderKey } from "../src/protocol";
 import { FAKE_TOKEN } from "./fake-plane";
 import { startStack, type Stack } from "./stack";
@@ -330,7 +331,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(submitted.code).toBe(0);
     expect(submitted.out).toMatch(/warning: this change touched app code \([^)]*app\/server\.mjs\) and none of the app's own tests ran, although tests\/ has test files \(tests\/server\.test\.mjs\)/);
     const history = (await cli(copy(), ["history"])).out;
-    expect(history).toContain("No tests ran. 2 more tests were skipped or todo. tests/ has test files that did not run: tests/server.test.mjs.");
+    expect(history).toContain("No tests ran. 3 more tests were skipped or todo. tests/ has test files that did not run: tests/server.test.mjs.");
     expect(history).toContain("all of them the app's own.");
     expect(history).not.toContain("sdk/");
   });
@@ -426,6 +427,26 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(own.out).toMatch(/published v\d+/);
     expect((await cli(copy(), ["history"])).out).toMatch(/change published -> v\d+ by owner \(owner session\) \[owner\]: The owner's line/);
   });
+
+  test("a job declared without its file is rejected by the app's own test, which names the file; with the file it goes live by the standing rule", async () => {
+    // An earlier test released a version whose tests are skipped; the change brings back the template's.
+    copyFileSync(join(TEMPLATE, "tests", "server.test.mjs"), join(copy(), "tests", "server.test.mjs"));
+    const file = join(copy(), "pneuma-space.json");
+    const manifest = JSON.parse(readFileSync(file, "utf8"));
+    manifest.capabilities.cron = { triggers: { digest: { schedule: "0 6 * * *" } } };
+    writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+    const refused = await cli(copy(), ["submit", "A daily digest"]);
+    expect(refused.code).not.toBe(0);
+    expect(refused.out).toContain("rejected");
+    expect(refused.out).toContain("pneuma-space.json declares the job digest, but app/jobs/digest.mjs is missing.");
+
+    mkdirSync(join(copy(), "app", "jobs"));
+    writeFileSync(join(copy(), "app", "jobs", "digest.mjs"), "export default async function () {}\n");
+    const published = await cli(copy(), ["submit", "A daily digest"]);
+    expect(published.code).toBe(0);
+    expect(published.out).toMatch(/published v\d+/);
+    expect(stack.plane.serving("todo")!["jobs/digest.mjs"]).toBeDefined();
+  }, 60_000);
 
   test("status in a working copy that is behind says how far, and does not call that version's files edits", async () => {
     const second = join(root, "elsewhere", "todo");
