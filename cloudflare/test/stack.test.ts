@@ -154,6 +154,17 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
   });
 
+  test("create under a name an app made outside this Host has: refused in plain words, and that app is not touched", async () => {
+    const outside = stack.plane.outsider("made-outside");
+    const result = await cli(apps(), ["create", "made-outside"]);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("PneumaSpace already has an app named made-outside, and this Host does not manage it: it was made in the workspace outside this Host.");
+    expect(result.out).toContain("This Host never takes over or changes an app it does not manage, so choose another name.");
+    expect(stack.plane.calls.filter((c) => c.method !== "GET" && c.path.includes(`/apps/${outside.id}`))).toEqual([]);
+    expect(stack.plane.apps.filter((a) => a.name.startsWith("made-outside"))).toEqual([outside]);
+    expect(existsSync(join(apps(), "made-outside"))).toBe(false);
+  });
+
   test("the template's own requests were made against the first preview, with the platform token, in order", async () => {
     const preview = stack.plane.apps.find((a) => a.expiresAt !== null)!.name;
     expect(stack.plane.appRequests.filter((line) => line.startsWith(`${preview} `))).toEqual([`${preview} GET /api/items`, `${preview} PUT /api/items`, `${preview} GET /api/items`]);
