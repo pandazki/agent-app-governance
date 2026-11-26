@@ -62,15 +62,17 @@ describe("what the two facts mean together", () => {
   const serving = runtimeFacts({ app: { name: "todo", status: "registered", expiresAt: null, manager: null } }, at);
   const removed = runtimeFacts({ app: { name: "todo", status: "removed", expiresAt: null, manager: null } }, at);
   const gone = runtimeFacts({ app: null }, at);
+  const purging = runtimeFacts({ app: { name: "todo", status: "purging", expiresAt: null, manager: null } }, at);
   const unknown = runtimeFacts({ error: new Error("PneumaSpace admin answered 502") }, at);
   const down = { at: "2026-11-25T09:00:00Z", by: OWNER };
 
-  test("PneumaSpace's answer is a fact with its time; one being purged counts as gone", () => {
+  test("PneumaSpace's answer is a fact with its time; one being purged is not gone while PneumaSpace lists it", () => {
     expect(serving).toEqual({ state: "serving", checked_at: "2026-11-26T10:00:00.000Z" });
     expect(runtimeFacts({ app: { name: "todo", status: "registered", expiresAt: null, manager: null, asleep: true } }, at)).toEqual({ state: "serving", checked_at: "2026-11-26T10:00:00.000Z", asleep: true });
     expect(removed.state).toBe("removed");
     expect(gone.state).toBe("gone");
-    expect(runtimeFacts({ app: { name: "todo", status: "purging", expiresAt: null, manager: null } }, at).state).toBe("gone");
+    // A purge that failed stays `purging` there, with the name taken, until it is tried again: not gone.
+    expect(purging).toEqual({ state: "purging", checked_at: "2026-11-26T10:00:00.000Z" });
     expect(unknown).toMatchObject({ state: "unknown", note: "PneumaSpace admin answered 502" });
   });
 
@@ -88,6 +90,10 @@ describe("what the two facts mean together", () => {
     expect(standingOf(null, gone)).toBe("vanished");
     expect(standingOf(null, unknown)).toBe("unconfirmed");
     expect(standingOf(down, removed)).toBe("down");
+    // Being purged leads whoever took it down: nothing is left to bring back, and the name is not free.
+    expect(standingOf(null, purging)).toBe("purging");
+    expect(standingOf(down, purging)).toBe("purging");
+    expect(choicesFor("purging", purging)).toEqual({ take_down: false, bring_back: false, publish_again: false, clear: true });
     expect(choicesFor("running", serving)).toEqual({ take_down: true, bring_back: false, publish_again: false, clear: false });
     expect(choicesFor("down", removed)).toEqual({ take_down: false, bring_back: true, publish_again: false, clear: true });
     expect(choicesFor("down", gone)).toEqual({ take_down: false, bring_back: false, publish_again: true, clear: true });
@@ -368,6 +374,113 @@ describe("clearing an app", () => {
   });
 });
 
+describe("a purge PneumaSpace has not finished", () => {
+  /** The words the Host refuses with when the purge stopped half-way, as they are for todo. */
+  const unfinished = (letGo = "") =>
+    "PneumaSpace has not finished removing todo: it began purging it, with its stored data, and still lists it as being purged (its purge failed, or had not finished when this Host stopped waiting). " +
+    `Its name stays taken until the purge finishes. This Host keeps its record, so todo stays in status, the list and the owner page; nothing else was cleared.${letGo} ` +
+    "Look with status, or in PneumaSpace's console; clear again to ask PneumaSpace to purge it again.";
+
+  test("clearing does not say the app is gone: the Host keeps its record, says so, and every reader shows it being purged", async () => {
+    await host.takeDown("todo", owner());
+    space.purgeStops = () => true;
+
+    const err = await refusal(host.clear("todo", { ...owner(), confirm: "todo" }));
+    expect(err).toMatchObject({ status: 502, reason: "space_purge_unfinished" });
+    expect(err.message).toBe(unfinished());
+    expect(space.live.get("todo")!.status).toBe("purging");
+    // Kept, so the app is not left where neither side shows it to the owner.
+    expect(existsSync(app())).toBe(true);
+    expect(host.list()).toEqual(["todo"]);
+
+    const status = await host.status("todo");
+    expect(status).toMatchObject({ standing: "purging", runtime: { state: "purging" }, taken_down: { by: OWNER }, choices: { take_down: false, bring_back: false, publish_again: false, clear: true } });
+    expect(status.clearing.deletes).toContain(
+      "todo on PneumaSpace, with what is left of its stored data: PneumaSpace began purging it and has not finished, so clearing asks it to purge again. This cannot be undone",
+    );
+    expect((await host.summaries())[0]).toMatchObject({ app_id: "todo", standing: "purging", runtime: { state: "purging" } });
+
+    // Nothing writes to it, and nothing offers what PneumaSpace would refuse.
+    edit("src/extra.ts", "export const extra = 1;\n");
+    const submit = await refusal(host.submit({ name: "todo", intent: "add", agent: "codex" }));
+    expect(submit).toMatchObject({ status: 409, reason: "app_purging" });
+    expect(submit.message).toBe(
+      "PneumaSpace began purging todo, with its stored data, and has not finished: it serves nothing and takes no changes, and its name stays taken until the purge finishes. Nothing was checked, recorded or released. The owner clears it; status says what clearing does here.",
+    );
+    expect(await refusal(host.bringBack("todo", owner()))).toMatchObject({ status: 409, reason: "cannot_bring_back", message: "PneumaSpace began purging todo, with its stored data, so there is nothing to bring back; clear it instead. Nothing changed." });
+    expect(await refusal(host.publishAgain("todo", owner()))).toMatchObject({
+      status: 409,
+      reason: "cannot_publish_again",
+      message: "PneumaSpace has not finished purging todo, and its name stays taken until it does; publishing again is for an app it no longer has. Nothing changed.",
+    });
+
+    // Clearing again asks PneumaSpace to purge again; once it no longer lists the app, the record goes.
+    space.purgeStops = null;
+    space.log.length = 0;
+    const cleared = await host.clear("todo", { ...owner(), confirm: "todo" });
+    expect(cleared).toMatchObject({ cleared: true, space_holds: false, runtime_state: "purging" });
+    expect(space.log).toContain("purge todo");
+    expect(space.live.has("todo")).toBe(false);
+    expect(existsSync(app())).toBe(false);
+  });
+
+  test("after the capability let go, the refusal says what is already gone, and clearing again asks it again", async () => {
+    const held: string[] = [];
+    const cap: HostDataSnapshot = {
+      id: "fake-snapshot",
+      snapshot: async () => {
+        held.push(`snap-${held.length + 1}`);
+        return { ref: held.at(-1)! };
+      },
+      restore: async () => {},
+      discardAll: async ({ refs }) => {
+        space.log.push(`discardAll ${refs.join(",")}`);
+        return { discarded: held.splice(0), refused: [] };
+      },
+    };
+    host = makeHost(space, { dataSnapshot: cap });
+    edit("src/server.ts", "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
+    const waiting = await host.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
+    await host.resolve("todo", waiting.change_id, "approved", OWNER);
+    await host.takeDown("todo", owner());
+    space.purgeStops = () => true;
+
+    const err = await refusal(host.clear("todo", { ...owner(), confirm: "todo" }));
+    expect(err.message).toBe(unfinished(" fake-snapshot has already dropped what it saved of todo (snap-1)."));
+    space.purgeStops = null;
+    space.log.length = 0;
+    expect(await host.clear("todo", { ...owner(), confirm: "todo" })).toMatchObject({ cleared: true, data_discarded: [] });
+    expect(space.log.filter((line) => line.startsWith("discardAll") || line.startsWith("purge"))).toEqual(["discardAll snap-1", "purge todo"]);
+  });
+
+  test("a purge that finishes after the Host stopped waiting leaves an app PneumaSpace no longer has, which clears without a purge", async () => {
+    await host.takeDown("todo", owner());
+    space.purgeStops = () => true;
+    await refusal(host.clear("todo", { ...owner(), confirm: "todo" }));
+    // PneumaSpace finishes it on its own (a restart resumes every purge it had begun).
+    space.live.delete("todo");
+    expect(await host.status("todo")).toMatchObject({ standing: "down", runtime: { state: "gone" }, choices: { publish_again: true, clear: true } });
+    space.log.length = 0;
+    expect(await host.clear("todo", { ...owner(), confirm: "todo" })).toMatchObject({ cleared: true, space_holds: false, runtime_state: "gone" });
+    expect(space.log.some((line) => line.startsWith("purge"))).toBe(false);
+  });
+
+  test("where the runtime may not purge (the Cloudflare plane), an app being purged is said so, and clearing forgets it here and says the name stays taken", async () => {
+    space.purges = false;
+    // Its owner purged it in PneumaSpace's console, and the purge has not finished.
+    space.live.get("todo")!.status = "purging";
+    const status = await host.status("todo");
+    expect(status).toMatchObject({ standing: "purging", choices: { clear: true, publish_again: false, bring_back: false } });
+    expect(status.clearing.keeps).toContain(
+      "todo on PneumaSpace, which began purging it, with its stored data, and has not finished: this Host may not purge it. Its name stays taken until PneumaSpace finishes; if it does not, the PneumaSpace owner purges it again in PneumaSpace's console",
+    );
+    const cleared = await host.clear("todo", { ...owner(), confirm: "todo" });
+    expect(cleared).toMatchObject({ cleared: true, space_holds: true, runtime_state: "purging", kept: status.clearing.keeps });
+    expect(space.live.get("todo")!.status).toBe("purging");
+    expect(existsSync(app())).toBe(false);
+  });
+});
+
 describe("stored facts restated from a newer listing of PneumaSpace (the Cloudflare edition's reads)", () => {
   const listing = (at: string, apps: Record<string, string>) => ({ checked_at: at, apps });
   const runningStatus = {
@@ -399,6 +512,15 @@ describe("stored facts restated from a newer listing of PneumaSpace (the Cloudfl
     expect(out.clearing.deletes.join(" ")).toContain("fake-snapshot lets go of them first");
     const kept = restated({ ...down, clearing: { ...down.clearing, discards_snapshots: false } }, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "removed" }), true);
     expect(kept.clearing.keeps.join(" ")).toContain("clearing does not delete them");
+  });
+
+  test("a newer listing that has the app being purged says so, whoever took it down: clearing alone is offered", async () => {
+    const { restated } = await import("../../host/src/lifecycle");
+    const down = { ...runningStatus, taken_down: { at: "2026-11-26T09:30:00.000Z", by: OWNER }, standing: "down" };
+    const out = restated(down, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "purging" }), true);
+    expect(out).toMatchObject({ standing: "purging", runtime: { state: "purging" }, choices: { take_down: false, bring_back: false, publish_again: false, clear: true } });
+    expect(out.clearing.keeps.join(" ")).toContain("which began purging it, with its stored data, and has not finished");
+    expect(out.clearing.keeps.join(" ")).not.toContain("no app named todo");
   });
 
   test("an older listing changes nothing; a removed app the owner took down stays down", async () => {

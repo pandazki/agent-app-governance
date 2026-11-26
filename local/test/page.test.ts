@@ -713,11 +713,17 @@ describe("whether the app is there, on the page", () => {
     const snapshotted = (discards: boolean) =>
       appModel("notes", { ...status, clearing: { ...status.clearing, snapshots: ["snap-1", "snap-2"], snapshot_capability: "copy", discards_snapshots: discards } } as AppStatus, host.history("notes"), { ...ctx, path: "/app/notes" })
         .life!.actions.find((action) => action.verb === "clear")!;
+    // The line counts them; their names wait behind Details, right under the list that holds the line.
     expect(snapshotted(true).deletes).toContain(
-      "The data snapshots this Host made of notes (snap-1, snap-2), and the data set aside when you went back past a change. They're deleted first, so nothing of notes is left behind.",
+      "The 2 data snapshots this Host made of notes, and the data set aside when you went back past a change. Deleted first, so nothing of notes is left behind.",
     );
+    expect(snapshotted(true).names).toEqual({ in: "deletes", names: ["snap-1", "snap-2"] });
     expect(snapshotted(true).keeps).toEqual([]);
-    expect(snapshotted(false).keeps).toEqual(["The data snapshots this Host made of notes (snap-1, snap-2): clearing doesn't delete them."]);
+    expect(snapshotted(false).keeps).toEqual(["The 2 data snapshots this Host made of notes: clearing doesn't delete them."]);
+    expect(snapshotted(false).names).toEqual({ in: "keeps", names: ["snap-1", "snap-2"] });
+    const drawn = draw(appModel("notes", { ...status, clearing: { ...status.clearing, snapshots: ["snap-1", "snap-2"], snapshot_capability: "copy", discards_snapshots: true } } as AppStatus, host.history("notes"), { ...ctx, path: "/app/notes" }), "yes");
+    expect(drawn).toContain("snap-2");
+    expect(drawn).not.toContain("snap-1, snap-2");
     // No invitation to ask the agent for a change the Host would refuse; the notice says changes are not taken.
     expect(app.hint).toBeNull();
     const appHtml = draw(app, "yes");
@@ -751,6 +757,45 @@ describe("whether the app is there, on the page", () => {
       const change = changeModel("todo", status, waiting.change_id, ctx);
       expect(change.decision.blocked).toContain(lang === "en" ? "PneumaSpace no longer has this app" : "PneumaSpace 上已经没有这个应用");
     }
+  });
+
+  test("an app PneumaSpace has not finished purging is said so in both languages, stays on the list, and offers clearing alone", async () => {
+    await host.create("todo");
+    edit("todo", "src/server.ts", "export const sql = 'DROP TABLE todos';\n");
+    const waiting = await host.submit({ name: "todo", intent: "start over", agent: "codex" });
+    await host.takeDown("todo", { subject: "user:me" });
+    space.purgeStops = () => true;
+    await host.clear("todo", { subject: "user:me", confirm: "todo" }).catch(() => {});
+    expect(space.live.get("todo")!.status).toBe("purging");
+    for (const lang of ["en", "zh"] as const) {
+      const { ctx, overview } = await context(lang);
+      const status = await host.status("todo");
+      const home = homeModel(overview, ctx);
+      // Not among the apps put away: it wants a look.
+      expect(home.down.cards).toEqual([]);
+      expect(home.apps[0]).toMatchObject({ name: "todo", state: "purging", stateLabel: lang === "en" ? "Being purged on PneumaSpace" : "PneumaSpace 正在彻底删除", tone: "orange", address: null });
+      const app = appModel("todo", status, host.history("todo"), { ...ctx, path: "/app/todo" });
+      expect(app.notices[0]!.tone).toBe("orange");
+      expect(app.notices[0]!.text).toContain(lang === "en" ? "PneumaSpace hasn't finished removing this app" : "PneumaSpace 还没有删完这个应用");
+      expect(app.notices[0]!.text).toContain(lang === "en" ? "its name stays taken until the purge finishes" : "它的名字一直被占用");
+      expect(app.life!.actions.map((action) => action.verb)).toEqual(["clear"]);
+      expect(app.life!.actions[0]!.deletes).toContain(
+        lang === "en"
+          ? "todo on PneumaSpace, with what is left of its stored data: PneumaSpace began purging it and hasn't finished, so it is asked to purge it again. This can't be undone."
+          : "todo 在 PneumaSpace 上的应用及其剩下的存储数据：PneumaSpace 已经开始彻底删除它但还没有完成，清除会让它再彻底删除一次。无法撤销。",
+      );
+      expect(app.life!.actions[0]!.done).toBe(`/?done=cleared&lang=${lang}`);
+      expect(app.hint).toBeNull();
+      const change = changeModel("todo", status, waiting.change_id, ctx);
+      expect(change.decision.blocked).toContain(lang === "en" ? "PneumaSpace is purging this app and hasn't finished" : "PneumaSpace 正在彻底删除这个应用");
+    }
+    // Where this Host may not purge (the Cloudflare plane), clearing forgets it here and says where the purge is finished.
+    space.purges = false;
+    const { ctx } = await context();
+    const app = appModel("todo", await host.status("todo"), host.history("todo"), { ...ctx, path: "/app/todo" });
+    expect(app.notices[0]!.text).toContain("purge it again in PneumaSpace's console, as its owner");
+    expect(app.life!.actions[0]).toMatchObject({ done: "/?done=cleared_purging&lang=en" });
+    expect(app.life!.actions[0]!.keeps![0]).toContain("this Host isn't allowed to purge it");
   });
 
   test("a running app offers only taking it down, inside its details", async () => {

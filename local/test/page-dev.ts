@@ -4,8 +4,8 @@
 // directory covering every state the page shows: running normally, a change waiting (on an app PneumaSpace lists
 // no manager for, beside a hand-written file that is not a waiting change), a one-way change waiting whose
 // preview has been discarded, a change that did not go live, an address nobody saw answer, an undo that did not
-// finish, an app another manager runs, a long history with an undo, an app that asks visitors to sign in, and an
-// app that cannot be read. A small fake ingress serves each
+// finish, an app another manager runs, a long history with an undo, an app that asks visitors to sign in, an app
+// PneumaSpace has not finished purging, and an app that cannot be read. A small fake ingress serves each
 // app's live version (its src/page.html) and each waiting change's preview, and a local headless Chrome takes
 // the pictures through the same DevTools interface the compose `screenshot` service offers.
 //
@@ -13,7 +13,10 @@
 //                    [--owner-token <token>] [--dir <path>]
 //
 // --snapshot starts the Host with a stand-in data snapshot capability, so one-way changes read the way they
-// do with the postgres-template practice. The fixtures are rebuilt at every start, and so is the page's client
+// do with the postgres-template practice: it covers every app but journal (as the practice does not cover an app
+// on SQLite), and lets go of what it made when an app is cleared. Two more apps show it: archive, taken down after
+// three one-way changes, whose clear confirmation counts its snapshots; and journal, whose one-way change waits
+// with no snapshot to promise. The fixtures are rebuilt at every start, and so is the page's client
 // (web/build.ts).
 //
 // Previews are ephemeral apps on the fake PneumaSpace, as on the real one: one waiting change's preview stands,
@@ -55,6 +58,8 @@ const ingress = `http://127.0.0.1:${ingressPort}`;
 /** The fake runtime, at an address a browser can open. Apps start like the PneumaSpace template: sign-in not required. */
 class DevSpace extends FakeSpace {
   readonly signIn = new Set(["notes", "locked"]);
+  // Every waiting change keeps its preview standing, more of them than the tests' quota of three allows at once.
+  override ephemeralQuota: number | null = null;
   override async init(dir: string) {
     const result = await super.init(dir);
     const name = dir.split("/").at(-1)!;
@@ -75,6 +80,9 @@ const snapshot: HostDataSnapshot | undefined = flag("snapshot")
       setAsideNote: "The data in use now is kept beside it under another name.",
       snapshot: async ({ version }) => ({ ref: `snap_dev_${version}_${Date.now().toString(36)}` }),
       restore: async () => {},
+      covers: async ({ appRoot }) =>
+        appRoot.endsWith("/journal") ? { covered: false, reason: "journal keeps its data in SQLite, and this capability copies PostgreSQL databases only." } : { covered: true },
+      discardAll: async ({ refs }) => ({ discarded: [...refs] }),
     }
   : undefined;
 
@@ -302,13 +310,41 @@ async function build() {
   page("locked", PAGES.locked1);
   await submit("locked", "a private family photo album", "codex");
 
+  // PneumaSpace has not finished purging it: the owner took it down and cleared it, and the purge stopped half-way.
+  await host.create("fading");
+  page("fading", PAGES.todo2);
+  await submit("fading", "a list of chores", "claude-code");
+  await host.takeDown("fading", { subject: "user:me" });
+  space.purgeStops = (name) => name === "fading";
+  await host.clear("fading", { subject: "user:me", confirm: "fading" }).catch((err: Error) => console.log(`[dev] fading: ${err.message.slice(0, 80)}...`));
+
+  if (snapshot) {
+    // Three one-way changes went live, each with a snapshot, and then the owner took it down: clearing counts them.
+    await host.create("archive");
+    page("archive", PAGES.notes1);
+    await submit("archive", "keep old notes in an archive", "claude-code");
+    for (const [i, sql] of ["ALTER TABLE notes DROP COLUMN colour", "DROP TABLE tags", "TRUNCATE note_history"].entries()) {
+      edit("archive", "src/db.ts", `export const migrate = \`${sql}\`;\n`);
+      const change = await submit("archive", ["drop the colour of each note", "drop tags, folders replace them", "empty the history of edits, it takes too much room"][i]!, "claude-code");
+      if (change.status === "needs_approval") await host.resolve("archive", change.change_id, "approved", "user:me");
+    }
+    await host.takeDown("archive", { subject: "user:me" });
+
+    // A one-way change waits on an app the capability does not cover: approving keeps no copy.
+    await host.create("journal");
+    page("journal", PAGES.notes1);
+    await submit("journal", "a daily journal", "codex");
+    edit("journal", "src/db.ts", "export const migrate = `ALTER TABLE entries DROP COLUMN mood`;\n");
+    await submit("journal", "stop asking for my mood each day", "codex");
+  }
+
   // An app the Host cannot read.
   edit("broken", ".appgov/app.json", "{ this is not json");
 }
 
 /** Spread each app's history back in time, so the page reads like a few weeks of use. Newest entry first offset. */
 function backdate() {
-  const lastAgo: Record<string, number> = { todo: 12, notes: 95, budget: 6, "reading-list": 41, habits: 180, recipes: 300, locked: 60 * 26, garden: 70, shop: 20 };
+  const lastAgo: Record<string, number> = { todo: 12, notes: 95, budget: 6, "reading-list": 41, habits: 180, recipes: 300, locked: 60 * 26, garden: 70, shop: 20, fading: 33, archive: 240, journal: 9 };
   for (const name of readdirSync(appsDir)) {
     const file = join(appsDir, name, STATE_DIR_NAME, "history.jsonl");
     if (!existsSync(file)) continue;

@@ -160,7 +160,7 @@ node bin/appgov.mjs publish-again todo      # 重新发布：只在 PneumaSpace 
 node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不提供服务时可用
 ```
 
-应用被收起期间，agent 的 `submit` 会被拒绝，并用一句话说明是你收起了它。`clear` 只对不提供服务的应用有效，所以正在服务的应用要先收起。它会删掉应用目录 `apps/<name>/`（源码、每一个版本、历史和等待中的改动）；在这个版本上，它还会在 PneumaSpace 上彻底删除（purge）这个应用和它存储的全部数据。这无法撤销。用 PostgreSQL 那项设置时，这个应用的数据快照和回退时被换下来的数据库会先被删掉，彻底删除才能完成；确认时会列出快照的名字。
+应用被收起期间，agent 的 `submit` 会被拒绝，并用一句话说明是你收起了它。`clear` 只对不提供服务的应用有效，所以正在服务的应用要先收起。它会删掉应用目录 `apps/<name>/`（源码、每一个版本、历史和等待中的改动）；在这个版本上，它还会在 PneumaSpace 上彻底删除（purge）这个应用和它存储的全部数据。这无法撤销。用 PostgreSQL 那项设置时，这个应用的数据快照和回退时被换下来的数据库会先被删掉，彻底删除才能完成；确认时会写出快照的数量，名字在“详细信息”里。只有 PneumaSpace 上已经没有这个应用，Host 才会忘掉它：如果彻底删除失败了，或者三分钟后还没有完成，`clear` 会说 PneumaSpace 还没有删完这个应用，在删完之前它的名字一直被占用；这个应用会继续以“正在彻底删除”出现在 `status`、`list` 和页面上。再运行一次 `clear`，就会让 PneumaSpace 再彻底删除一次。
 
 如果一个应用在 Host 不知情的情况下在 PneumaSpace 上被移除并彻底删除，`status` 和页面会说它不在 PneumaSpace 上，它存储的数据已经不在了。由你选择：重新发布（没有任何存储的数据），或者清除。
 
@@ -175,7 +175,7 @@ node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不�
 | `recorded vN, but it did not go live`，或 `status` 显示 `the address serves vM, not vN` | `record` 模式：第 N 版已经记录，地址上跑的仍是第 M 版。 | 修好原因再提交（没有新编辑时，第 N 版会原样发布），或者回退。 |
 | `the Host cannot vouch for what the address serves` | Host 不知道地址上跑的是哪个版本：要么发布或回退失败后，没能把地址放回去；要么回退已经发出去，却没能记进历史。 | 照那一行说的做。第一种情况，下一次有应答的发布或回退就会把它理清。第二种情况，在你运行 `undo` 之前，提交和批准都会被拒绝。 |
 | `undo` 拒绝执行，提示往回退会越过一个 "that putting files back cannot undo" 的改动 | 中间隔着一个单向改动。 | 由你决定：在终端里运行 `undo --accept-one-way "原因"`，或者在页面上回退。 |
-| `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere` 或 `app_vanished` | 应用被收起了（被你，或者在 PneumaSpace 上），或者 PneumaSpace 上已经没有它了。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
+| `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere`、`app_vanished` 或 `app_purging` | 应用被收起了（被你，或者在 PneumaSpace 上），PneumaSpace 上已经没有它了，或者 PneumaSpace 还没有彻底删除完它。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除；如果还没有彻底删除完，就清除它。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
 | `cannot reach the Host at ...` | Host 没在运行，或者在另一个地址上。 | 在 `local/` 里运行 `docker compose ps`。要连的 Host 不是这个克隆启动的，就加上 `--host <url>`。 |
 
 ## 东西存在哪里

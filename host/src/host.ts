@@ -416,7 +416,7 @@ export interface AppStatus {
   readonly runtime: RuntimeFacts;
   /** The owner took the app down through this Host, or null. */
   readonly taken_down: DownFacts | null;
-  /** What the two mean together (lifecycle.ts): `running`, `down`, `removed_elsewhere`, `vanished` or `unconfirmed`. */
+  /** What the two mean together (lifecycle.ts): `running`, `down`, `removed_elsewhere`, `vanished`, `purging` or `unconfirmed`. */
   readonly standing: Standing;
   /** What the owner may do about the app's being there, now. */
   readonly choices: OwnerChoices;
@@ -457,8 +457,13 @@ export interface ClearResult {
   readonly kept: readonly string[];
   /** What the data snapshot capability let go of before the purge, by name: its snapshots and what undos set aside. */
   readonly data_discarded?: readonly string[];
-  /** Whether PneumaSpace still holds the app (removed, with its data), and so its name, slot and storage. */
+  /**
+   * Whether PneumaSpace still holds the app, and so its name: removed, with its data (and its slot and storage), or, where
+   * this Host may not purge, still being purged by PneumaSpace (`runtime_state` says which).
+   */
   readonly space_holds: boolean;
+  /** What PneumaSpace said of the app when clearing began: `removed`, `purging` or `gone`. */
+  readonly runtime_state?: RuntimeFacts["state"];
 }
 
 /** A change waiting for the owner, as a list of apps shows it. */
@@ -1055,8 +1060,8 @@ export class AppHost {
 
   /**
    * Before a write to the app on PneumaSpace, from one answer of PneumaSpace's: refused while the app is not there to
-   * write to (taken down by the owner, removed on PneumaSpace, or gone from it, which a release would only create
-   * again, empty), and when another manager runs it; when nobody does, the publish marks it as this Host's, and the
+   * write to (taken down by the owner, removed on PneumaSpace, being purged there, or gone from it, which a release would
+   * only create again, empty), and when another manager runs it; when nobody does, the publish marks it as this Host's, and the
    * note says so.
    */
   private async claim(name: string, act: "submit" | "approval" | "undo", record: ChangeRecord): Promise<string | undefined> {
@@ -2475,8 +2480,13 @@ export class AppHost {
       bring_back:
         now.runtime.state === "gone"
           ? `PneumaSpace has no app named ${name} any more, so there is nothing to bring back; publish it again instead (its stored data is not there any more)`
-          : `${name} is serving and was not taken down`,
-      publish_again: `PneumaSpace still has ${name} (${now.runtime.state === "removed" ? "removed, with its data: bring it back instead" : "serving"}); publishing again is for an app it no longer has`,
+          : now.runtime.state === "purging"
+            ? `PneumaSpace began purging ${name}, with its stored data, so there is nothing to bring back; clear it instead`
+            : `${name} is serving and was not taken down`,
+      publish_again:
+        now.runtime.state === "purging"
+          ? `PneumaSpace has not finished purging ${name}, and its name stays taken until it does; publishing again is for an app it no longer has`
+          : `PneumaSpace still has ${name} (${now.runtime.state === "removed" ? "removed, with its data: bring it back instead" : "serving"}); publishing again is for an app it no longer has`,
       clear: `${name} is serving on PneumaSpace: take it down first, then clear it. Clearing never goes in one step from serving`,
     };
     throw new HostError(409, `${why[choice]}. Nothing changed.`, choice === "clear" ? "clear_running" : `cannot_${choice}`);
@@ -2566,10 +2576,14 @@ export class AppHost {
   }
 
   /**
-   * Forget the app: its versions, history and waiting changes. Only once PneumaSpace does not serve it (taken down, or
-   * gone), never in one step from serving, and only with its name typed as `confirm`. Where this Host's runtime may
-   * purge (`SpaceRuntime.purge`), the app is purged on PneumaSpace with its stored data; where it may not, PneumaSpace
-   * keeps it removed, with its data, for its owner to purge there. Owner only.
+   * Forget the app: its versions, history and waiting changes. Only once PneumaSpace does not serve it (taken down,
+   * being purged, or gone), never in one step from serving, and only with its name typed as `confirm`. Where this Host's
+   * runtime may purge (`SpaceRuntime.purge`), the app is purged on PneumaSpace with its stored data, also one whose
+   * purge began and did not finish; where it may not, PneumaSpace keeps it as it is, for its owner to purge there. Owner only.
+   *
+   * The record goes only once PneumaSpace no longer lists the app, where this Host purges: a purge that PneumaSpace has
+   * not finished (it failed, or took longer than the wait) leaves the app `purging` there, its name taken, and the Host
+   * keeps its record, so the app stays in status, the list and the owner page, and clearing again asks for the purge again.
    *
    * Before the purge, the data snapshot capability is asked to let go of everything it made for the app
    * (`discardData`): what it keeps can stop PneumaSpace's purge, and nothing else would ever end it. It is asked also
@@ -2585,7 +2599,12 @@ export class AppHost {
       const now = await this.presence(name, record);
       this.refuseChoice(name, "clear", now);
       const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot ?? null, this.opts.workingCopiesApart === true);
-      const where = now.runtime.state === "removed" ? `${name} is still taken down, with its data` : `PneumaSpace has no app named ${name}`;
+      const where =
+        now.runtime.state === "removed"
+          ? `${name} is still taken down, with its data`
+          : now.runtime.state === "purging"
+            ? `PneumaSpace still lists ${name} as being purged`
+            : `PneumaSpace has no app named ${name}`;
       // What the capability made for the app goes first: left behind, it can stop the purge below.
       const cap = this.opts.dataSnapshot;
       let discarded: readonly string[] | undefined;
@@ -2607,17 +2626,37 @@ export class AppHost {
       const letGo = discarded?.length ? ` ${cap!.id} has already dropped what it saved of ${name} (${discarded.join(", ")}).` : "";
       // Previews of the changes that wait end with the app's record; each ends itself anyway.
       for (const pending of this.pendingChanges(paths, record).pending) await this.previews.drop(previewName(name, pending.change_id), pending.preview_app_id);
-      let spaceHolds = now.runtime.state === "removed";
+      let spaceHolds = now.runtime.state === "removed" || now.runtime.state === "purging";
       if (spaceHolds && this.opts.space.purge) {
-        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now.
-        if (!(await this.opts.space.purge(name, this.manager.name)) && runtimeFacts(await askApp(this.opts.space, name)).state !== "gone") {
-          throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing else was cleared; ${where}.${letGo}`, "space_refused");
+        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now. Only an app
+        // it no longer lists is gone; one it lists as being purged is not, and its name stays taken until the purge ends.
+        if (!(await this.opts.space.purge(name, this.manager.name))) {
+          const after = runtimeFacts(await askApp(this.opts.space, name));
+          if (after.state === "purging") {
+            throw new HostError(
+              502,
+              `PneumaSpace has not finished removing ${name}: it began purging it, with its stored data, and still lists it as being purged (its purge failed, or had not finished when this Host stopped waiting). ` +
+                `Its name stays taken until the purge finishes. This Host keeps its record, so ${name} stays in status, the list and the owner page; nothing else was cleared.${letGo} ` +
+                `Look with status, or in PneumaSpace's console; clear again to ask PneumaSpace to purge it again.`,
+              "space_purge_unfinished",
+            );
+          }
+          if (after.state !== "gone") throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing else was cleared; ${where}.${letGo}`, "space_refused");
         }
         spaceHolds = false;
       }
       rmSync(paths.root, { recursive: true, force: true });
-      this.log(`${name}: cleared by ${act.subject}${act.channel ? ` (${act.channel})` : ""}${spaceHolds ? "; PneumaSpace keeps it removed, with its data" : ""}`);
-      return { app: name, cleared: true, deleted: facts.deletes, kept: facts.keeps, ...(discarded ? { data_discarded: discarded } : {}), space_holds: spaceHolds };
+      const held = now.runtime.state === "purging" ? "; PneumaSpace has not finished purging it" : "; PneumaSpace keeps it removed, with its data";
+      this.log(`${name}: cleared by ${act.subject}${act.channel ? ` (${act.channel})` : ""}${spaceHolds ? held : ""}`);
+      return {
+        app: name,
+        cleared: true,
+        deleted: facts.deletes,
+        kept: facts.keeps,
+        ...(discarded ? { data_discarded: discarded } : {}),
+        space_holds: spaceHolds,
+        ...(now.runtime.state === "unknown" || now.runtime.state === "serving" ? {} : { runtime_state: now.runtime.state }),
+      };
     });
   }
 
@@ -2837,6 +2876,7 @@ function standingWords(name: string, standing: Standing): string {
   if (standing === "down") return "the owner took it down";
   if (standing === "removed_elsewhere") return "it was taken down on PneumaSpace, not through this Host";
   if (standing === "vanished") return `PneumaSpace has no app named ${name} any more`;
+  if (standing === "purging") return "PneumaSpace began purging it and has not finished";
   return "PneumaSpace did not say";
 }
 
@@ -2871,6 +2911,14 @@ function refuseNotThere(name: string, act: "submit" | "approval" | "undo", recor
       `PneumaSpace has no app named ${name} any more, and this Host did not take it down, so the data it stored there is gone. A release would only create it again, empty. ${nothing} ` +
         `The owner chooses: publish it again from ${current ?? "its current version"} (it starts with no stored data), or clear this Host's record of it.`,
       "app_vanished",
+    );
+  }
+  if (standing === "purging") {
+    throw new HostError(
+      409,
+      `PneumaSpace began purging ${name}, with its stored data, and has not finished: it serves nothing and takes no changes, and its name stays taken until the purge finishes. ${nothing} ` +
+        `The owner clears it; status says what clearing does here.`,
+      "app_purging",
     );
   }
 }

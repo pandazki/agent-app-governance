@@ -538,6 +538,16 @@ function standingLines(s) {
       `The owner publishes it again from ${s.active_version ?? "its current version"}, with no stored data (${OWNER_VERB("publish-again")}), or clears it (${OWNER_VERB("clear")}).`,
     ];
   }
+  if (s.standing === "purging") {
+    return [
+      `BEING PURGED ON PNEUMASPACE: PneumaSpace has not finished removing ${name}. It began purging it, with its stored data, and still lists it as being purged${when}. It serves nothing and takes no changes, and its name stays taken until the purge finishes.`,
+      !s.clearing
+        ? `The owner clears it (${OWNER_VERB("clear")}); status says what clearing does here.`
+        : s.clearing.purges
+        ? `The owner clears it (${OWNER_VERB("clear")}), which asks PneumaSpace to purge it again; PneumaSpace's console shows it too.`
+        : `The owner clears it here (${OWNER_VERB("clear")}); if PneumaSpace does not finish, its owner purges it again in PneumaSpace's console.`,
+    ];
+  }
   if (s.standing === "unconfirmed") return [`PneumaSpace did not answer, so whether ${name} is there is not confirmed${s.runtime?.note ? ` (${s.runtime.note})` : ""}.`];
   return [];
 }
@@ -865,7 +875,8 @@ switch (command) {
       console.log(`cleared: this Host no longer has ${app}.`);
       if (items(d.data_discarded).length) console.log(`deleted first, where the data snapshot capability kept them: ${items(d.data_discarded).join(", ")}`);
       for (const line of items(d.kept)) console.log(`still there: ${line}`);
-      if (d.space_holds) console.log(`To finish, purge ${app} in PneumaSpace's console, as its owner.`);
+      if (d.space_holds && d.runtime_state === "purging") console.log(`PneumaSpace has not finished purging ${app}: its name stays taken until it does. If it stays so, purge it again in PneumaSpace's console, as its owner.`);
+      else if (d.space_holds) console.log(`To finish, purge ${app} in PneumaSpace's console, as its owner.`);
     });
     break;
   }

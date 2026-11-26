@@ -181,6 +181,35 @@ describe("taking an app down and bringing it back, on the Cloudflare edition", (
   });
 });
 
+describe("an app PneumaSpace has not finished purging, on the Cloudflare edition", () => {
+  test("the stored views and the CLI say it is being purged, not gone; clearing forgets it here and says its name stays taken", async () => {
+    expect((await cli(apps(), ["create", "fading"])).code).toBe(0);
+    // Its owner removed and purged it in PneumaSpace's console, and the plane has not finished: it lists it `purging`.
+    stack.plane.find("fading")!.status = "purging";
+
+    const page = await view<AppModel>("/app/fading?check=1");
+    expect(page).toMatchObject({ state: "purging", serving: false, address: null, life: { open: true } });
+    expect(page.notices[0]!.text).toContain("PneumaSpace hasn't finished removing this app");
+    expect(page.notices[0]!.text).toContain("purge it again in PneumaSpace's console, as its owner");
+    expect(page.life!.actions.map((action) => action.verb)).toEqual(["clear"]);
+    expect(page.life!.actions[0]!.keeps![0]).toContain("this Host isn't allowed to purge it. Its name stays taken until PneumaSpace finishes");
+    expect(page.life!.actions[0]!.done).toMatch(/^\/\?done=cleared_purging/);
+    const status = await cli(copy("fading"), ["status"]);
+    expect(status.out).toContain("BEING PURGED ON PNEUMASPACE: PneumaSpace has not finished removing fading.");
+    expect(status.out).toContain("if PneumaSpace does not finish, its owner purges it again in PneumaSpace's console");
+    expect((await cli(apps(), ["list"])).out).toMatch(/fading +v1 {2}not serving\n {2}BEING PURGED ON PNEUMASPACE/);
+
+    const cleared = await inTerminal(copy("fading"), ["clear"], ["fading"]);
+    expect(cleared.code).toBe(0);
+    expect(cleared.out).toContain("cleared: the centre no longer has fading.");
+    expect(cleared.out).toContain("PneumaSpace has not finished purging fading: its name stays taken there until it does.");
+    expect(stack.plane.find("fading")!.status).toBe("purging");
+    expect((await view<HomeModel>("/?done=cleared_purging")).done).toBe(
+      "Done. This Host has forgotten the app. PneumaSpace hasn't finished purging it, and its name stays taken until it does; if it stays so, purge it again in PneumaSpace's console (https://plane.test/), as its owner.",
+    );
+  });
+});
+
 describe("an app that vanished behind the Host's back, on the Cloudflare edition", () => {
   test("the stored views say so once PneumaSpace is asked, without the app's container; a submit is refused; the owner publishes it again", async () => {
     expect((await cli(apps(), ["create", "ghost"])).code).toBe(0);
