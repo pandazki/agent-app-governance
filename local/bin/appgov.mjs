@@ -17,6 +17,9 @@ const STATE_DIR = ".appgov";
 // The name is the framework's (STATE_DIR_NAME in @pneuma-framework/core); a test checks this copy of it.
 const FRAMEWORK_DIR = ".pneuma-framework";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+// The file that marks the apps folder on the person's computer, which the Host looks for to know it sees that folder
+// and not an empty one Docker made (src/apps-folder.ts, HOST_FOLDER_MARKER; a test checks the two agree).
+const HOST_FOLDER_MARKER = ".appgov-host-folder";
 
 const USAGE = `usage: node ${STATE_DIR}/appgov.mjs <command> [--app <name>] [--agent <name>] [--host <url>] [--json]
 
@@ -118,6 +121,23 @@ function findCheckout() {
   return { dir, envFile: file, port: setting("APPGOV_HOST_PORT"), appsDir: appsSetting ? resolve(dir, appsSetting) : join(dir, "apps") };
 }
 const CHECKOUT = findCheckout();
+
+/**
+ * From a checkout, put the marker in the apps folder when a folder of the person's own (APPGOV_APPS_DIR) lacks it:
+ * it is written here, on the person's side, so the Host seeing it shows the Host sees this folder. git puts it in
+ * local/apps. Nothing is created where the folder itself is missing.
+ */
+function markHostFolder() {
+  if (!CHECKOUT || !existsSync(CHECKOUT.appsDir) || existsSync(join(CHECKOUT.appsDir, HOST_FOLDER_MARKER))) return;
+  try {
+    writeFileSync(
+      join(CHECKOUT.appsDir, HOST_FOLDER_MARKER),
+      "This file marks the apps folder on your own computer. The Host looks for it to know it sees this folder,\nnot an empty one Docker made inside its virtual machine (src/apps-folder.ts). Keep it; the Host never writes it.\n",
+    );
+  } catch {
+    // Not writable: the Host's check then says what to do.
+  }
+}
 
 /** One directory, however it is written: symbolic links resolved as far as the path exists, relative paths from the checkout. */
 function samePath(a, b) {
@@ -307,11 +327,16 @@ async function call(method, path, payload) {
 // before does not send; a Host from before levels sends none.
 const HOST_API_LEVEL = 2;
 let hostLevelChecked = false;
+// The Host said it does not see the apps folder on this computer, so it would refuse to create an app.
+let hostFolderUnseen = false;
 
 async function send(method, path, payload) {
   // The first request is always the Host check: nothing is asked of a service that is not an appgov Host this CLI
   // can read, or, from a checkout, of a Host that keeps another apps folder; and nothing is changed on one.
-  if (path !== "/healthz" && !hostLevelChecked) await call("GET", "/healthz");
+  if (path !== "/healthz" && !hostLevelChecked) {
+    markHostFolder();
+    await call("GET", "/healthz");
+  }
   let url;
   try {
     url = new URL(`${HOST}${path}`);
@@ -367,6 +392,9 @@ async function send(method, path, payload) {
         3,
       );
     }
+    // The Host does not see the apps folder on this computer: list and status say so first; create is refused by the Host.
+    hostFolderUnseen = data.apps_folder_seen === false;
+    if (hostFolderUnseen && (command === "list" || command === "status")) console.error(`appgov: WARNING: ${data.apps_folder_problem}`);
     hostLevelChecked = true;
   }
   return { status, data };
@@ -519,7 +547,7 @@ const serves = (s) => !s.standing || s.standing === "running" || s.standing === 
 function printApps({ governance, apps }) {
   if (!apps.length) {
     // As this copy was run: from a checkout that is bin/appgov.mjs, in the apps folder .appgov/appgov.mjs.
-    console.log(`no apps yet. Create one with: node ${relative(process.cwd(), fileURLToPath(import.meta.url)) || "appgov.mjs"} create <name>`);
+    console.log(hostFolderUnseen ? "no apps yet." : `no apps yet. Create one with: node ${relative(process.cwd(), fileURLToPath(import.meta.url)) || "appgov.mjs"} create <name>`);
     return;
   }
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));

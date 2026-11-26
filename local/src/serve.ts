@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { hostFromEnv, hostStateDir, hostUrlFromEnv, picturesFromEnv } from "./config";
 import { ownerLink, ownerTokenIn } from "./owner";
+import { notSeenText, seesHostFolder } from "./apps-folder";
 import { createHostServer } from "./server";
 
 // Entry point of the served (agent-driven) Host: `bun run src/serve.ts`.
@@ -17,13 +18,17 @@ const ownerToken = ownerTokenIn(hostStateDir(process.env), log);
 const pictures = picturesFromEnv(process.env, host, log);
 // Where the apps folder is on the person's computer: the container sees it as /apps. Compose passes the path it mounted.
 const appsFolder = process.env.APPGOV_APPS_HOST_DIR?.trim() || undefined;
-const server = createHostServer(host, { bind, ownerToken, pictures, ...(appsFolder ? { appsFolder } : {}) });
+// The same folder inside the container, to check it is the person's folder and not an empty one Docker made.
+const appsDir = process.env.APPGOV_APPS_DIR?.trim() || undefined;
+const server = createHostServer(host, { bind, ownerToken, pictures, ...(appsFolder ? { appsFolder } : {}), ...(appsFolder && appsDir ? { appsDir } : {}) });
 server.listen(port, bind, () => {
   const { address, port: bound } = server.address() as AddressInfo;
   host.announce();
   pictures.start();
   console.log(`[host] listening on ${address.includes(":") ? `[${address}]` : address}:${bound}, reached at ${hostUrl}; apps: ${host.list().join(", ") || "none yet"}`);
   console.log(`[host] pictures of apps: ${pictures.enabled ? `taken through ${process.env.APPGOV_SCREENSHOT_CDP}` : "off (no APPGOV_SCREENSHOT_CDP); the page shows placeholders"}`);
+  // Before the address and the next steps, so it is the first thing read; the health answer repeats it to the CLI.
+  if (appsFolder && appsDir && !seesHostFolder(appsDir)) console.log(`[host] WARNING: ${notSeenText(appsFolder)}`);
   console.log(`[host] your apps: ${hostUrl}/`);
   console.log(`[host] owner link (open it yourself; it lets that browser approve, deny and undo; delete ${hostStateDir(process.env)}/owner-token to retire it): ${ownerLink(hostUrl, ownerToken)}`);
   // Worded without the words "owner link", so that `grep "owner link"` in the guides finds the link's own line only.

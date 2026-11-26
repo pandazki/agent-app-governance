@@ -1,0 +1,2 @@
+This file marks the apps folder on your own computer. The Host looks for it to know it sees this folder,
+not an empty one Docker made inside its virtual machine (src/apps-folder.ts). Keep it; the Host never writes it.

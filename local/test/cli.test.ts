@@ -10,6 +10,7 @@ import { FRAMEWORK_DIR, STATE_DIR } from "../../host/src/artifact";
 import { AppHost } from "../../host/src/host";
 import { loadRiskPolicy } from "../../host/src/policy";
 import { createHostServer, HOST_API_LEVEL } from "../src/server";
+import { HOST_FOLDER_MARKER } from "../src/apps-folder";
 import { runCommand } from "../../host/src/space";
 import { FakeSpace, templateTests } from "./fake-space";
 
@@ -64,6 +65,12 @@ describe("the CLI, the Host and the framework name the same directories", () => 
 
   test("the CLI's STATE_DIR is the Host's own directory", () => {
     expect(named("STATE_DIR")).toBe(STATE_DIR);
+  });
+
+  test("the CLI and the Host name the apps folder's marker alike, and git keeps it in local/apps", () => {
+    expect(named("HOST_FOLDER_MARKER")).toBe(HOST_FOLDER_MARKER);
+    expect(existsSync(join(EXAMPLE, "apps", HOST_FOLDER_MARKER))).toBe(true);
+    expect(readFileSync(join(EXAMPLE, ".gitignore"), "utf8")).toContain(`!apps/${HOST_FOLDER_MARKER}`);
   });
 
   test("the CLI's FRAMEWORK_DIR and the Host's are the framework's STATE_DIR_NAME, and differ from the Host's own", () => {
@@ -792,6 +799,8 @@ describe("the artifact CLI's connection to the Host", () => {
       result = await run(dir, "list");
       expect(result.code).toBe(0);
       expect(result.output).toContain("found-by-env");
+      // A folder of the person's own gets the marker from this side, so the Host can tell it sees the folder.
+      expect(existsSync(join(dir, "..", "my-apps", HOST_FOLDER_MARKER))).toBe(true);
     });
 
     test("a program that is not an appgov Host is refused after one GET, and the message says where the address came from", async () => {
@@ -1497,5 +1506,49 @@ describe("the owner's take-down, bring-back, publish-again and clear in a termin
     expect(again.code).toBe(0);
     expect(again.out).toContain("ghost is on PneumaSpace again, serving v1, with no stored data");
     expect(space.live.get("ghost")!.status).toBe("registered");
+  });
+});
+
+describe("a Host that does not see the apps folder on this computer", () => {
+  test("its health answer says so, list and status print it first, create is refused with what to do, and the marker clears it", async () => {
+    // The folder as the container sees it when Docker's virtual machine does not share the person's folder: empty.
+    const seen = mkdtempSync(join(work, "made-by-docker-"));
+    const server = createHostServer(host, { appsFolder: "/private/tmp/clone/local/apps", appsDir: seen });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const run = (...args: string[]) => runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd: work, env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
+    try {
+      const health = (await (await fetch(`${url}/healthz`)).json()) as { apps_folder_seen?: boolean; apps_folder_problem?: string };
+      expect(health.apps_folder_seen).toBe(false);
+      expect(health.apps_folder_problem).toStartWith("this Host does not see the apps folder /private/tmp/clone/local/apps on your computer");
+      for (const args of [["list"], ["status", "nothing-here"]]) {
+        // Said first, before what the command prints.
+        expect((await run(...args)).output).toStartWith("appgov: WARNING: this Host does not see the apps folder /private/tmp/clone/local/apps on your computer");
+      }
+      // The empty list does not suggest creating one, which would be refused.
+      expect((await run("list")).output).not.toContain("Create one with");
+      const refused = await run("create", "would-be-lost");
+      expect(refused.code).not.toBe(0);
+      expect(refused.output).toContain("an app created now would not be in your folder and would be lost with that machine");
+      expect(refused.output).toContain("Clone under your home folder, or share /private/tmp/clone/local/apps with Docker's virtual machine");
+      expect(host.list()).not.toContain("would-be-lost");
+      // Written on the person's side, the marker shows through: no warning, and creating works.
+      writeFileSync(join(seen, HOST_FOLDER_MARKER), "");
+      expect((await run("list")).output).not.toContain("WARNING");
+      expect((await run("create", "seen-at-last")).code).toBe(0);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test("a Host outside a container (no apps directory to check) is not checked", async () => {
+    const server = createHostServer(host, { appsFolder: "/x/apps" });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const health = (await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/healthz`)).json()) as Record<string, unknown>;
+      expect(health).toEqual({ ok: true, apps_folder: "/x/apps" });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
+import { notSeenText, seesHostFolder } from "./apps-folder";
 import { LIFECYCLE_VERBS, lifecycle, reasonOf } from "./lifecycle-routes";
 import { servePage, type PagePictures } from "./owner";
 import type { PageAssets } from "./page";
@@ -49,6 +50,11 @@ export interface HostServerOptions {
   readonly assets?: PageAssets;
   /** The apps folder as the person's own computer names it (APPGOV_APPS_HOST_DIR), for the page's first steps. */
   readonly appsFolder?: string;
+  /**
+   * The same folder as this process sees it, when the Host runs in a container that mounts it: with `appsFolder`,
+   * the Host checks it sees the person's folder, not one Docker made (src/apps-folder.ts), and refuses to create an app until it does.
+   */
+  readonly appsDir?: string;
 }
 
 /**
@@ -134,6 +140,8 @@ function provenance(input: Record<string, unknown>, agent: string): AgentProvena
 }
 
 export function createHostServer(host: AppHost, options: HostServerOptions = {}) {
+  // Asked each time, so sharing the folder and restarting is not needed for a marker written after the start.
+  const unseen = (): string | null => (options.appsFolder && options.appsDir && !seesHostFolder(options.appsDir) ? notSeenText(options.appsFolder) : null);
   const route = async (req: IncomingMessage): Promise<unknown> => {
     refuseWhatABrowserCouldSend(req, host.hostUrl, options.bind);
     const url = new URL(req.url ?? "/", "http://host");
@@ -141,12 +149,16 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
     const method = req.method ?? "GET";
 
     // The CLI's first question. A checkout's CLI compares the apps folder with its own, so it never works with another checkout's Host unawares.
-    if (method === "GET" && url.pathname === "/healthz") return { ok: true, ...(options.appsFolder ? { apps_folder: options.appsFolder } : {}) };
+    if (method === "GET" && url.pathname === "/healthz") {
+      return { ok: true, ...(options.appsFolder ? { apps_folder: options.appsFolder } : {}), ...(unseen() ? { apps_folder_seen: false, apps_folder_problem: unseen() } : {}) };
+    }
     if (parts[0] !== "apps") throw new HostError(404, "not found");
     if (parts.length === 1) {
       if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: await host.summaries() };
       if (method === "POST") {
         const input = await body(req);
+        const problem = unseen();
+        if (problem) throw new HostError(409, problem, "apps_folder_not_seen");
         return host.create(text(input.name, "name"), typeof input.intent === "string" ? input.intent : undefined);
       }
     }
