@@ -140,7 +140,8 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
     const parts = url.pathname.split("/").filter(Boolean);
     const method = req.method ?? "GET";
 
-    if (method === "GET" && url.pathname === "/healthz") return { ok: true };
+    // The CLI's first question. A checkout's CLI compares the apps folder with its own, so it never works with another checkout's Host unawares.
+    if (method === "GET" && url.pathname === "/healthz") return { ok: true, ...(options.appsFolder ? { apps_folder: options.appsFolder } : {}) };
     if (parts[0] !== "apps") throw new HostError(404, "not found");
     if (parts.length === 1) {
       if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: await host.summaries() };

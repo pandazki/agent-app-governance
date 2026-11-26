@@ -241,3 +241,14 @@ export function ConnectionsBlock({ connections, connect }: { connections: readon
     </Collapsible>
   );
 }
+
+/** "Connect my AI assistant" beside the title, while apps exist and no assistant is connected. Only the owner connects one. */
+export function ConnectFirstButton({ label, onClick }: { label: string; onClick: () => void }) {
+  const owner = useOwner();
+  if (owner.state !== "yes") return null;
+  return (
+    <Button variant="accent" size="sm" className="text-[12.5px]" onClick={onClick}>
+      {label}
+    </Button>
+  );
+}

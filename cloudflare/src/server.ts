@@ -171,7 +171,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
 
   const subjectOf = (principal: Principal) => (principal.kind === "owner" ? ownerSubject : `agent:token-${principal.id}`);
   const requireOwner = (principal: Principal, what: string) => {
-    if (principal.kind !== "owner") throw new HostError(403, `${what} is the owner's decision; an agent token cannot do it. Sign in as the owner.`, "owner_required");
+    if (principal.kind !== "owner") throw new HostError(403, `${what} is the owner's decision; a token cannot do it. Sign in as the owner.`, "owner_required");
   };
   const appRoot = (name: string) => appPaths(appsDir, name).root;
   const current = (name: string): string | null => {

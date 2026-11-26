@@ -701,12 +701,17 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
 }
 
 /**
- * What the home view says about getting started: with no apps, the steps to a first one, in order, and where the
- * person is in them; with apps, the hint for the next one. On the Cloudflare edition an assistant connects from the
- * page with a one-time code, so the first step is done once one is connected. On the local edition an agent needs no
- * credential: the apps folder already tells it what it needs, so "connecting" is opening the assistant there.
+ * What the home view says about getting started. On the Cloudflare edition an assistant connects from the page with a
+ * one-time code, and what comes next depends on whether one is connected, not on whether there are apps:
+ *   - no apps, none connected: the steps, connecting first;
+ *   - apps, none connected: connecting, as the action beside the title; no hint, which would send the person to an
+ *     assistant they do not have;
+ *   - none of the apps yet, one connected: the steps, the first one done;
+ *   - apps and one connected: the hint for the next app, folded away.
+ * On the local edition an agent needs no credential: the apps folder already tells it what it needs, so "connecting"
+ * is opening the assistant there, and the steps show until the first app exists.
  */
-function firstSteps(ctx: PageContext, w: Words, empty: boolean): Pick<HomeModel, "start" | "hint" | "connect" | "connections"> {
+function firstSteps(ctx: PageContext, w: Words, empty: boolean): Pick<HomeModel, "start" | "hint" | "connectFirst" | "connect" | "connections"> {
   const iso = (ms: number | undefined) => (typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : undefined);
   const valid = ctx.connections ? [...ctx.connections].sort((a, b) => b.created_at - a.created_at) : null;
   const connections: Connection[] | null = valid
@@ -718,7 +723,8 @@ function firstSteps(ctx: PageContext, w: Words, empty: boolean): Pick<HomeModel,
     : null;
   const connect: ConnectModel | null = valid ? { url: "/owner/connect", stateUrl: "/owner/connect/{id}/state", cancelUrl: "/owner/connect/{id}/cancel", done: link("/", ctx.lang), sentence: w.connect_sentence } : null;
   const ask = { label: w.start_ask_label, text: w.hint_new, mono: false };
-  if (!empty) return { start: null, hint: { body: w.hint_body, example: w.hint_new }, connect, connections };
+  if (!empty && valid && !valid.length) return { start: null, hint: null, connectFirst: w.start_connect, connect, connections };
+  if (!empty) return { start: null, hint: { body: w.hint_body, example: w.hint_new }, connectFirst: null, connect, connections };
   const steps: StartStep[] = valid
     ? [
         { title: w.start_connect, state: valid.length ? "done" : "now", copy: null, doneNote: valid[0] ? fill(w.start_connected, { label: valid[0].label }) : null, more: null, connect: true },
@@ -736,7 +742,7 @@ function firstSteps(ctx: PageContext, w: Words, empty: boolean): Pick<HomeModel,
         // Whether the assistant was opened there, this Host cannot tell: the sentence is shown from the start.
         { title: w.start_ask, state: "now", copy: ask, doneNote: null, more: null, connect: false },
       ];
-  return { start: { steps }, hint: null, connect, connections };
+  return { start: { steps }, hint: null, connectFirst: null, connect, connections };
 }
 
 // --- the history, as a person would tell it ------------------------------------
@@ -1326,7 +1332,8 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
       previewMissing ? { label: w.d_preview, value: `${str(pending.preview?.app)} (${preview.unknown ? w.d_preview_unknown : w.d_preview_gone}): ${str(pending.preview?.note)}` } : null,
       { label: w.d_manager, value: manager.note },
       { label: w.d_agent, value: `${str(pending.agent)}${pending.agent_provenance?.source ? ` (${str(pending.agent_provenance.source)})` : ""}`, mono: true },
-      pending.credential ? { label: w.d_credential, value: str(pending.credential), mono: true } : null,
+      // Stored as `agent token "<label>" (<id>)`; said with the one word the page and the CLI use for it.
+      pending.credential ? { label: w.d_credential, value: str(pending.credential).replace(/^agent token /, "token "), mono: true } : null,
       { label: w.d_terminal, value: `${cli(`approve ${changeId} --app ${name}`)} · ${cli(`deny ${changeId} --app ${name}`)}`, mono: true },
     ]),
   };

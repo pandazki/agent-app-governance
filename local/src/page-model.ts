@@ -167,8 +167,10 @@ export interface HomeModel extends Common {
   readonly checked: Checked | null;
   /** While there are no apps: the steps to a first one, in place of the empty list and of `hint`. */
   readonly start: StartModel | null;
-  /** What to tell the agent for a new app or a change; null while `start` says it. */
+  /** What to tell the agent for a new app or a change; null while `start` says it, or while no assistant is connected. */
   readonly hint: Hint | null;
+  /** Apps exist and no assistant is connected (the Cloudflare edition): the action beside the title, in place of `hint`. */
+  readonly connectFirst: string | null;
   /** Connecting an assistant from this page (the Cloudflare edition); null where agents need no credential. */
   readonly connect: ConnectModel | null;
   /** The assistants connected to this Host, with a way to revoke each (the Cloudflare edition). */

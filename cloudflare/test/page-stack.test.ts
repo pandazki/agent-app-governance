@@ -132,7 +132,7 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     // No picture is ever taken here, so the views leave out the frames one would fill.
     expect(model.picturesNever).toBe(true);
     expect(model.before.shot?.caption).toBe("No pictures on this Host. Use Open to see the app.");
-    expect(model.facts.find((fact) => fact.label === "Credential")?.value).toMatch(/^agent token "laptop" \(t[0-9a-f]+\)$/);
+    expect(model.facts.find((fact) => fact.label === "Credential")?.value).toMatch(/^token "laptop" \(t[0-9a-f]+\)$/);
     expect(model.access.kind).toBe("session");
     // In Chinese, the page's own words are Chinese; the agent's words and the token's label stay as they were written.
     const zh = await view<ChangeModel>(`/app/journal/change/${ids.identity}?lang=zh`);

@@ -743,13 +743,102 @@ describe("the artifact CLI's connection to the Host", () => {
         const run = (...args: string[]) => runCommand(["node", join(EXAMPLE, "bin", "appgov.mjs"), ...args], { cwd: appDir, env: { APPGOV_HOST: url, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
         for (const args of [["list"], ["status", "older"], ["history", "older"], ["submit", "x", "--app", "older"], ["undo", "back", "--app", "older"], ["discard", "--app", "older"], ["create", "new"]]) {
           const result = await run(...args);
-          expect({ args, code: result.code, output: result.output }).toEqual({ args, code: 3, output: `appgov: the Host at ${url} is older than this CLI; rebuild it: docker compose up -d --build` });
+          const older = `appgov: the Host at ${url} is older than this CLI; rebuild it: docker compose up -d --build`;
+          // Without the level header it cannot be told from another program: the message says both, and how to rebuild.
+          if (level === undefined) {
+            expect(result.code).toBe(3);
+            expect(result.output).toContain(`what answers at ${url} is not an appgov Host: its answer (HTTP 200) has no appgov-api header`);
+            expect(result.output).toContain("an appgov Host from before API levels, which needs a rebuild (docker compose up -d --build)");
+          } else expect({ args, code: result.code, output: result.output }).toEqual({ args, code: 3, output: older });
         }
         expect(seen.filter((request) => !request.startsWith("GET "))).toEqual([]);
       } finally {
         await stop(server);
       }
     }
+  });
+
+  describe("run from a checkout (local/bin/appgov.mjs), with the ports changed in local/.env", () => {
+    /** A checkout as compose sees it: compose.yaml, .env, and this CLI in bin/. No APPGOV_HOST. */
+    const checkout = (env: string) => {
+      const dir = join(mkdtempSync(join(work, "checkout-")), "local");
+      mkdirSync(join(dir, "bin"), { recursive: true });
+      writeFileSync(join(dir, "bin", "appgov.mjs"), readFileSync(join(EXAMPLE, "bin", "appgov.mjs")));
+      writeFileSync(join(dir, "compose.yaml"), "services: {}\n");
+      writeFileSync(join(dir, ".env"), env);
+      // As node names the CLI's own directory: symbolic links resolved (on macOS the temporary folder is behind one).
+      return realpathSync(dir);
+    };
+    const run = (dir: string, ...args: string[]) =>
+      runCommand(["node", join(dir, "bin", "appgov.mjs"), ...args], { cwd: dir, env: { APPGOV_HOST: undefined, APPGOV_HOST_PORT: undefined, APPGOV_APPS_DIR: undefined, APPGOV_AGENT: "codex" }, timeoutMs: 20_000 });
+    const port = (url: string) => new URL(url).port;
+    const record = (appsDir: string, url: string) => {
+      mkdirSync(join(appsDir, STATE_DIR), { recursive: true });
+      writeFileSync(join(appsDir, STATE_DIR, "host.json"), JSON.stringify({ schema_version: 1, url, recorded_at: "2026-11-26T10:00:00.000Z", scope: "apps", note: "" }));
+    };
+
+    test("the runbook's list finds the Host: by APPGOV_HOST_PORT in .env before the Host records itself, then by the record in the apps folder", async () => {
+      await host.create("found-by-env");
+      const dir = checkout(`# chosen because 8090 was taken\nAPPGOV_HOST_PORT=${port(hostUrl)}\nPNEUMA_SPACE_HTTP_PORT=48360\n`);
+      let result = await run(dir, "list");
+      expect(result.code).toBe(0);
+      expect(result.output).toContain("found-by-env");
+      // The record the Host writes wins over .env, in the apps folder .env names.
+      const closed = createTcpServer();
+      const other = await listen(closed);
+      await stop(closed);
+      writeFileSync(join(dir, ".env"), `APPGOV_HOST_PORT=${port(other)}\nAPPGOV_APPS_DIR=../my-apps\n`);
+      record(join(dir, "..", "my-apps"), hostUrl);
+      result = await run(dir, "list");
+      expect(result.code).toBe(0);
+      expect(result.output).toContain("found-by-env");
+    });
+
+    test("a program that is not an appgov Host is refused after one GET, and the message says where the address came from", async () => {
+      const seen: string[] = [];
+      const server = createHttpServer((req, res) => {
+        seen.push(`${req.method} ${req.url}`);
+        req.resume();
+        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true,"status":"green"}');
+      });
+      try {
+        const url = await listen(server);
+        const dir = checkout(`APPGOV_HOST_PORT=${port(url)}\n`);
+        for (const args of [["list"], ["create", "x"]]) {
+          const result = await run(dir, ...args);
+          expect(result.code).toBe(3);
+          expect(result.output).toContain(`what answers at http://127.0.0.1:${port(url)} is not an appgov Host`);
+          expect(result.output).toContain(`That address is APPGOV_HOST_PORT from ${join(dir, ".env")}`);
+        }
+        expect(seen).toEqual(["GET /healthz", "GET /healthz"]);
+      } finally {
+        await stop(server);
+      }
+    });
+
+    test("another checkout's Host is refused unless the address is named on purpose", async () => {
+      const elsewhere = createHostServer(host, { appsFolder: "/Users/someone/other-checkout/local/apps" });
+      try {
+        const url = await listen(elsewhere);
+        const dir = checkout(`APPGOV_HOST_PORT=${port(url)}\n`);
+        const refused = await run(dir, "list");
+        expect(refused.code).toBe(3);
+        expect(refused.output).toContain(`keeps the apps folder /Users/someone/other-checkout/local/apps, not this checkout's (${join(dir, "apps")})`);
+        expect(refused.output).toContain(`pass --host http://127.0.0.1:${port(url)}`);
+        expect((await run(dir, "list", "--host", url)).code).toBe(0);
+        // Its own Host, which names this checkout's apps folder (on macOS through the temporary folder's symbolic link), is used without a word.
+        const own = createHostServer(host, { appsFolder: `${dir.replace(/^\/private\//, "/")}/apps` });
+        try {
+          const ownUrl = await listen(own);
+          writeFileSync(join(dir, ".env"), `APPGOV_HOST_PORT=${port(ownUrl)}\n`);
+          expect((await run(dir, "list")).code).toBe(0);
+        } finally {
+          await stop(own);
+        }
+      } finally {
+        await stop(elsewhere);
+      }
+    });
   });
 
   test("a refusal from the Host is reported through its error field", async () => {
@@ -1147,7 +1236,7 @@ describe("from the directory that holds the apps, or from anywhere with the guid
     expect(guide.stdout).toContain(`\`node '${cli}' list\``);
     expect(guide.stdout).toContain(`\`node '${cli}' status <name>\``);
     expect(guide.stdout).toContain(`\`node '${cli}' create <name>\``);
-    expect(guide.stdout).toContain("A change goes live only through that app's own submit.");
+    expect(guide.stdout).toContain("An app here goes live only through this CLI's create and submit. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it.");
     // From an app's directory the block is the same: the apps live in its parent.
     expect((await bare(join(appsDir(), "alpha"), ".appgov/appgov.mjs", ["guide"])).stdout).toBe(guide.stdout);
 

@@ -2470,7 +2470,7 @@ describe("every app at a glance, and the directory that holds them", () => {
     expect(agents).toContain("The Host is at http://127.0.0.1:48363");
     expect(agents).toContain("`node .appgov/appgov.mjs list`");
     expect(agents).toContain("`node .appgov/appgov.mjs create <name>`");
-    expect(agents).toContain("follow its own `AGENTS.md`. A change goes live only through that app's `submit`");
+    expect(agents).toContain("follow its own `AGENTS.md`. An app here goes live only through this CLI's `create` and `submit`.");
     expect(agents).toEndWith("My own notes about these apps.\n");
     expect(readFileSync(join(appsDir, "CLAUDE.md"), "utf8")).toBe("Mine.\n");
     expect(readFileSync(join(appsDir, ".appgov", "appgov.mjs"), "utf8")).toBe(readFileSync(join(EXAMPLE, "bin", "appgov.mjs"), "utf8"));
@@ -2958,5 +2958,17 @@ describe("the in-memory PneumaSpace refuses what PneumaSpace refuses", () => {
     expect((await space.app("try"))!.expiresAt).toBe(end);
     expect(await space.discard("try")).toBe(true);
     expect(await space.app("try")).toBeNull();
+  });
+});
+
+describe("the instructions an agent gets name one way to publish", () => {
+  // Coding agents bring their own publishing skills and hosting tools: each instruction file, in both editions, rules them out.
+  test("the apps directory's AGENTS.md and each app's, local and Cloudflare", () => {
+    const rule =
+      "An app here goes live only through this CLI's `create` and `submit`. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it.";
+    const root = join(import.meta.dir, "..", "..");
+    for (const file of ["local/overlay/AGENTS.apps.md", "local/overlay/AGENTS.appgov.md", "cloudflare/overlay/AGENTS.start.md", "cloudflare/overlay/AGENTS.appgov.md"]) {
+      expect({ file, has: readFileSync(join(root, file), "utf8").includes(rule) }).toEqual({ file, has: true });
+    }
   });
 });

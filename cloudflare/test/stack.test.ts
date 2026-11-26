@@ -148,7 +148,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.plane.apps.some((a) => a.expiresAt !== null && a.status === "purged")).toBe(true);
     expect(stack.bucket.objects.has(folderKey("todo"))).toBe(true);
     // Made with the agent token: the record names the agent and the token, not the Host on the owner's behalf.
-    expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(agent token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
+    expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
   });
 
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {
@@ -201,7 +201,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.plane.serving("todo")).not.toBeNull();
     // The approval is the owner's, recorded as theirs; the change's author stays beside it.
     const history = (await cli(copy(), ["history"])).out;
-    expect(history).toContain("change needs_approval by test-agent (agent token");
+    expect(history).toContain("change needs_approval by test-agent (token");
     expect(history).toMatch(/decision published -> v3 by user:owner \(owner session\) \[owner\]: Let visitors in/);
     expect(history).toContain("    the change was made by test-agent");
   });
@@ -210,7 +210,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     // Where there is no agent token, a write does not fall back to the owner's session: that takes --owner and a terminal.
     const noToken = await cli(root, ["--host", stack.url, "--app", "todo", "undo", "the owner wants sign-in back"], { owner: true });
     expect(noToken.code).toBe(3);
-    expect(noToken.out).toContain("no agent token for the centre");
+    expect(noToken.out).toContain("no token for the centre");
     expect((await cli(root, ["--host", stack.url, "--app", "todo", "undo", "--owner", "back"], { owner: true })).code).toBe(2);
     // Run by the owner from inside another agent's environment: the record names the owner, not that agent.
     const undone = await inTerminal(root, ["--host", stack.url, "--app", "todo", "undo", "--owner", "the owner wants sign-in back"], { owner: true, env: { CLAUDECODE: "1" }, answers: ["undo"] });
@@ -374,7 +374,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     writeFileSync(server, `${readFileSync(server, "utf8")}// one more line\n`);
     expect((await cli(copy(), ["submit", "One more line"])).code).toBe(0);
     expect((await cli(copy(), ["undo", "not that line"], { owner: true })).code).toBe(0);
-    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v\d+ by test-agent \(agent token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]: not that line/);
+    expect((await cli(copy(), ["history"])).out).toMatch(/restore rolled_back -> v\d+ by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]: not that line/);
     // Submitting as the owner takes the terminal and the word as well.
     writeFileSync(server, `${readFileSync(server, "utf8")}// the owner's own line\n`);
     expect((await cli(copy(), ["submit", "--owner", "The owner's line"], { owner: true })).code).toBe(2);

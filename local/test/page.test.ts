@@ -803,4 +803,39 @@ describe("the first minute, on the page", () => {
     const cli = homeModel(overview, { ...session, connections: [{ id: "t0123456789ac", label: "laptop", created_at: at, last_used_at: Date.now() }] });
     expect(words(cli.connections?.[0]?.meta)).toBe("made in a terminal {rel} · last used {rel}");
   });
+
+  test("signed in, what comes next follows whether an assistant is connected, for each of the four cases", async () => {
+    const at = Date.now() - 86_400_000;
+    const one = [{ id: "t0123456789ab", label: "MacBook", created_at: at, via: "code" as const, agent: "codex" }];
+    const shape = async (lang: "en" | "zh", connections: typeof one | []) => {
+      const { ctx, overview } = await context(lang);
+      const home = homeModel(overview, { ...ctx, access: { kind: "session", csrf: "c" } as const, connections });
+      return { home, html: draw(home, "yes") };
+    };
+    // No apps, none connected: the steps, connecting first; nothing else asks for room.
+    let { home, html } = await shape("en", []);
+    expect([home.start?.steps.map((s) => s.state), home.hint, home.connectFirst]).toEqual([["now", "later"], null, null]);
+    expect(html).not.toContain("AI assistants");
+    expect(html).not.toContain("folder you connected");
+    // None of the apps yet, one connected: the steps with the first one done; the list of assistants folded at the end.
+    ({ home, html } = await shape("en", one));
+    expect([home.start?.steps.map((s) => s.state), home.hint, home.connectFirst]).toEqual([["done", "now"], null, null]);
+    expect(html).toContain("AI assistants · 1");
+    await host.create("notes");
+    // Apps, none connected: connecting is the action beside the title, and the hint, which names a connected folder, is not there.
+    ({ home, html } = await shape("en", []));
+    expect([home.start, home.hint, home.connectFirst]).toEqual([null, null, "Connect my AI assistant"]);
+    const header = html.slice(0, html.indexOf("</header>"));
+    expect(header).toContain(">Connect my AI assistant</button>");
+    expect(html).not.toContain("Want a new app, or a change?");
+    expect(html).not.toContain("AI assistants");
+    expect((await shape("zh", [])).home.connectFirst).toBe("连接我的 AI 助手");
+    // Apps and one connected: no action beside the title; the hint, now true, folded away with the list of assistants.
+    ({ home, html } = await shape("en", one));
+    expect([home.start, home.connectFirst]).toEqual([null, null]);
+    expect(home.hint?.body).toBe("Tell your agent. Open Claude Code or Codex in the folder you connected and say something like:");
+    expect(html.slice(0, html.indexOf("</header>"))).not.toContain("Connect my AI assistant");
+    expect(html).toContain("Want a new app, or a change?");
+    expect(html).toContain("AI assistants · 1");
+  });
 });

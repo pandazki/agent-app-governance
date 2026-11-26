@@ -2,7 +2,7 @@
 
 This directory is a working copy of a published app whose record is kept by an appgov Host on Cloudflare (the centre). The centre holds the app's folder: its source, every version and the history. This copy mirrors it: every version and the history are in `.pneuma-framework/`, which pneuma-framework writes at the centre; the CLI and the centre's address are in `.appgov/`. Any coding agent can pick it up; the rules in this part are the whole protocol.
 
-The part after this one, "PneumaSpace app on Cloudflare", describes the platform, the manifest and the native services. Use it for writing code. **Never publish to PneumaSpace yourself.** In this directory a change goes live only through `submit`, described next.
+The part after this one, "PneumaSpace app on Cloudflare", describes the platform, the manifest and the native services. Use it for writing code. **Never publish to PneumaSpace yourself.** An app here goes live only through this CLI's `create` and `submit`. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it.
 
 ## Changing this app (read this before the first edit)
 
@@ -22,9 +22,9 @@ A request to change the app is finished only when `submit` has answered. Files y
 
 If `submit` says this working copy is behind (someone else released a version since it was last brought up to date), run `node .appgov/appgov.mjs fetch` and make the change again; `fetch` refuses while you have edits it would overwrite.
 
-`.appgov/centre.json` holds the centre's address and the agent token this copy uses. It is never part of a version and is never sent to the centre with your files. Do not print it, copy it into another file, or commit it; `.gitignore` keeps it out of git. If the CLI cannot reach the centre, it says which address it tried; ask the user, do not start anything yourself.
+`.appgov/centre.json` holds the centre's address and the token this copy uses. It is never part of a version and is never sent to the centre with your files. Do not print it, copy it into another file, or commit it; `.gitignore` keeps it out of git. If the CLI cannot reach the centre, it says which address it tried; ask the user, do not start anything yourself.
 
-What acts as the owner is the user's to run, in their own terminal: `approve`, `deny`, `undo --accept-one-way`, `login`, `token`, `container stop`, and any command with `--owner`. Never run them, never read the owner's files under `~/.appgov/`, and never send the centre anything but this copy's token through the CLI. Everything you run goes with the agent token and is recorded as yours.
+What acts as the owner is the user's to run, in their own terminal: `approve`, `deny`, `undo --accept-one-way`, `login`, `token`, `container stop`, and any command with `--owner`. Never run them, never read the owner's files under `~/.appgov/`, and never send the centre anything but this copy's token through the CLI. Everything you run goes with that token and is recorded as yours.
 
 ## Notes for the next agent
 

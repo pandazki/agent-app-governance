@@ -79,6 +79,36 @@ describe("the runbook and Start here, checked without an install", () => {
     expect(lines).toContain("cd local");
     expect(lines).toContain("docker compose up -d --build");
     expect(lines).toContain("node bin/appgov.mjs list");
+    // The clone goes into a named subfolder, never into the folder the agent was opened in.
+    expect(lines).toContain(`git clone ${REPO_URL}.git agent-app-governance`);
+    expect(lines).toContain("cd agent-app-governance");
+  });
+
+  test("the first Docker check tells Docker not running apart from Docker running under another context, with commands that change nothing", () => {
+    const rows = RUNBOOK.split("\n").filter((line) => line.startsWith("| Docker answers |"));
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row).toContain('"When `docker info` fails"');
+      expect(row).not.toContain("not running");
+    }
+    const start = RUNBOOK.indexOf("**When `docker info` fails**");
+    expect(start).toBeGreaterThan(-1);
+    const part = RUNBOOK.slice(start, RUNBOOK.indexOf("\n#", start));
+    const says = [...part.matchAll(/Say: "([^"]+)"/g)].map(([, s]) => s!);
+    expect(says.length).toBe(2);
+    const [stopped, elsewhere] = [says.find((s) => s.includes("not running")), says.find((s) => s.includes("docker context use <name>"))];
+    for (const words of ["Docker Desktop", "`colima start`"]) expect(stopped).toContain(words);
+    expect(stopped).not.toContain("docker context use");
+    for (const words of ["`<name>`", "`<current>`", "`DOCKER_CONTEXT=<name>`"]) expect(elsewhere).toContain(words);
+    expect(elsewhere).not.toContain("not running");
+    // What the agent runs here only reads: the commands outside the two messages.
+    const run = [...part.replace(/Say: "[^"]+"/g, "").matchAll(/`(docker [^`]+)`/g)].map(([, c]) => c!);
+    expect(run).toEqual(expect.arrayContaining(["docker context ls -q", "docker context show"]));
+    for (const command of run) expect({ command, reads: /^docker (info\b|context (ls|show)\b|--context \S+ info\b)/.test(command) }).toEqual({ command, reads: true });
+  });
+
+  test("an agent's credential has one name: a token, 令牌", () => {
+    for (const doc of DOCS) expect({ doc, found: /access key|访问密钥|agent token|agent 令牌/i.exec(read(doc))?.[0] ?? null }).toEqual({ doc, found: null });
   });
 
   test("the local install's checks match compose.yaml: the ports, the six services, the names, the settings for another stack", () => {
@@ -94,11 +124,21 @@ describe("the runbook and Start here, checked without an install", () => {
     expect(RUNBOOK).toContain("PNEUMA_SPACE_NETWORK=");
     // Six services start by default (those under a profile do not).
     const block = compose.slice(compose.indexOf("\nservices:\n"), compose.search(/\n(?:volumes|networks):\n/));
-    const services = [...block.matchAll(/^ {2}([a-z][a-z0-9-]*):\n((?: {4}.*\n|\s*#.*\n|\n)*)/gm)].filter(([, , body]) => !/^ {4}profiles:/m.test(body!)).map(([, name]) => name);
+    const defined = [...block.matchAll(/^ {2}([a-z][a-z0-9-]*):\n((?: {4}.*\n|\s*#.*\n|\n)*)/gm)];
+    const services = defined.filter(([, , body]) => !/^ {4}profiles:/m.test(body!)).map(([, name]) => name);
     expect(services.length).toBe(6);
     expect(RUNBOOK).toContain("six services");
-    // The checks it runs against the stack answer where it says.
+    // The checks it runs against the stack answer where it says, and ask Compose for the port, so a port changed in
+    // .env needs nothing by hand: no command names a port the stack listens on, and the hand-off takes Compose's answer.
     expect(compose).toContain("http://127.0.0.1:8081/healthz");
+    const bodies = new Map(defined.map(([, name, body]) => [name!, body!]));
+    for (const [service, port] of [["host", 8090], ["gateway", 8081]] as const) {
+      expect(bodies.get(service)).toContain(`:${port}"`);
+      expect(RUNBOOK).toContain(`$(docker compose port ${service} ${port})`);
+    }
+    for (const line of commands(RUNBOOK)) expect({ line, port: /127\.0\.0\.1:(8080|8081|8090|9000)\b/.test(line) }).toEqual({ line, port: false });
+    expect(RUNBOOK).toContain("Your apps page is `http://<address>/`");
+    expect(RUNBOOK).toContain("`<address>` is what `docker compose port host 8090` printed");
     // `grep "owner link"` in the hand-off finds the link's own line: no other line the Host prints at start says those words.
     const serve = read("local/src/serve.ts");
     expect(serve.split("\n").filter((line) => line.includes("console.log(") && line.includes("owner link")).length).toBe(1);

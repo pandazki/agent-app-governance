@@ -8,6 +8,6 @@ Run these from this directory; nothing needs installing:
 - `node .appgov/appgov.mjs status <name>` and `node .appgov/appgov.mjs history <name>`: one app in full.
 - `node .appgov/appgov.mjs create <name>`: create and publish a new app. Its directory appears here as `<name>/`.
 
-To change an app, work inside its directory and follow its own `AGENTS.md`. A change goes live only through that app's `submit`; never copy files into an app or publish one another way. When a change waits for the owner, only the owner decides: on the Host's page, opened from their owner link, or in their own terminal. Never approve or deny a change yourself.
+To change an app, work inside its directory and follow its own `AGENTS.md`. An app here goes live only through this CLI's `create` and `submit`. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it. Never copy files into an app. When a change waits for the owner, only the owner decides: on the Host's page, opened from their owner link, or in their own terminal. Never approve or deny a change yourself.
 
 If the CLI cannot reach the Host, it names the address it tried and where that address came from. Ask the user for the right address and pass `--host <url>`.
