@@ -32,7 +32,7 @@ describe("the Cloudflare plane as the Host's runtime", () => {
     const dir = appDir();
     const a = packageApp(dir);
     expect(a.pkg.manifest.contract).toBe("pneuma-space.cf/1");
-    expect(a.pkg.files.map((f) => f.path)).toEqual(["public/app.js", "public/icon.svg", "public/index.html", "public/style.css", "server.mjs"]);
+    expect(a.pkg.files.map((f) => f.path)).toEqual(["public/app.js", "public/icon.svg", "public/index.html", "public/style.css", "server.mjs", "space.mjs"]);
     expect(packageApp(dir).digest).toBe(a.digest);
     writeFileSync(join(dir, "tests", "extra.test.mjs"), "// not published\n");
     expect(packageApp(dir).digest).toBe(a.digest);
