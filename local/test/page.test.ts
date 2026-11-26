@@ -263,6 +263,20 @@ describe("the owner page: what it shows", () => {
     expect(draw(zh)).toContain("回到这个版本");
   });
 
+  test("a waiting change of an app that declares no requests: the page says the preview only showed it starts", async () => {
+    await host.create("notes");
+    rmSync(join(work, "apps", "notes", "src", "preview.json"));
+    const manifest = join(work, "apps", "notes", "pneuma-space.json");
+    const value = JSON.parse(readFileSync(manifest, "utf8"));
+    value.capabilities.identity = { required: false };
+    writeFileSync(manifest, JSON.stringify(value));
+    const result = await host.submit({ name: "notes", intent: "let my family in", agent: "codex" });
+    expect(result.status).toBe("needs_approval");
+    const { ctx } = await context("zh");
+    const model = changeModel("notes", await host.status("notes"), result.change_id, ctx);
+    expect(model.checked.map((row) => row.text)).toContain("试运行时能正常启动，但没有试过它自己的请求");
+  });
+
   test("a waiting change: before and after, what was checked, why it needs the owner, and the decisions", async () => {
     await host.create("notes");
     edit("notes", "src/list.ts", "export const list = [];\n");
@@ -278,7 +292,9 @@ describe("the owner page: what it shows", () => {
     expect(model.gone).toBe(false);
     expect(model.intent).toBe("“let my family in without signing in”");
     expect(words(model.meta)).toBe("Claude Code made this change · {rel}");
-    expect(model.checked.map((row) => row.text)).toEqual(["Its tests passed (2 tests, 0 of them for this app)", "None of those tests were written for this app itself.", "It started when it was tried out", "1 file changed"]);
+    // The app's starter request (src/preview.json) answered on the preview: the page says so in a few words.
+    expect(model.checked.map((row) => row.text)).toEqual(["Its tests passed (2 tests, 0 of them for this app)", "None of those tests were written for this app itself.", "Its own requests answered as expected when it was tried out (1)", "1 file changed"]);
+    expect(model.facts.find((fact) => fact.label === "Preview" && fact.value.startsWith("passed: "))).toBeUndefined();
     // Only what the standing policy could not approve is why it waits: not the code change itself.
     expect(model.why).toEqual(["Anyone with the address could open the app without signing in."]);
     expect(model.oneWay).toBeNull();

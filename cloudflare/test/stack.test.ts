@@ -151,6 +151,31 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
   });
 
+  test("the template's own requests were made against the first preview, with the platform token, in order", async () => {
+    const preview = stack.plane.apps.find((a) => a.expiresAt !== null)!.name;
+    expect(stack.plane.appRequests.filter((line) => line.startsWith(`${preview} `))).toEqual([`${preview} GET /api/items`, `${preview} PUT /api/items`, `${preview} GET /api/items`]);
+    expect((await cli(copy(), ["history"])).out).toContain("preview (passed): 3 requests the app declares in tests/preview.json answered as expected on the preview.");
+  });
+
+  test("a change whose data route breaks is stopped by the preview's requests, and the agent sees what was sent and what came back", async () => {
+    stack.plane.answer = (_app, request) => (request.method === "PUT" ? Response.json({ error: "items is not iterable" }, { status: 500 }) : undefined);
+    writeFileSync(join(copy(), "app", "public", "note.txt"), "a change\n");
+    try {
+      const result = await cli(copy(), ["submit", "Save the shelf"]);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("rejected");
+      // The third request reads what the second should have stored, so it fails too, and says so.
+      expect(result.out).toContain("1 of the 3 requests the app declares in tests/preview.json answered as expected on the preview.");
+      expect(result.out).toContain('request 3 of 3: GET /api/items\n  expected: status 200 and a reply that contains "Checked on the preview"');
+      expect(result.out).toContain('request 2 of 3: PUT /api/items {"revision":null,"items":[{"id":"checked"');
+      expect(result.out).toContain('got: status 500; the reply: {"error":"items is not iterable"}');
+    } finally {
+      stack.plane.answer = null;
+      await cli(copy(), ["discard"]);
+    }
+    expect((await cli(copy(), ["status"])).out).not.toContain("note.txt");
+  });
+
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {
     writeFileSync(join(copy(), "app", "public", "style.css"), "body { background: #fafafa; }\n");
     const submitted = await cli(copy(), ["submit", "Lighter background"]);

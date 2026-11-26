@@ -11,6 +11,7 @@ import {
   type SpaceRuntime,
   type SpaceState,
 } from "../../host/src/space";
+import { boundedText, previewUrl, PREVIEW_REQUEST_LIMITS, type SendToPreview } from "../../host/src/preview-requests";
 import { measured, timed } from "../../host/src/steps";
 
 // ---------------------------------------------------------------------------
@@ -300,10 +301,46 @@ export class CfSpace implements SpaceRuntime {
    * answer. A preview this process published is put to sleep again afterwards, so that a change waiting for the owner
    * does not hold one of the tenant's few awake slots; opening it wakes it.
    */
-  async probe(name: string): Promise<ProbeResult> {
+  async probe(name: string, options: { readonly keepAwake?: boolean } = {}): Promise<ProbeResult> {
     // Both requests at once: each has to be answered by the app, so neither waits for the other.
     const results = await Promise.all(["", "appgov-probe"].map((path) => this.probePath(name, path)));
     const failed = results.findIndex((result) => !result.ok);
+    // The preview's own requests follow: it goes to sleep after them, in `rest`.
+    if (!options.keepAwake || failed !== -1) this.rest(name);
+    if (failed === -1) return results[0]!;
+    const path = failed === 0 ? "" : "appgov-probe";
+    return { ...results[failed]!, detail: `GET /apps/${name}/${path}: ${results[failed]!.detail}` };
+  }
+
+  /**
+   * One of a preview's declared requests, with the platform token the probes use: the app sees the token's user, the
+   * PneumaSpace owner. A reply the platform gave instead of the app (no `server-timing` from the app) is no reply.
+   */
+  readonly request: SendToPreview = async (name, request) => {
+    const url = previewUrl(this.origin, name, request.path);
+    if (!url) return { status: 0, body: "", error: `the path ${JSON.stringify(request.path)} leaves the app` };
+    try {
+      const res = await this.fetcher(url.toString(), {
+        method: request.method,
+        headers: {
+          authorization: `Bearer ${this.opts.token}`,
+          accept: "application/json, text/html;q=0.9, */*;q=0.8",
+          ...(request.body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        ...(request.body !== undefined ? { body: request.body } : {}),
+        redirect: "manual",
+        signal: AbortSignal.timeout(PREVIEW_REQUEST_LIMITS.eachMs),
+      });
+      const byApp = /(^|,)\s*(static|app)\b/.test(res.headers.get("server-timing") ?? "");
+      const body = await boundedText(res);
+      return byApp ? { status: res.status, body } : { status: 0, body: "", error: `PneumaSpace answered ${res.status} for the app, not the app itself: ${body.slice(0, 300)}` };
+    } catch (err) {
+      return { status: 0, body: "", error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+
+  /** Put a preview to sleep once it was checked, without waiting: that is not part of the check, and a discard waits for it. */
+  rest(name: string): void {
     const id = this.ephemeral.get(name);
     if (id && !this.sleeping.has(name)) {
       // Not waited for: putting the preview to sleep is not part of the check, and a preview that is released
@@ -315,9 +352,6 @@ export class CfSpace implements SpaceRuntime {
       this.sleeping.set(name, sleep);
       void sleep.finally(() => this.sleeping.delete(name));
     }
-    if (failed === -1) return results[0]!;
-    const path = failed === 0 ? "" : "appgov-probe";
-    return { ...results[failed]!, detail: `GET /apps/${name}/${path}: ${results[failed]!.detail}` };
   }
 
   private async probePath(name: string, path: string): Promise<ProbeResult> {
