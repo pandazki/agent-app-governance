@@ -189,7 +189,7 @@ Reads come from stored views and summaries, which say what PneumaSpace answered 
 - **A preview never runs the app's scheduled jobs.** It is an ephemeral app, so PneumaSpace never fires its schedules there, and the Host's requests cannot reach `/_pneuma-space/`, where PneumaSpace delivers a job. What a job does is shown only by the app's own tests, which call the job's code like any other function.
 - PneumaSpace tokens cannot purge an app. When you clear an app, or the Host takes down the address of a first release that failed, the app stays on PneumaSpace, removed, and its name stays taken until the PneumaSpace owner purges it in the console. A create under a name that an app this Host does not manage already has on PneumaSpace is refused and says so; the Host never takes over or changes such an app. `create` and `status` print the address of the app's page on PneumaSpace that counts its requests, wakes and sleeps.
 - One container per app, started on demand for what changes the app; reading it needs none, except a plan for going back past the 8 nearest versions and the whole history of an app with more than 50 entries.
-- **The app's folder grows with every version.** Each version is a whole copy of the app (about 85 KB for the starter app), and every operation that changes the app loads and saves the folder whole: in the offline measurement below, 1 MB at 10 versions, 8.8 MB at 100 and 43 MB at 500, saved in 0.1, 0.7 and 3.5 s on one machine. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
+- **The app's folder grows with every version.** Each version is a whole copy of the app (about 85 KB for the starter app), and every operation that changes the app loads and saves the folder whole: in the offline measurement below, 1 MB at 10 versions, 8.8 MB at 100 and 43 MB at 500, saved in 0.1, 0.7 and 3.5 s on one machine. A submit holds the connection open for the whole check: 11.5 to 13 seconds for the starter app in the runs of 2026-11-27 below, about 4 to 5 of them PneumaSpace releasing the preview and then the release.
 - The default rules find destructive SQL by matching text, as in the local edition.
 - **On your machine, your session is a bearer credential.** An agent there runs as your OS user, so it can read `~/.appgov/hosts/<prefix>/session.json` and the owner key beside it. The CLI does not act as you without an interactive terminal and a typed word, and the agent instructions tell agents never to read those files or run those commands. Nothing stops a program that sends your session to the Worker itself, or runs the CLI in a terminal it makes. Against an agent that attacks, keep the owner key and sessions where agents do not run: another OS account or another machine.
 - **For storage other than SQL, the Host relies on the agent's declaration.** The rules read SQL text and the manifest only. A change that deletes or rewrites `kv` entries, files or objects is released by the standing rule unless the agent submits it with `--one-way`.
@@ -234,6 +234,39 @@ Where a submit's time goes, measured with `--timing` (which prints the steps eac
 | The network, the Worker and the Durable Object | 0.9, 0.9, 1.5 | 1.2, 1.4, 1.3 |
 
 The savings taken change nothing that is checked: both probe requests go out at the same time instead of one after the other; putting the preview to sleep after its probe is no longer waited for; the preview is discarded while the release goes out (the release never draws on the preview's upload on this plane, and the submit still answers only once the discard is over); a lookup reads only the app's detail once its id is known, and nothing is read back right after a create; and `npm ci --ignore-scripts` reuses the install an earlier run made from the same `package.json`, lockfile and `.npmrc` in the same container, kept as it was before any test ran and out of the tests user's reach. Not taken: anything that skips or shortens a check (the tests, either probe, the preview), releasing before the preview answers or at the same time as it, running the tests and the preview at the same time (a change that fails its tests would then reach PneumaSpace as a preview), and uploading the release before the decision to release (what goes out has to be the copy checked against the sealed draft right before it is recorded). The two PneumaSpace releases, about 20 s of the 30, are the platform's own work, which this edition does not change. `create` took 44 s before and 32 to 38 s after, `undo` 9 s, `fetch` 1 s.
+
+On 2026-11-27 this was measured again on the deployment, after PneumaSpace began to start a Node app from its code package alone (pandazki/pneuma-space#68). It was measured for the starter app and for the same app with 2.4 MB of static files (six images that do not compress), before and after a second round of savings. Seconds at the CLI. A cold submit is the first one in a new container, and a create always starts one.
+
+| Operation | Starter app, before | Starter app, after | With 2.4 MB, before | With 2.4 MB, after |
+| --- | --- | --- | --- | --- |
+| Submit, container running | 14.9, 15.7, 15.2 | 12.9, 11.5 | 21.5, 20.6 | 15.5 |
+| Submit, new container | 20.7 | 12.7 | 27.3 | 22.8, of which 7.2 is the first start of a newly deployed image |
+| Create | 30.8 | 23.7, 20.4 | | |
+
+PneumaSpace was redeployed between the two sets (pandazki/pneuma-space#71), and its own work releasing the preview and the release took 6.2 to 7.3 s for the starter app before and 4.1 to 5.1 s after. Without those two steps and without starting the container, a submit of the starter app took 8.7 to 8.8 s before and 7.4 to 7.8 s after with the container running, and 11.9 s before and 6.8 s after in a new container. With 2.4 MB it took 12.4 to 12.7 s before and 9.5 s after, and 17.3 s before and 7.8 s after.
+
+None of these savings changes a check:
+
+- An answer that changes an app no longer carries back what the working copy already holds. It used to carry every version ever made: 0.4 MB for the starter app at its fifth version, and 5 to 10 MB for the larger app.
+- A submit sends a file unchanged since the version the copy is on as its SHA-1, and the centre takes that file from the version.
+- The summary and the view are stored at the same time.
+- The preview's state is read while the app's own requests run.
+- A create discards its preview while its release goes out.
+- The image keeps the starter app's install, so `npm ci` costs nothing in a new container while the package files are the starter's.
+
+One step was added: a release waits for the discarded preview to go to sleep, 0.5 to 0.9 s, so that it is not refused when another app holds the second awake slot.
+
+What is left of the 11.5 s of the starter app's quickest submit:
+
+- PneumaSpace's two releases, 4.1 s, each with a start of the app.
+- Creating the preview, and the upload tickets and uploads of both releases, 1.4 s.
+- The tests, 1.8 s.
+- The preview's requests and both probes, 1.4 s.
+- Waiting for the preview to go to sleep, 0.7 s.
+- Saving the folder and the view, 0.8 s.
+- The network, the Worker and the Durable Object, 0.7 s.
+
+Getting under 10 s takes PneumaSpace. If a preview's upload could be released into the live app, the second ticket and upload would go (about 0.5 s). If the live app could start from the package the preview already unpacked, more of the second release would go too. If a token could read how many apps are awake, the wait for the preview could be skipped when no other app is awake.
 
 How the stored view grows with the app's age, measured offline (`bun run test/view-size.bench.ts` in `cloudflare/`): the edition on one machine with R2 as a map, each app grown to 10, 100 and 500 versions of the starter app's size, then a change submitted that waits for you. Milliseconds of the Worker's and the container's own work on that machine (on Cloudflare the container is slower), and bytes as R2 stores them and the browser receives them, before and after the bound.
 

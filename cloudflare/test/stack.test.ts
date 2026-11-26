@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TEMPLATE } from "../src/edition";
@@ -13,6 +13,8 @@ import { startStack, type Stack } from "./stack";
 
 const CLI = join(import.meta.dir, "..", "bin", "appgov.mjs");
 let stack: Stack;
+/** Run in the app's Durable Object before each operation, once the CLI has sent its request. */
+let duringOperation: (() => void) | null = null;
 let root: string;
 let ownerHome: string;
 let agentHome: string;
@@ -66,7 +68,7 @@ const copy = () => join(apps(), "todo");
 
 beforeAll(async () => {
   // Waiting for an awake slot is bounded; short here, so a test of a wait that ends without one does not take a minute.
-  stack = await startStack({ room: { waitMs: 1500, pollMs: 100 } });
+  stack = await startStack({ room: { waitMs: 1500, pollMs: 100 }, beforeOperation: async () => duringOperation?.() });
   root = mkdtempSync(join(tmpdir(), "appgov-cf-stack-"));
   ownerHome = join(root, "owner-home");
   agentHome = join(root, "agent-home");
@@ -321,7 +323,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(submitted.out).toMatch(/load the record from R2 into the container +\d+ ms/);
     expect(stack.starts()).toBe(before + 1);
     // The answer carries where the time went, and --timing prints it.
-    for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2", "compute the app's view in the container and store it in R2"]) {
+    for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2", "store the app's summary and view in R2, both computed in the container"]) {
       expect(submitted.out).toContain(step);
     }
   });
@@ -490,6 +492,82 @@ describe("the Cloudflare edition end to end, offline", () => {
     status = (await cli(second, ["status"])).out;
     expect(status).toContain(`changed here, not submitted: app/public/app.js (edited here on ${next}, the version this copy holds, so fetch refuses while they are here`);
     expect((await cli(second, ["discard"])).code).toBe(0);
+  });
+
+  test("a submit's answer leaves out what the working copy holds, and the copy is still the centre's byte for byte", async () => {
+    const tree = (root: string): Record<string, string> => {
+      const out: Record<string, string> = {};
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) walk(full);
+          else out[full.slice(root.length + 1)] = readFileSync(full, "base64");
+        }
+      };
+      walk(root);
+      return out;
+    };
+    const fresh = () => {
+      const dir = join(mkdtempSync(join(root, "fresh-")), "todo");
+      return cli(apps(), ["fetch", "todo", "--into", dir]).then(() => dir);
+    };
+    const style = join(copy(), "app", "public", "style.css");
+    writeFileSync(style, `${readFileSync(style, "utf8")}\n/* held */\n`);
+    const before = stack.operations.length;
+    expect((await cli(copy(), ["submit", "A change whose answer leaves out what is here"])).out).toMatch(/published v\d+/);
+    // One operation: the CLI took what was left out from here, and did not have to read the whole working copy again.
+    expect(stack.operations.slice(before)).toEqual(["write"]);
+    const centre = await fresh();
+    expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(centre, ".pneuma-framework")));
+    expect((await cli(copy(), ["status"])).out).toContain("changed here, not submitted: none");
+
+    // A version here that is not the centre's is sent again in full.
+    const v1 = join(copy(), ".pneuma-framework", "versions", "v1", "app", "public", "style.css");
+    writeFileSync(v1, "/* not what was recorded */\n");
+    writeFileSync(style, `${readFileSync(style, "utf8")}\n/* again */\n`);
+    let mark = stack.operations.length;
+    expect((await cli(copy(), ["submit", "Another change"])).out).toMatch(/published v\d+/);
+    expect(stack.operations.slice(mark)).toEqual(["write"]);
+    expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(await fresh(), ".pneuma-framework")));
+
+    // One changed here while the operation ran, after the CLI said what it holds: the CLI notices, and takes the whole copy.
+    duringOperation = () => writeFileSync(v1, "/* changed meanwhile */\n");
+    writeFileSync(style, `${readFileSync(style, "utf8")}\n/* meanwhile */\n`);
+    mark = stack.operations.length;
+    try {
+      expect((await cli(copy(), ["submit", "A third change"])).out).toMatch(/published v\d+/);
+    } finally {
+      duringOperation = null;
+    }
+    expect(stack.operations.slice(mark)).toEqual(["write", "read"]);
+    expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(await fresh(), ".pneuma-framework")));
+
+    // A file the record here says the version holds, and the centre's does not: the submit sends every file whole, and goes through.
+    const synced = JSON.parse(readFileSync(join(copy(), ".appgov", "synced.json"), "utf8")) as { active_version: string };
+    for (const dir of [copy(), join(copy(), ".pneuma-framework", "versions", synced.active_version)]) writeFileSync(join(dir, "app", "public", "only-here.txt"), "only here\n");
+    mark = stack.operations.length;
+    expect((await cli(copy(), ["submit", "A fourth change"])).out).toMatch(/published v\d+/);
+    expect(stack.operations.slice(mark)).toEqual(["write", "write"]);
+    const centre2 = await fresh();
+    expect(readFileSync(join(centre2, "app", "public", "only-here.txt"), "utf8")).toBe("only here\n");
+    expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(centre2, ".pneuma-framework")));
+  });
+
+  test("a file where the version the copy is on has a directory: the CLI sends it whole and says what the centre answers", async () => {
+    const extra = join(copy(), "app", "public", "extra");
+    mkdirSync(extra, { recursive: true });
+    writeFileSync(join(extra, "a.txt"), "a\n");
+    expect((await cli(copy(), ["submit", "A directory"])).out).toMatch(/published v\d+/);
+    rmSync(extra, { recursive: true, force: true });
+    writeFileSync(extra, "now a file\n");
+    const result = await cli(copy(), ["submit", "A file where the directory was"]);
+    // The centre cannot yet put a file where its working tree has a directory (as before this CLI); the CLI says so instead of failing itself.
+    expect(result.out).not.toContain("EISDIR");
+    expect(result.out).toContain("the submitted working tree was not taken");
+    rmSync(extra, { force: true });
+    await cli(copy(), ["discard"]);
+    rmSync(extra, { recursive: true, force: true });
+    expect((await cli(copy(), ["submit", "Without it"])).out).toMatch(/published v\d+/);
   });
 
   describe("the workspace's awake slots", () => {

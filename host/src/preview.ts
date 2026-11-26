@@ -122,6 +122,8 @@ export class Previews {
       await this.drop(app, published.app);
       return { ok: false, output };
     }
+    // PneumaSpace's answer about the preview, asked while the app's own requests are made: nothing they do changes it.
+    const reading = timed("read the preview's state (at the same time)", () => this.read(app));
     let facts: PreviewRequestFacts | undefined;
     if (check && keepAwake) {
       const send = space.request?.bind(space);
@@ -132,11 +134,12 @@ export class Previews {
       facts = made.facts;
       output += `\n[preview ${app}] ${made.facts.note}`;
       if (made.failures.length) {
+        await reading;
         await this.drop(app, published.app);
         return { ok: false, output, requests: { facts: made.facts, refusal: refusalText(made.facts, made.failures, app) } };
       }
     }
-    const { state: preview, listed } = await timed("read the preview's state", () => this.read(app));
+    const { state: preview, listed } = await reading;
     if (listed && listed.expiresAt === null) {
       await space.takeDown(app, manager.name);
       return { ok: false, output: `${output}\n[preview ${app}] PneumaSpace kept the preview as a durable app, so it does not know ephemeral apps (its ADR 0038) and the preview would never end; it was taken down again. Use the PneumaSpace this Host is pinned to, or APPGOV_PREVIEW=off.` };

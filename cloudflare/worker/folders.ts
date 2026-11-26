@@ -142,18 +142,22 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
     );
   }
   await host.fetch(`/folder/saved?app=${op.app}&etag=${encodeURIComponent(put.etag)}`, { method: "POST" });
-  const summary = await host.fetch(`/folder/summary?app=${op.app}`, { method: "GET" });
-  if (summary.ok) {
-    const body = await summary.text();
-    const put = await bucket.put(summaryKey(op.app), body);
-    if (put) await putInIndex(bucket, op.app, { etag: put.etag, summary: safeJson(body) as Record<string, unknown> });
-  } else await summary.body?.cancel();
   lap("save");
-  // The view of the folder just saved, timed on its own (`view`). If it cannot be had, the one stored before names the
-  // older folder's etag, and the next reader asks for a new one.
-  const view = await host.fetch(`/folder/view?app=${op.app}`, { method: "GET", headers: { [FOLDER_HEADER]: put.etag } });
-  if (view.ok) await bucket.put(viewKey(op.app), await view.text());
-  else await view.body?.cancel();
+  // The summary and the view of the folder just saved, at the same time (`view`): each is the container's answer about
+  // that folder, kept in an object of its own. If the view cannot be had, the one stored before names the older
+  // folder's etag, and the next reader asks for a new one.
+  await Promise.all([
+    host.fetch(`/folder/summary?app=${op.app}`, { method: "GET" }).then(async (summary) => {
+      if (!summary.ok) return void (await summary.body?.cancel());
+      const body = await summary.text();
+      const kept = await bucket.put(summaryKey(op.app), body);
+      if (kept) await putInIndex(bucket, op.app, { etag: kept.etag, summary: safeJson(body) as Record<string, unknown> });
+    }),
+    host.fetch(`/folder/view?app=${op.app}`, { method: "GET", headers: { [FOLDER_HEADER]: put.etag } }).then(async (view) => {
+      if (view.ok) await bucket.put(viewKey(op.app), await view.text());
+      else await view.body?.cancel();
+    }),
+  ]);
   lap("view");
   return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 }

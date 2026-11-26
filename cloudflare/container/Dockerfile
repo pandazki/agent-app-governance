@@ -41,6 +41,10 @@ COPY cloudflare/template /opt/appgov/cloudflare/template
 COPY cloudflare/policy /opt/appgov/cloudflare/policy
 COPY cloudflare/container/supervisor.mjs /opt/appgov/cloudflare/container/supervisor.mjs
 
+# The starter app's install, as its first test run in a container would make it, so that run reuses it (the
+# supervisor's `reusableInstall`): `npm ci` costs about two seconds in a new container even with nothing to install.
+RUN node /opt/appgov/cloudflare/container/supervisor.mjs --seed /opt/appgov/cloudflare/template
+
 ENV APPGOV_APPS_DIR=/data/apps APPGOV_HOST_PORT=8080
 EXPOSE 8080
 CMD ["node", "/opt/appgov/cloudflare/container/supervisor.mjs"]
