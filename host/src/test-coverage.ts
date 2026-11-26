@@ -141,32 +141,95 @@ function summaryLine(plain: string, name: string): Count {
   return found.length === 1 ? Number(found[0]![1]) : "unknown";
 }
 
-/** Tests that ran and tests that did not (skipped or todo), from the summary. Node counts all of them in "tests". */
-function summaryTests(output: string): { ran: Count; skipped: Count } {
+/**
+ * Tests that ran and tests that did not (skipped or todo), from the summary. Node counts all of them in "tests",
+ * a test with subtests among them; it counts describe blocks apart, in "suites".
+ */
+function summaryTests(output: string): { ran: Count; skipped: Count; suites: Count } {
   const plain = output.replace(/\u001b\[[0-9;]*m/g, "");
   const tests = summaryLine(plain, "tests");
   const skipped = summaryLine(plain, "skipped");
   const todo = summaryLine(plain, "todo");
-  if (tests === "unknown" || skipped === "unknown" || todo === "unknown") return { ran: "unknown", skipped: "unknown" };
-  return { ran: tests - skipped - todo, skipped: skipped + todo };
+  const suites = summaryLine(plain, "suites");
+  if (tests === "unknown" || skipped === "unknown" || todo === "unknown") return { ran: "unknown", skipped: "unknown", suites };
+  return { ran: tests - skipped - todo, skipped: skipped + todo, suites };
+}
+
+/** A JUnit report's tests, each as its file relative to the directory the check ran in. */
+interface ReportShape {
+  /** Each test case that ran (a <testcase> without <skipped>): a test with no subtests. */
+  readonly cases: readonly string[];
+  /** Each group (a <testsuite>): a describe block, or a test with subtests. Node writes both the same way. */
+  readonly groups: readonly string[];
 }
 
 /**
- * The file of each test case that ran in a JUnit report, relative to the directory the check ran in; null
- * when any case has no file under it. Skipped and todo cases carry a <skipped> element and are left out.
+ * The cases and groups of a JUnit report. Null when a case has no file under `roots`, or a group does not hold
+ * cases of exactly one file. Skipped and todo cases carry a <skipped> element and are left out of `cases`.
  */
-function reportFiles(report: string, roots: readonly string[]): string[] | null {
-  const cases = [...report.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)].filter(([, , body]) => !/<skipped\b/.test(body ?? ""));
-  const files: string[] = [];
-  for (const [, attrs] of cases) {
-    const file = /\bfile="([^"]*)"/.exec(attrs ?? "")?.[1];
-    if (file === undefined) return null;
-    const path = unxml(file);
+function reportShape(report: string, roots: readonly string[]): ReportShape | null {
+  const cases: string[] = [];
+  const groups: string[] = [];
+  // The files of the cases in each group still open, innermost last.
+  const open: Set<string>[] = [];
+  for (const [token, attrs, body] of report.matchAll(/<testsuite\b[^>]*>|<\/testsuite>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    if (token.startsWith("<testsuite")) {
+      open.push(new Set());
+      continue;
+    }
+    if (token === "</testsuite>") {
+      const files = open.pop();
+      if (!files || files.size !== 1) return null;
+      const file = [...files][0]!;
+      groups.push(file);
+      open.at(-1)?.add(file);
+      continue;
+    }
+    const raw = /\bfile="([^"]*)"/.exec(attrs ?? "")?.[1];
+    if (raw === undefined) return null;
+    const path = unxml(raw);
     const root = roots.find((candidate) => path.startsWith(`${candidate}/`));
     if (!root) return null;
-    files.push(path.slice(root.length + 1));
+    const file = path.slice(root.length + 1);
+    open.at(-1)?.add(file);
+    if (!/<skipped\b/.test(body ?? "")) cases.push(file);
   }
-  return files;
+  return open.length ? null : { cases, groups };
+}
+
+interface Split {
+  readonly test_files: number;
+  readonly app_tests: number;
+  readonly app_test_files: number;
+}
+
+/**
+ * The tests that ran, split into the app's own and the vendored ones, from the report's shape and the summary's
+ * counts. Node's summary counts a test with subtests as a test, and its report writes that test as a group around
+ * its subtests, as it writes a describe block, which the summary counts apart. So every test that ran and is not a
+ * case is a group, and the report does not say which groups they are: "ambiguous" when the split depends on it,
+ * "mismatch" when the numbers cannot describe the same run.
+ */
+function splitTests(shape: ReportShape, ran: number, suites: Count, vendored: AppLayout["vendored"]): Split | "mismatch" | "ambiguous" {
+  const isVendored = (file: string) => Boolean(vendored && file.startsWith(`${vendored.dir}/`));
+  const groups = shape.groups.length;
+  const parents = ran - shape.cases.length;
+  if (parents < 0 || parents > groups || (suites !== "unknown" && groups - parents > suites)) return "mismatch";
+  const appGroups = shape.groups.filter((file) => !isVendored(file)).length;
+  // The app's tests with subtests: the fewest and the most any choice of groups allows. Known when they meet.
+  const fewest = Math.max(0, parents - (groups - appGroups));
+  const most = Math.min(parents, appGroups);
+  if (fewest !== most) return "ambiguous";
+  // A file where only groups ran (each case in it skipped) holds a test that ran only if one of those groups is a test.
+  const caseFiles = new Set(shape.cases);
+  const groupOnly = new Set(shape.groups.filter((file) => !caseFiles.has(file)));
+  if (groupOnly.size && parents !== 0 && parents !== groups) return "ambiguous";
+  const files = new Set([...caseFiles, ...(parents === groups ? groupOnly : [])]);
+  return {
+    test_files: files.size,
+    app_tests: shape.cases.filter((file) => !isVendored(file)).length + fewest,
+    app_test_files: [...files].filter((file) => !isVendored(file)).length,
+  };
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -201,16 +264,16 @@ const shortList = (items: readonly string[]) => (items.length > 3 ? `${items.sli
  * the summary, is "unknown".
  */
 export function testCoverage(run: CheckRun, root: string, layout: AppLayout = TEMPLATE_LAYOUT): TestCoverage {
-  const { ran: tests, skipped } = summaryTests(run.output);
+  const { ran: tests, skipped, suites } = summaryTests(run.output);
   const roots = [root, ...(existsSync(root) ? [realpathSync(root)] : [])];
-  const files = run.report === undefined ? null : reportFiles(run.report, roots);
-  // The report must describe the same run as the summary, case for case.
-  const usable = files !== null && tests !== "unknown" && files.length === tests;
+  const shape = run.report === undefined ? null : reportShape(run.report, roots);
   const vendored = layout.vendored;
-  const app = usable ? files.filter((file) => !(vendored && file.startsWith(`${vendored.dir}/`))) : [];
-  const test_files: Count = usable ? new Set(files).size : "unknown";
-  const app_tests: Count = usable ? app.length : tests === 0 ? 0 : "unknown";
-  const app_test_files: Count = usable ? new Set(app).size : tests === 0 ? 0 : "unknown";
+  // The report must describe the same run as the summary, test for test.
+  const split = shape !== null && tests !== "unknown" ? splitTests(shape, tests, suites, vendored) : null;
+  const usable = typeof split === "object" && split !== null ? split : null;
+  const test_files: Count = usable ? usable.test_files : "unknown";
+  const app_tests: Count = usable ? usable.app_tests : tests === 0 ? 0 : "unknown";
+  const app_test_files: Count = usable ? usable.app_test_files : tests === 0 ? 0 : "unknown";
   const src_test_files = testFilesIn(root, layout.test_dir);
   const notRun = typeof skipped === "number" && skipped > 0 ? ` ${plural(skipped, "more test")} ${skipped === 1 ? "was" : "were"} skipped or todo.` : "";
   const unran = app_tests === 0 && src_test_files.length ? ` ${layout.test_dir}/ has test files that did not run: ${shortList(src_test_files)}.` : "";
@@ -224,9 +287,11 @@ export function testCoverage(run: CheckRun, root: string, layout: AppLayout = TE
     const why =
       run.report === undefined
         ? (run.no_report ?? "the runner wrote no per-file report (this Host asks Node's test runner for one)")
-        : files === null
+        : shape === null
           ? "the runner's per-file report does not name each test's file (Node's test runner does from Node 24 on)"
-          : "the runner's per-file report does not match its summary";
+          : split === "ambiguous"
+            ? "the runner's per-file report writes tests with subtests and describe blocks alike, and here it matters which is which"
+            : "the runner's per-file report does not match its summary";
     note = `${plural(tests, "test")} ran; how many of them are the app's own is unknown: ${why}.${notRun}`;
   } else if (app_tests === 0) {
     // Only possible with a vendored directory: every test that ran was in it.

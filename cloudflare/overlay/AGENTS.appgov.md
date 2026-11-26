@@ -20,6 +20,8 @@ The part after this one, "PneumaSpace app on Cloudflare", describes the platform
 
 A request to change the app is finished only when `submit` has answered. Files you edited and did not submit are not live, and nobody else sees them: they are only in this working copy.
 
+Once live, PneumaSpace stops the app's container after a few minutes without requests, and it then shows as asleep; the next request starts it again, with its data, in a few seconds. That is normal: do not add anything to keep it awake. The deployment runs only a few apps awake at once (two on PneumaSpace's default quotas), and an app kept awake takes one of them.
+
 If `submit` says this working copy is behind (someone else released a version since it was last brought up to date), run `node .appgov/appgov.mjs fetch` and make the change again; `fetch` refuses while you have edits it would overwrite.
 
 `.appgov/centre.json` holds the centre's address and the token this copy uses. It is never part of a version and is never sent to the centre with your files. Do not print it, copy it into another file, or commit it; `.gitignore` keeps it out of git. If the CLI cannot reach the centre, it says which address it tried; ask the user, do not start anything yourself.

@@ -29,7 +29,7 @@ cd local
 docker compose up -d --build
 ```
 
-第一次构建要下载基础镜像，还要从源码构建 PneumaSpace 和 Host，所以比以后每次启动都慢。完成后有六个容器在运行：`gateway`、`runner`、`rustfs` 和 `redis` 属于 PneumaSpace，`screenshot` 给应用页面拍截图，`host` 就是 Host。请在 `local/` 里运行它，这样页面才知道应用文件夹在你电脑上的位置。
+第一次构建要下载基础镜像，还要从源码构建 PneumaSpace 和 Host，所以比以后每次启动都慢。完成后有六个容器在运行：`gateway`、`runner`、`rustfs` 和 `redis` 属于 PneumaSpace，`screenshot` 给应用页面拍截图，`host` 就是 Host。请在 `local/` 里运行它，这样页面才知道应用文件夹在你电脑上的位置。应用存储的数据放在这些容器的 Docker 命名卷里，不在这个文件夹里，所以拷贝或备份这个文件夹并不会带上数据（见[东西存在哪里](#东西存在哪里)）。
 
 ## 打开你的应用页面
 
