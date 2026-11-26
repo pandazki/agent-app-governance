@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { buttonVariants } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
@@ -9,7 +10,7 @@ import { CheckResult, RuntimeCheck } from "./life-view";
 import { Section, Surface } from "../beautifui/site";
 import { hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
-import { AppMark, Details, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
+import { AppMark, Details, EmptyState, Header, HintCard, RichText, SourceChip, StatePill } from "./parts";
 
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
@@ -55,22 +56,26 @@ function AppTile({ app }: { app: AppCard }) {
   const ui = useUi();
   // Where no picture is ever taken, the tile is its bar and its state: an empty frame would read as a picture that failed.
   const { picturesOn } = usePage();
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const picture = picturesOn && app.shot.src !== failedSrc ? app.shot.src : null;
   return (
-    <div className="group/app flex flex-col overflow-hidden rounded-card bg-surface shadow-card">
+    <div className="flex flex-col overflow-hidden rounded-card bg-surface shadow-card">
       <div className="primitive-card-bar flex min-h-10 items-center gap-2.5">
         <a href={app.href} className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-ink">
           <AppMark name={app.name} mark={app.shot.monogram} />
           <span className="truncate">{app.title}</span>
         </a>
-        {app.address && (
-          <span className="ml-auto">
-            <SourceChip href={app.address}>{ui.open}</SourceChip>
-          </span>
-        )}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {picturesOn && !picture && (app.shot.caption || failedSrc) && (
+            <ContextNote label={`${ui.details} · ${app.title}`}>{app.shot.caption ?? ui.failed}</ContextNote>
+          )}
+          {app.address && <SourceChip href={app.address}>{ui.open}</SourceChip>}
+        </div>
       </div>
-      {picturesOn && (
+      {picture && (
         <a href={app.href} aria-label={app.title} className="block border-y border-line">
-          <Picture shot={app.shot} name={app.name} className="transition-[filter] duration-200 group-hover/app:brightness-[0.98]" />
+          <img src={picture} alt="" loading="lazy" decoding="async" onError={() => setFailedSrc(picture)}
+            className="aspect-[16/10] w-full object-cover object-top" />
         </a>
       )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 pt-1.5">
@@ -103,6 +108,17 @@ function ProblemRow({ problem }: { problem: Problem }) {
   );
 }
 
+// Real pictures have a fixed aspect ratio. Independent columns let the text-only
+// cards share the space between them, in the same order as keyboard navigation.
+function AppGrid({ apps }: { apps: readonly AppCard[] }) {
+  const { picturesOn } = usePage();
+  return (
+    <div className={picturesOn ? "app-gallery" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3"}>
+      {apps.map((app) => <AppTile key={app.name} app={app} />)}
+    </div>
+  );
+}
+
 export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => void }) {
   const ui = model.ui;
   return (
@@ -130,11 +146,7 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
         <Surface>
           {model.checked && <CheckResult checked={model.checked} />}
           {model.apps.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {model.apps.map((app) => (
-                <AppTile key={app.name} app={app} />
-              ))}
-            </div>
+            <AppGrid apps={model.apps} />
           ) : (
             <EmptyState title={ui.empty_title} body={ui.empty_body} />
           )}
@@ -144,11 +156,7 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
         <Section title={ui.down_title} note={String(model.down.cards.length)}>
           <Surface>
             <Collapsible label={model.down.show}>
-              <div className="grid gap-3 pt-1 sm:grid-cols-2 lg:grid-cols-3">
-                {model.down.cards.map((app) => (
-                  <AppTile key={app.name} app={app} />
-                ))}
-              </div>
+              <AppGrid apps={model.down.cards} />
             </Collapsible>
           </Surface>
         </Section>

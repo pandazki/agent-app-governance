@@ -94,6 +94,10 @@
   *, *::before, *::after { animation-delay: 0s !important; }
 }
 
+.app-gallery { columns: 1; column-gap: .75rem; }
+.app-gallery > * { break-inside: avoid; margin-bottom: .75rem; }
+@media (min-width: 40rem) { .app-gallery { column-count: 2; } }
+@media (min-width: 64rem) { .app-gallery { column-count: 3; } }
 .address-text {
   display: inline-block;
   min-width: 0;
