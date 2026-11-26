@@ -260,11 +260,11 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(sent.code).toBe(2);
     const model = await view<ChangeModel>(`/app/journal/change/${sent.id}`);
     expect(model.oneWay?.why).toBe('What the rules found, in their words: app/server.mjs now runs "DROP", which deletes or rewrites data that is already stored.');
-    expect(model.oneWay?.said).toBe("Declared one-way by Codex when submitting it. What is lost, in the submitter's own words (not something the rules found): “Every entry and its mood”");
-    expect(model.why).toContain("Declared one-way by Codex, so it waits for you whatever the rules found.");
+    expect(model.oneWay?.said).toBe("Codex marked this one-way, so it needs your approval regardless of what the rules found. The submitter’s account of the loss (separate from the rule findings) is “Every entry and its mood”");
+    expect(model.why).toEqual([]); // The rule and the attributed declaration above are the reasons shown.
     expect(model.facts.find((fact) => fact.label === "Declared one-way")?.value).toBe("Every entry and its mood");
     const zh = await view<ChangeModel>(`/app/journal/change/${sent.id}?lang=zh`);
-    expect(zh.oneWay?.said).toBe("Codex 提交时声明它是单向改动。会失去什么，是提交者的原话（不是规则发现的）：“Every entry and its mood”");
+    expect(zh.oneWay?.said).toBe("Codex 将它声明为单向改动，因此无论规则发现了什么，都需要你确认。损失是提交者自己的说明（并非规则发现）：“Every entry and its mood”");
     expect(zh.oneWay?.why).toStartWith("规则发现的（规则原文）：app/server.mjs now runs");
     expect((await write(`/owner/apps/journal/changes/${sent.id}/deny`)).status).toBe(200);
     writeFileSync(join(copy(), "app/server.mjs"), kept);
@@ -278,8 +278,8 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     const model = await view<ChangeModel>(`/app/journal/change/${sent.id}`);
     // The rules found nothing one-way: only the declaration says it, and it is why the change waits.
     expect(model.oneWay?.why).toBeNull();
-    expect(model.oneWay?.said).toBe("Declared one-way by Codex when submitting it. What is lost, in the submitter's own words (not something the rules found): “Every mood stored so far”");
-    expect(model.why).toEqual(["Declared one-way by Codex, so it waits for you whatever the rules found."]);
+    expect(model.oneWay?.said).toBe("Codex marked this one-way, so it needs your approval regardless of what the rules found. The submitter’s account of the loss (separate from the rule findings) is “Every mood stored so far”");
+    expect(model.why).toEqual([]); // No rule finding was added to the submitter’s statement.
     expect(model.decision.oneWay).toBe(true);
     expect(model.decision.check).not.toBeNull();
     const home = await view<HomeModel>("/");
@@ -300,10 +300,13 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(back.from).toBe(version);
     expect(back.accept).toBe(true);
     expect(back.undone.find((u) => u.title === "“Clear every mood”")?.oneWay).toBe(true);
-    const said = "“Clear every mood” was declared one-way when it was submitted. What is lost, in the submitter's words: “Every mood stored so far” Going back does not bring that back.";
-    expect(back.declared).toEqual([said]);
-    expect(back.afterNote).toContain(said);
-    expect((await view<BackModel>("/app/journal/back/v3?lang=zh")).declared).toEqual(["“Clear every mood” 提交时被声明为单向改动。提交者说会失去的：“Every mood stored so far”回退不会把它带回来。"]);
+    const loss = "the submitter declared this loss: “Every mood stored so far” Restoring the code alone cannot recover it.";
+    expect(back.declared).toEqual([`For the change marked “${back.ui.one_way}” above, ${loss}`]);
+    expect(back.afterNote).toContain(`For “Clear every mood”, ${loss}`);
+    const zh = await view<BackModel>("/app/journal/back/v3?lang=zh");
+    const zhLoss = "提交者声明的损失是“Every mood stored so far”。仅回退代码无法恢复这些数据。";
+    expect(zh.declared).toEqual([`上面标有“${zh.ui.one_way}”的改动：${zhLoss}`]);
+    expect(zh.afterNote).toContain(`“Clear every mood”：${zhLoss}`);
     const gone = await write("/owner/apps/journal/undo", { to: "v3", from: version, accept_one_way: true });
     expect(gone.status).toBe(200);
     expect(gone.data.declared_one_way).toEqual([{ version, reason: "Every mood stored so far" }]);

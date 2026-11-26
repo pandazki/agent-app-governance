@@ -16,28 +16,21 @@ import { ConnectFirstButton, ConnectionsBlock, ConnectPanel } from "./connect-vi
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
 /** A change waiting for the owner, as a RecommendationCard: the request, who made it, and how well it was checked. */
-export function WaitingChange({ card, showApp = true }: { card: WaitingCard; showApp?: boolean }) {
+function WaitingChange({ card }: { card: WaitingCard }) {
   const ui = useUi();
   return (
-    <div className="flex w-full flex-col overflow-hidden rounded-card bg-surface shadow-card">
+    <div className="flex w-full flex-col overflow-hidden sm:only:col-span-full sm:only:flex-row sm:only:items-center rounded-card bg-surface shadow-card">
       <div className="primitive-card-pad flex-1">
-        {showApp && (
-          <div className="-ml-0.5 mb-2 flex flex-wrap items-center gap-1">
-            <EntityChip name={card.appTitle} monogram={card.shot.monogram} color={hue(card.app)} />
-            {card.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
-          </div>
-        )}
+        <div className="-ml-0.5 mb-2 flex flex-wrap items-center gap-1">
+          <EntityChip name={card.appTitle} monogram={card.shot.monogram} color={hue(card.app)} />
+          {card.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
+        </div>
         <a href={card.href} className="line-clamp-3 text-[14px] font-medium text-ink [overflow-wrap:anywhere] hover:underline hover:decoration-line-strong hover:underline-offset-2">
           {card.intent}
         </a>
         <p className="mt-1.5 text-[12.5px] text-ink-3">
           <RichText rich={card.meta} />
         </p>
-        {!showApp && card.oneWay && (
-          <p className="mt-2">
-            <StatePill tone="red">{ui.one_way}</StatePill>
-          </p>
-        )}
       </div>
       <div className="primitive-card-footer flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2 pl-0.5">
@@ -109,12 +102,12 @@ function ProblemRow({ problem }: { problem: Problem }) {
   );
 }
 
-// Real pictures have a fixed aspect ratio. Independent columns let the text-only
-// cards share the space between them, in the same order as keyboard navigation.
 function AppGrid({ apps }: { apps: readonly AppCard[] }) {
+  // In the 960px page, four pictures fit two readable pairs. Follow the same order across each row as Tab.
   const { picturesOn } = usePage();
+  const columns = picturesOn && apps.length === 4 ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3";
   return (
-    <div className={picturesOn ? "app-gallery" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3"}>
+    <div className={`grid gap-3 ${columns}`}>
       {apps.map((app) => <AppTile key={app.name} app={app} />)}
     </div>
   );

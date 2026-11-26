@@ -3,7 +3,7 @@
 import type { HistoryEntry } from "../../host/src/artifact";
 import { DECLARED_ONE_WAY_MARK, RUN_UNDO, STATE_DIR } from "../../host/src/constants";
 import type { AppStatus, AppSummary, Overview } from "../../host/src/host";
-import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, wordsFor, type Lang, type Words } from "./page-words";
+import { absoluteTime, agentWords, appTitle, fill, reasonWords, relativeTime, riskWords, testCheckWords, previewCheckWords, wordsFor, type Lang, type Words } from "./page-words";
 import type {
   AppCard,
   AppModel,
@@ -1045,8 +1045,9 @@ function itemStanding(ctx: PageContext, item: TimelineItem, owner: string, histo
 
 function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean): Fact[] {
   const main = item.main;
-  const tests = items<{ id?: unknown; status?: unknown; coverage?: { note?: unknown } }>(main.checks).find((check) => check?.id === "npm-test");
-  const shown = items<{ id?: unknown; status?: unknown; requests?: { note?: unknown } }>(main.checks).find((check) => check?.id === "space-preview");
+  const checks = items<NonNullable<HistoryEntry["checks"]>[number]>(main.checks);
+  const tests = checks.find((check) => check?.id === "npm-test");
+  const shown = checks.find((check) => check?.id === "space-preview");
   const snapshot = item.entries.find((entry) => entry.kind === "snapshot")?.data_ref;
   const approval = main.approval as { reason_code?: unknown; by?: unknown; preset?: unknown } | undefined;
   const candidates = items<{ agent?: unknown; markers?: unknown }>(main.agent_candidates);
@@ -1059,8 +1060,8 @@ function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean):
     main.kind !== "snapshot" ? { label: w.d_guarantees, value: items(main.guarantees).length ? list(main.guarantees) : w.d_recorded_only, mono: true } : null,
     items(main.risks).length ? { label: w.d_risks, value: list(main.risks), mono: true } : null,
     approval ? { label: w.d_approval, value: `${str(approval.reason_code)} · ${list(approval.by)}${approval.preset ? ` (${str(approval.preset)})` : ""}`, mono: true } : null,
-    tests?.coverage ? { label: w.d_tests, value: `${str(tests.status)}: ${str(tests.coverage.note)}` } : null,
-    shown?.requests ? { label: w.d_preview, value: `${str(shown.status)}: ${str(shown.requests.note)}` } : null,
+    tests?.coverage ? { label: w.d_tests, value: testCheckWords(w, str(tests.status), tests.coverage) } : null,
+    shown?.requests ? { label: w.d_preview, value: previewCheckWords(w, str(shown.status), shown.requests) } : null,
     item.oneWay ? { label: w.d_one_way, value: item.oneWay.reason } : null,
     snapshot ? { label: w.d_data, value: `${str(snapshot.capability)} ${str(snapshot.ref)}`, mono: true } : null,
     main.reason ? { label: w.d_reason, value: str(main.reason), mono: true } : null,
@@ -1304,9 +1305,13 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   checked.push({ text: paths.length === 1 ? w.files_one : fill(w.files_other, { n: paths.length }), tone: "done", files: paths.slice(0, 40) });
   // Only what the standing policy could not approve is why the change waits; in review-all mode that is every risk.
   const auto = new Set(ctx.autoApproved ?? []);
-  const why = [...new Set(risks.filter((risk) => !auto.has(risk)).map((risk) => riskWords(w, risk)))];
+  // Omit the broad risk only when the rule quoted beside the decision already spells it out.
+  // A custom rule or a declaration alone may say something entirely different.
+  const explainsDeletion = found?.includes("which deletes or rewrites data that is already stored.");
+  const remainingRisks = risks.filter((risk) => !auto.has(risk) && !(risk === "destructive_definition" && explainsDeletion));
+  const why = [...new Set(remainingRisks.map((risk) => riskWords(w, risk)))];
   if (status.governance === "review-all") why.push(w.review_all);
-  if (declared) why.push(fill(w.why_declared, { who: submitter }));
+  if (declared && !oneWay) why.push(fill(w.why_declared, { who: submitter, said: declared }));
 
   // The preview, as the Host reports it from PneumaSpace: where it is, when it ends itself, or that it no longer stands.
   const preview = previewOf(pending);
@@ -1353,13 +1358,13 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
     before: nowSide,
     after,
     checked,
-    why: why.length ? why : [w.risk_other],
+    why: why.length || oneWay ? why : [w.risk_other],
     oneWay: oneWay
       ? {
           title: w.one_way_title,
           body: snapshotHost ? w.one_way_with_snapshot : w.one_way_no_snapshot,
           why: found ? fill(w.one_way_rule, { why: found }) : null,
-          said: declared ? fill(w.one_way_declared, { who: submitter, said: declared }) : null,
+          said: declared ? fill(w.why_declared, { who: submitter, said: declared }) : null,
         }
       : null,
     notices: situation(w, status),
@@ -1448,17 +1453,29 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
   if (version === status.active_version) return { ...base, ...empty, kind: "current" };
   if (!plan || !inLine) return { ...base, ...empty, kind: "not_earlier" };
   const oneWayVersions = new Set(plan.oneWay.map((entry) => str(entry.version)));
+  const markedCount = plan.undone.filter((v) => oneWayVersions.has(v)).length;
   const undone = plan.undone.map((v) => {
     const made = entries.find((entry) => entry?.version === v && entry.kind !== "restore");
-    return { title: made ? itemTitleOfVersion(w, made) : v, when: made ? rich(ctx, "{when}", {}, { when: { iso: made.at, mode: "abs" } }) : null, oneWay: oneWayVersions.has(v) };
+    const oneWay = oneWayVersions.has(v);
+    const title = made ? itemTitleOfVersion(w, made) : v;
+    return {
+      title: oneWay && markedCount > 1 && made ? `${v} · ${title}` : title,
+      when: made ? rich(ctx, "{when}", {}, { when: { iso: made.at, mode: "abs" } }) : null,
+      oneWay,
+    };
   });
   let data: Rich;
   let check: string | null = null;
   const left = dataLeftWords(w, plan.dataLeft);
   // What the submitters of the versions gone back past declared lost: the rules see only SQL and the manifest.
-  const declared = plan.undone.flatMap((v) => {
+  const losses = plan.undone.flatMap((v, i) => {
     const made = entries.find((entry) => entry?.version === v && entry.kind !== "restore" && typeof entry.declared_one_way === "string" && entry.declared_one_way);
-    return made ? [fill(w.back_declared, { title: itemTitleOfVersion(w, made), said: str(made.declared_one_way) })] : [];
+    if (!made) return [];
+    const row = undone[i]!;
+    const said = str(made.declared_one_way);
+    // On the plan a single badge identifies its row. After navigation the list is gone, so name the request.
+    const change = row.oneWay && markedCount === 1 ? fill(w.back_marked_change, { badge: w.one_way }) : row.oneWay ? v : row.title;
+    return [{ onPlan: fill(w.back_declared, { change, said }), after: fill(w.back_declared, { change: row.title, said }) }];
   });
   if (!plan.crossing) data = plain(left ?? w.back_data_stays);
   else if (plan.crossing.data_restore === "snapshot" && plan.dataRef) {
@@ -1488,8 +1505,8 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     marks: manager.unmanaged ? w.marks_back : null,
     accept: Boolean(plan.crossing),
     from: plan.from,
-    declared,
-    afterNote: [left, ...declared].filter(Boolean).join(" ") || null,
+    declared: losses.map((loss) => loss.onPlan),
+    afterNote: [left, ...losses.map((loss) => loss.after)].filter(Boolean).join(ctx.lang === "zh" ? "" : " ") || null,
     facts: facts([
       { label: w.d_version, value: `${str(status.active_version)} → ${version}`, mono: true },
       plan.crossing ? { label: w.d_plan, value: plan.crossing.text } : null,

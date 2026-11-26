@@ -435,7 +435,8 @@ describe("the owner page: what it shows", () => {
     expect(model.decision.lines).not.toContain("You can go back to the current version later.");
     // The confirmation is drawn for the owner with its box, which Go live waits for.
     const page = draw(model, "yes");
-    expect(page).toContain("This one can&#x27;t be taken back");
+    expect(page).toContain("Can&#x27;t be undone by going back");
+    expect(page).toContain(model.decision.consequence!);
     expect(page).toContain('type="checkbox"');
     expect(page).toContain("I understand: going back later won&#x27;t bring this data back.");
     // With a data snapshot capability, the consequence is the snapshot's.
@@ -504,6 +505,31 @@ describe("the owner page: what it shows", () => {
     const current = backModel("todo", status, history, "v4", host.undoPlan("todo", "v4"), ctx);
     expect(current.kind).toBe("current");
     expect(draw(current)).toContain("This is the version running now.");
+  });
+
+  test("each declared loss identifies its row even when two one-way requests have the same title", async () => {
+    await host.create("todo");
+    for (const [i, loss] of ["Deletes the notes.", "Deletes the tags."].entries()) {
+      edit("todo", "src/list.ts", `export const step = ${i};\n`);
+      const change = await host.submit({ name: "todo", intent: "simplify the list", agent: "codex", oneWay: loss });
+      await host.resolve("todo", change.change_id, "approved", "user:me");
+    }
+    const status = await host.status("todo");
+    const history = host.history("todo");
+    const plan = host.undoPlan("todo", "v1");
+    for (const lang of ["en", "zh"] as const) {
+      const back = backModel("todo", status, history, "v1", plan, (await context(lang)).ctx);
+      expect(back.accept).toBe(true);
+      expect(back.undone.map((row) => [row.title, row.oneWay])).toEqual([["v3 · “simplify the list”", true], ["v2 · “simplify the list”", true]]);
+      expect(back.declared).toHaveLength(2);
+      for (const [i, loss] of ["Deletes the tags.", "Deletes the notes."].entries()) {
+        const version = i === 0 ? "v3" : "v2";
+        const statement = lang === "en" ? `the submitter declared this loss: “${loss}”` : `提交者声明的损失是“${loss}”`;
+        expect(back.declared[i]).toContain(version);
+        expect(back.declared[i]).toContain(statement);
+        expect(back.afterNote).toContain(back.undone[i]!.title + (lang === "en" ? ", " : "：") + statement);
+      }
+    }
   });
 
   test("a picture when there is one, a designed placeholder when not, and why there is none", async () => {
