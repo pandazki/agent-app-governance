@@ -140,6 +140,8 @@ describe("the Cloudflare edition end to end, offline", () => {
   test("create, with the agent token: a managed app on the plane, and a working copy with the agent instructions", async () => {
     const made = await cli(apps(), ["create", "todo"]);
     expect(made.out).toContain("published v1");
+    const id = stack.plane.find("todo")!.id;
+    expect(made.out).toContain(`its requests and wake and sleep counts, on PneumaSpace: ${stack.plane.origin}/dashboard?view=projects&app=${id}&tab=usage`);
     expect(made.code).toBe(0);
     const app = stack.plane.apps.find((a) => a.name === "todo" && a.expiresAt === null)!;
     expect(app.manager?.name).toBe("appgov");
@@ -216,6 +218,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.plane.serving("todo")!["public/style.css"]).toContain("#fafafa");
     const status = await cli(copy(), ["status"]);
     expect(status.out).toContain("todo: v2");
+    expect(status.out).toContain(`its requests and wake and sleep counts, on PneumaSpace: ${stack.plane.origin}/dashboard?view=projects&app=${stack.plane.find("todo")!.id}&tab=usage`);
     expect(status.out).toContain("changed here, not submitted: none");
     const history = await cli(copy(), ["history"]);
     expect(history.out).toMatch(/change published -> v2 by test-agent/);

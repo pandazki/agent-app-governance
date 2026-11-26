@@ -472,4 +472,10 @@ export class CfSpace implements SpaceRuntime {
   address(name: string): string {
     return `${this.origin}/apps/${name}/`;
   }
+
+  /** The dashboard's usage tab for the app, as PneumaSpace's own CLI prints it, once a lookup or a publish here found its id. */
+  statsAddress(name: string): string | null {
+    const id = this.ids.get(name);
+    return id ? `${this.origin}/dashboard?view=projects&app=${encodeURIComponent(id)}&tab=usage` : null;
+  }
 }

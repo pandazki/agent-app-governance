@@ -292,6 +292,8 @@ type ChangeOutcome =
       readonly guarantees: readonly string[];
       /** Set when going back past this version needs its stored data put back. */
       readonly one_way?: string;
+      /** On a create, where PneumaSpace shows the app's requests and wake and sleep counts, when the runtime knows it. */
+      readonly stats_address?: string;
       /** Set when the working tree was edited while the change was made and was therefore not brought up to date, or when this release marked the app as this Host's on PneumaSpace. */
       readonly note?: string;
       /**
@@ -383,6 +385,8 @@ export interface AppStatus {
   readonly owner: string;
   readonly scaffold_id: string;
   readonly address: string;
+  /** Where PneumaSpace shows the app's requests and wake and sleep counts, when the runtime knows it. */
+  readonly stats_address?: string;
   /** The change record's current version: what the working tree is compared against and what undo goes back from. */
   readonly active_version: string | null;
   /** The version the current one was built on: where `undo` goes. */
@@ -1482,11 +1486,13 @@ export class AppHost {
       }
       await this.markServing(name, paths, entry.version!, outcome.address, outcome.probe, "release");
       this.log(`created ${name} ${entry.version} at ${outcome.address}`);
+      const stats = this.opts.space.statsAddress?.(name);
       return {
         status: "published",
         change_id: changeId,
         version: entry.version!,
         address: outcome.address,
+        ...(stats ? { stats_address: stats } : {}),
         changed_paths: [],
         risks: governed ? ["release_change"] : [],
         approved_by: approvedBy,
@@ -2726,6 +2732,9 @@ export class AppHost {
     const tested = waiting.map((p) => ({ ...p, ...testFacts(p.checks, p.changed_paths, this.layout) }));
     const pending = this.opts.preview === false ? tested : await Promise.all(tested.map(async (p) => ({ ...p, preview: await this.previews.state(previewName(name, p.change_id)) })));
     const uncertain = servingUncertainLine(record, readServingVersion(paths));
+    const presence = await this.presenceFields(name, record);
+    // Known once PneumaSpace was asked about the app, as presenceFields just did.
+    const stats = this.opts.space.statsAddress?.(name);
     return {
       app_id: info.app_id,
       owner: info.owner,
@@ -2742,7 +2751,8 @@ export class AppHost {
       uncommitted: this.uncommitted(record),
       pending,
       ...(malformed.length ? { malformed_pending: malformed } : {}),
-      ...(await this.presenceFields(name, record)),
+      ...presence,
+      ...(stats ? { stats_address: stats } : {}),
     };
   }
 

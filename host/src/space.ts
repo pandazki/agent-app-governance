@@ -186,6 +186,8 @@ export interface SpaceRuntime {
   stop(name: string): Promise<void>;
   /** The address a person opens. */
   address(name: string): string;
+  /** PneumaSpace's page with the app's requests and wake and sleep counts, once this process knows the app; absent where there is none. */
+  statsAddress?(name: string): string | null;
   /**
    * False when a release never draws on what a preview uploaded, so a preview can be discarded while the release
    * goes out. Left out, a release may reuse the preview's bundle, and the preview stays until the release is done.

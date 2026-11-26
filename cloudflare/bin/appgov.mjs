@@ -524,6 +524,7 @@ function previewLine(preview, changeId) {
 function printChange(result) {
   if (result.status === "published") {
     console.log(`published ${result.version} at ${result.address}`);
+    if (result.stats_address) console.log(`its requests and wake and sleep counts, on PneumaSpace: ${result.stats_address}`);
     if (result.released_as_is) console.log(`${result.version} was recorded earlier and did not go live then; it went live now, as it was. No new version was recorded.`);
     if (result.changed_paths?.length) console.log(`changed: ${result.changed_paths.join(", ")}`);
     if (!result.guarantees?.length) console.log(NOTHING_CHECKED);
@@ -916,6 +917,7 @@ switch (command) {
     const waitingHere = mine ? s.pending.find((p) => p.tree_signature === mine) : undefined;
     out({ ...s, ...(here ? { uncommitted_here: here } : {}), ...(behind ? { behind } : {}), ...(waitingHere ? { waiting_here: waitingHere.change_id } : {}) }, () => {
       console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} ${serves(s) ? `at ${s.address}` : "(not serving)"}`);
+      if (s.stats_address && serves(s)) console.log(`its requests and wake and sleep counts, on PneumaSpace: ${s.stats_address}`);
       for (const line of standingLines(s)) console.log(line);
       if (s.runtime) console.log(checkedLine(s.runtime.checked_at, s.runtime_check_failed));
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
