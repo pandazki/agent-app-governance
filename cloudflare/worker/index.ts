@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
-import { APP_HEADER, CHANNEL_HEADER, folderKey, SECRET_HEADER, viewKey } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, folderKey, plansKey, SECRET_HEADER, viewKey } from "../src/protocol";
+import { appSummaries } from "./apps-index";
 import type { PageDeps } from "./page";
 // Bundled as text (the `rules` in wrangler.jsonc): the CLI and the starter instructions this Worker was deployed with.
 import starterCli from "../bin/appgov.mjs";
@@ -37,6 +38,8 @@ interface Env {
   APPGOV_CONTAINER_INSTANCE: string;
   /** Where the app Durable Objects (and so their containers) are placed first, e.g. wnam, near the bucket. */
   APPGOV_LOCATION_HINT?: string;
+  /** The Host's own address: the owner's domain when the installer was given one, else the workers.dev address. */
+  APPGOV_HOST_URL?: string;
 }
 
 const READY_WAIT_MS = 180_000;
@@ -92,27 +95,42 @@ export default {
       ownerKeyHash: env.APPGOV_OWNER_KEY_HASH,
       auth: store,
       governance: env.APPGOV_GOVERNANCE,
+      ...(env.APPGOV_HOST_URL ? { hostUrl: env.APPGOV_HOST_URL } : {}),
       app: (name) => env.APPS.get(env.APPS.idFromName(name), env.APPGOV_LOCATION_HINT ? { locationHint: env.APPGOV_LOCATION_HINT as DurableObjectLocationHint } : {}),
-      summaries: async () => {
-        const out: unknown[] = [];
-        let cursor: string | undefined;
-        do {
-          const page = await env.FOLDERS.list({ prefix: "summaries/", cursor });
-          // Read side by side: the list waits for the slowest summary, not for all of them in a row.
-          const bodies = await Promise.all(page.objects.map(async (object) => (await env.FOLDERS.get(object.key))?.json()));
-          for (const body of bodies) if (body !== undefined) out.push(body);
-          cursor = page.truncated ? page.cursor : undefined;
-        } while (cursor);
-        return out;
-      },
+      summaries: (steps) => appSummaries(r2(env.FOLDERS), (work) => ctx.waitUntil(work), steps),
       views: {
         view: async (app) => (await env.FOLDERS.get(viewKey(app)))?.json() ?? null,
+        plans: async (app) => (await env.FOLDERS.get(plansKey(app)))?.json() ?? null,
         folderEtag: async (app) => (await env.FOLDERS.head(folderKey(app)))?.etag ?? null,
       },
       waitUntil: (work) => ctx.waitUntil(work),
     });
   },
 } satisfies ExportedHandler<Env>;
+
+/** The bucket as worker/folders.ts and worker/apps-index.ts use it. */
+function r2(bucket: R2Bucket): FolderBucket {
+  return {
+    get: async (key) => {
+      const object = await bucket.get(key);
+      return object ? { etag: object.etag, bytes: () => object.arrayBuffer() } : null;
+    },
+    put: async (key, value, condition) => {
+      const put = await bucket.put(key, value, condition ? { onlyIf: condition } : {});
+      return put ? { etag: put.etag } : null;
+    },
+    list: async (prefix) => {
+      const out: { key: string; etag: string }[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await bucket.list({ prefix, ...(cursor ? { cursor } : {}) });
+        for (const object of page.objects) out.push({ key: object.key, etag: object.etag });
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+      return out;
+    },
+  };
+}
 
 /** One app: its container, its folder in R2, and one operation at a time. */
 export class AppHostObject extends DurableObject<Env> {
@@ -202,7 +220,7 @@ export class AppHostObject extends DurableObject<Env> {
       const worker = this.env.WORKER_VERSION ? { version: this.env.WORKER_VERSION.id.slice(0, 8), uploaded: this.env.WORKER_VERSION.timestamp } : null;
       return json({ app, running: container.running, image, build, worker });
     }
-    if (op !== "create" && op !== "read" && op !== "write" && op !== "view" && op !== "warm") return json({ error: "unknown operation", reason: "bad_op" }, 400);
+    if (op !== "create" && op !== "read" && op !== "write" && op !== "view" && op !== "warm" && op !== "plan") return json({ error: "unknown operation", reason: "bad_op" }, 400);
     const timing: Record<string, number> = {};
     try {
       timing.container = await this.ensure(request.headers.get(ORIGIN_HEADER) ?? "");
@@ -216,16 +234,7 @@ export class AppHostObject extends DurableObject<Env> {
             signal: AbortSignal.timeout(OPERATION_LIMIT_MS),
           }),
       };
-      const bucket: FolderBucket = {
-        get: async (key) => {
-          const object = await this.env.FOLDERS.get(key);
-          return object ? { etag: object.etag, bytes: () => object.arrayBuffer() } : null;
-        },
-        put: async (key, value, condition) => {
-          const put = await this.env.FOLDERS.put(key, value, condition ? { onlyIf: condition } : {});
-          return put ? { etag: put.etag } : null;
-        },
-      };
+      const bucket = r2(this.env.FOLDERS);
       const headers: Record<string, string> = {};
       for (const name of ["x-appgov-principal", APP_HEADER, CHANNEL_HEADER]) {
         const value = request.headers.get(name);

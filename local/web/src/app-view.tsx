@@ -66,7 +66,7 @@ function historyRow(row: HistoryRow, ui: AppModel["ui"]): TaskRow {
 
 export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => void }) {
   const ui = useUi();
-  const [all, setAll] = useState(false);
+  const [all, setAll] = useState(model.historyAll === true);
   const rows = model.history.map((row) => historyRow(row, ui));
   const shown = all ? rows : rows.slice(0, 8);
   let n = 0;
@@ -151,11 +151,15 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
           ) : (
             <div className="flex flex-col gap-2.5">
               <TaskRows rows={shown} />
-              {rows.length > shown.length && (
+              {rows.length > shown.length ? (
                 <button type="button" onClick={() => setAll(true)} className={`${buttonVariants({ variant: "secondary", size: "xs" })} self-center`}>
                   {fill(ui.show_earlier, { n: rows.length - shown.length })}
                 </button>
-              )}
+              ) : model.earlier ? (
+                <ButtonLink href={model.earlier.href} variant="secondary" size="xs" className="self-center">
+                  {model.earlier.label}
+                </ButtonLink>
+              ) : null}
             </div>
           )}
         </Surface>

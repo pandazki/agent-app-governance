@@ -201,7 +201,10 @@ describe("reads from the stored view", () => {
     };
     expect(view.status).toEqual(await answer("/apps/notes"));
     expect({ history: view.history } as Record<string, unknown>).toEqual(await answer("/apps/notes/history"));
-    expect(view.plans.v1).toEqual(await answer("/apps/notes/undo-plan/v1"));
+    // The plan as the route answers it, but for the entries it reads beside it: the view's own history holds them all.
+    const { entries, ...plan } = await answer("/apps/notes/undo-plan/v1");
+    expect(view.plans.v1).toEqual({ ...plan, entries: [] });
+    expect((entries as Record<string, unknown>[]).every((entry) => view.history.some((kept) => JSON.stringify(kept) === JSON.stringify(entry)))).toBe(true);
     // The same views, from the stored view and from one the container computes when none is stored.
     const paths = ["/app/notes", `/app/notes/change/${waiting}`, "/app/notes/back/v1"];
     const fromStored = await Promise.all(paths.map(async (p) => comparable((await page(p)).model)));
@@ -256,7 +259,7 @@ describe("reads from the stored view", () => {
       const status = await cli(copy(), ["status", "--json"]);
       expect([status.code, JSON.parse(status.out).timing.view]).toEqual([0, "legacy"]);
       const read = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
-      expect(read.headers.get("server-timing")).toMatch(/container;dur=\d+, legacy;dur=\d+, source;desc="legacy"$/);
+      expect(read.headers.get("server-timing")).toMatch(/container;dur=\d+, .*legacy;dur=\d+, source;desc="legacy"$/);
       expect(stack.bucket.objects.has(viewKey("notes"))).toBe(false);
     } finally {
       buildBefore = false;
@@ -301,8 +304,9 @@ describe("reads from the stored view", () => {
   test("a read says in Server-Timing where its time went in the Worker; the sign-in view says nothing", async () => {
     const steps = (header: string | null) => (header ?? "").split(", ").map((entry) => entry.split(";")[0]);
     const viewed = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
-    expect(steps(viewed.headers.get("server-timing"))).toEqual(["summaries", "r2-view", "r2-head", "source"]);
-    expect(viewed.headers.get("server-timing")).toMatch(/r2-view;dur=\d+, r2-head;dur=\d+, source;desc="stored"$/);
+    // The view is read beside the summaries (the listing and the index side by side), so the steps come in either order.
+    expect(steps(viewed.headers.get("server-timing")).sort()).toEqual(["r2-head", "r2-index", "r2-list", "r2-view", "source", "summaries"]);
+    expect(viewed.headers.get("server-timing")).toMatch(/source;desc="stored"$/);
     const token = String(JSON.parse(readFileSync(join(apps(), ".appgov", "centre.json"), "utf8")).token);
     const read = await fetch(`${stack.url}/apps/notes/history`, { headers: { authorization: `Bearer ${token}` } });
     expect(steps(read.headers.get("server-timing"))).toEqual(["r2-view", "r2-head", "source"]);
@@ -382,6 +386,7 @@ describe("the stored view's rules, on their own", () => {
     computed_at: "",
     status: {},
     history: [],
+    history_total: 0,
     plans: {},
   };
 

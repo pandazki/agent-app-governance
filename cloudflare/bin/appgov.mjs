@@ -317,7 +317,7 @@ function request(method, url, payload, secret) {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () =>
-        res.complete ? settle({ status: res.statusCode, level: res.headers[API_HEADER], timing: res.headers["x-appgov-timing"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted()),
+        res.complete ? settle({ status: res.statusCode, level: res.headers[API_HEADER], timing: res.headers["x-appgov-timing"], host: res.headers["x-appgov-host"], text: Buffer.concat(chunks).toString("utf8") }) : lost(aborted()),
       );
       res.on("error", lost);
       res.on("close", () => res.complete || lost(aborted()));
@@ -373,7 +373,7 @@ async function send(method, path, payload, { owner = false } = {}) {
     );
   }
   const began = Date.now();
-  const { err, connected, status, level, timing, text } = await request(method, url, payload, secret);
+  const { err, connected, status, level, timing, host, text } = await request(method, url, payload, secret);
   if (err) {
     const code = err.code ?? err.message;
     if (connected) {
@@ -388,6 +388,7 @@ async function send(method, path, payload, { owner = false } = {}) {
     fail(`cannot reach the centre at ${CENTRE} (${code}). ${CENTRE_SOURCE} Ask the user, do not start anything yourself.`, 3);
   }
   checkLevel(level, url);
+  noteMoved(host);
   let data;
   try {
     data = JSON.parse(text);
@@ -396,6 +397,21 @@ async function send(method, path, payload, { owner = false } = {}) {
   }
   if (flags.timing) printTiming(`${method} ${path}`, Date.now() - began, data?.timing, timing);
   return { status, data };
+}
+
+/**
+ * The centre says where it lives (x-appgov-host): once it has the owner's domain, the address this CLI came by
+ * (workers.dev) still answers, and this says once, on stderr, how to move to the new one.
+ */
+let movedSaid = false;
+/** The centre's own address, as its last answer gave it. */
+let centreSays = null;
+function noteMoved(host) {
+  if (typeof host === "string" && host) centreSays = clean(host);
+  if (movedSaid || typeof host !== "string" || !host || clean(host) === CENTRE || command === "update") return;
+  movedSaid = true;
+  const where = CENTRE_RECORD && clean(CENTRE_RECORD.url) === CENTRE ? `node ${SELF} update moves ${CENTRE_RECORD.file} to it` : `use --host ${clean(host)}`;
+  console.error(`note: this centre's address is now ${clean(host)}; ${CENTRE} still answers. ${where}.`);
 }
 
 async function call(method, path, payload, options) {
@@ -606,8 +622,9 @@ function newCopy(dir, copy) {
   if (existsSync(dir) && readdirSync(dir).length) fail(`${dir} is not empty; name another directory with --into <dir>`);
   mkdirSync(dir, { recursive: true });
   applyCopy(dir, copy);
-  // The centre's address always; the agent token when this command had one (signed in as the owner, it has none).
-  writePrivate(join(dir, STATE_DIR, CENTRE_FILE), { url: CENTRE, ...(TOKEN ? { token: TOKEN } : {}) });
+  // The centre's own address always (as it gave it, whatever address this command came by); the agent token when this
+  // command had one (signed in as the owner, it has none).
+  writePrivate(join(dir, STATE_DIR, CENTRE_FILE), { url: centreSays ?? CENTRE, ...(TOKEN ? { token: TOKEN } : {}) });
   console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}; the centre's address${TOKEN ? " and the agent token are" : " is"} in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git). Open it with your coding agent.`);
 }
 
@@ -659,6 +676,14 @@ if (command === "update") {
   // Only a copy in a directory's .appgov/ is replaced; the repository's own CLI is the owner's, and the installer deploys it.
   if (dirname(self).split(sep).at(-1) !== STATE_DIR) fail(`update replaces a copy of the CLI at ${STATE_DIR}/appgov.mjs; this one is ${self}. To bring the centre to this CLI's level, the owner reruns the installer.`);
   const starter = await call("GET", "/starter");
+  // The centre's own address, when it lives at another one than this directory's centre.json says (the owner gave the
+  // Host a domain): the token stays, the address is the centre's.
+  const home = typeof starter.host_url === "string" && starter.host_url ? clean(starter.host_url) : null;
+  if (home && CENTRE_RECORD && clean(CENTRE_RECORD.url) === CENTRE && CENTRE !== home) {
+    const { file, ...record } = CENTRE_RECORD;
+    writePrivate(file, { ...record, url: home });
+    console.log(`moved ${file} from ${CENTRE} to the centre's address, ${home}.`);
+  }
   const same = readFileSync(self, "utf8") === starter.cli;
   if (!same) writeFileSync(self, starter.cli);
   console.log(same ? `${SELF} is the centre's own CLI already (API level ${starter.api_level}).` : `replaced ${SELF} with the centre's own CLI (API level ${starter.api_level}). Run your command again.`);
@@ -720,7 +745,8 @@ if (command === "token") {
     // What the agent will run and read comes from the centre, before any token exists: nothing is left half made.
     const starter = await call("GET", "/starter", undefined, { owner: true });
     const data = await call("POST", "/tokens", { label: flags.label ?? "agent", ...(flags.days ? { expires_in_days: Number(flags.days) } : {}) }, { owner: true });
-    writePrivate(file, { url: CENTRE, token: data.token });
+    // The centre's own address, whatever address this command came by.
+    writePrivate(file, { url: typeof starter.host_url === "string" && starter.host_url ? clean(starter.host_url) : CENTRE, token: data.token });
     const written = writeStarter(dir, starter);
     console.log(`created agent token ${data.id} (${data.label}), valid until ${readableTime(new Date(data.expires_at).toISOString())}; written to ${file}. Keep that file out of git.`);
     console.log(`${dir} also has ${written.join(", ")}: this centre's CLI and what an agent started there needs to know. Start your agent in ${dir}.`);

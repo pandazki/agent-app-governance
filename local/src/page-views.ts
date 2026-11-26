@@ -170,6 +170,10 @@ export interface PageContext {
   readonly access?: OwnerAccess;
   /** The apps and their previews open on a runtime that asks the owner to sign in there too. */
   readonly appsSignIn?: boolean;
+  /** The history given to an app's view is its newest entries only, and this many older ones were left out (the Cloudflare edition's stored view). */
+  readonly historyMore?: number;
+  /** An app's view shows its whole history at once, every row open to scroll. */
+  readonly historyAll?: boolean;
 }
 
 // The record and the waiting changes come from files an agent can write: any field may be missing or of another type.
@@ -887,6 +891,8 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
     waiting: pending.map((p) => ({ intent: quoted(p.intent), href: link(`/app/${name}/change/${encodeURIComponent(str(p.change_id))}`, ctx.lang) })),
     history,
     historyError,
+    ...(ctx.historyMore ? { earlier: { label: w.show_whole_history, href: link(`/app/${name}/history`, ctx.lang) } } : {}),
+    ...(ctx.historyAll ? { historyAll: true } : {}),
     hint: { body: w.hint_app_body, example: fill(w.hint_app, { name }) },
     facts: facts([
       { label: w.d_current, value: str(status.active_version ?? w.d_none), mono: true },

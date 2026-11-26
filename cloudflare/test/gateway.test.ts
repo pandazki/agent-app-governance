@@ -19,7 +19,7 @@ async function gateway(now = { value: Date.now() }) {
       fetch: async (req) => {
         forwarded.push({ path: new URL(req.url).pathname, method: req.method, principal: JSON.parse(req.headers.get(PRINCIPAL_HEADER)!), op: req.headers.get("x-appgov-op") });
         // Status and history are answered from the app's view, which a Durable Object computes when none is stored.
-        if (req.headers.get("x-appgov-op") === "view") return Response.json({ schema: VIEW_SCHEMA, app: "todo", folder_etag: "e1", computed_at: "", status: { ok: true }, history: [], plans: {} });
+        if (req.headers.get("x-appgov-op") === "view") return Response.json({ schema: VIEW_SCHEMA, app: "todo", folder_etag: "e1", computed_at: "", status: { ok: true }, history: [], history_total: 0, plans: {} });
         return Response.json({ ok: true });
       },
     }),
@@ -77,8 +77,8 @@ describe("the Worker's gateway", () => {
     const { call, login, token } = await gateway();
     const session = await login();
     for (const secret of [session, (await token(session)).token]) {
-      const starter = (await (await call("GET", "/starter", { secret })).json()) as { api_level: number; cli: string; agents: string };
-      expect(starter).toEqual({ api_level: API_LEVEL, cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at https://host.test.\n" });
+      const starter = (await (await call("GET", "/starter", { secret })).json()) as { api_level: number; cli: string; agents: string; host_url: string };
+      expect(starter).toEqual({ api_level: API_LEVEL, cli: "// the centre's CLI\n", agents: "# Apps kept by an appgov centre\nThe centre is at https://host.test.\n", host_url: "https://host.test" });
     }
   });
 

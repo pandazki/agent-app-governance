@@ -2,6 +2,7 @@
 // Installs the Cloudflare edition's Host: one command, safe to run again.
 //
 //   node cloudflare/scripts/install.mjs <PneumaSpace origin> --space-owner <owner credentials file> --prefix <name>
+//     [--domain <hostname>] [--account <id>]
 //
 // It checks everything it needs before it changes anything, then:
 //   1. creates the R2 bucket <prefix>-folders near where the containers run (location hint wnam), unless it exists;
@@ -9,12 +10,16 @@
 //      the one it created before is still valid;
 //   3. generates the owner key once, and keeps only its SHA-256 hash for the Worker;
 //   4. builds the owner page (local/web/build.ts) and deploys the Worker <prefix> with it, its Durable Objects and the
-//      Host's container, on workers.dev;
-//   5. writes the owner credentials file, once, and checks that the owner can sign in.
+//      Host's container, on workers.dev and, given --domain, on that hostname as a custom domain of the Worker (its
+//      zone must be in the account; a hostname another Worker has is never taken over). The domain is then the Host's
+//      address everywhere it gives one; the workers.dev address keeps answering the API, and sends the page to the
+//      domain. A rerun without --domain keeps the domain it has;
+//   5. writes the owner credentials file, once (its address follows the Host's), and checks that the owner can sign in.
 // State, all of it private, lives in ~/.appgov/hosts/<prefix>/ (mode 0700). Nothing secret is printed, and Wrangler's
 // output is shown with the account id taken out.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { lookup, Resolver } from "node:dns/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,15 +35,18 @@ const PAGE = join(LOCAL, "web", "dist");
 const API = "https://api.cloudflare.com/client/v4";
 const LOCATION = "wnam";
 const SPACE_SCOPES = ["read", "publish", "invoke", "manage", "remove"];
-const USAGE = "usage: node cloudflare/scripts/install.mjs <PneumaSpace origin> --space-owner <owner credentials file> --prefix <name> [--account <id>]";
+const USAGE = "usage: node cloudflare/scripts/install.mjs <PneumaSpace origin> --space-owner <owner credentials file> --prefix <name> [--domain <hostname>] [--account <id>]";
+/** A hostname for --domain: lowercase labels, at least two, as PneumaSpace's installer takes its control domain. */
+const HOSTNAME = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const HTTPS_WAIT_MS = 10 * 60_000;
 
-class Stop extends Error {}
+export class Stop extends Error {}
 const log = (line) => console.log(`install: ${line}`);
 
-function parse(argv) {
+export function parse(argv) {
   let parsed;
   try {
-    parsed = parseArgs({ args: argv, allowPositionals: true, options: { "space-owner": { type: "string" }, prefix: { type: "string" }, account: { type: "string" } } });
+    parsed = parseArgs({ args: argv, allowPositionals: true, options: { "space-owner": { type: "string" }, prefix: { type: "string" }, account: { type: "string" }, domain: { type: "string" } } });
   } catch (err) {
     throw new Stop(`${err.message}\n${USAGE}`);
   }
@@ -52,9 +60,106 @@ function parse(argv) {
   } catch {}
   if (url?.protocol !== "https:") throw new Stop(`the PneumaSpace origin must be an https:// address, not "${origin}"`);
   if (!/^[a-z][a-z0-9-]{1,40}[a-z0-9]$/.test(prefix)) throw new Stop("--prefix takes 3 to 42 lowercase letters, digits and hyphens, starting with a letter");
+  const domain = parsed.values.domain?.trim().toLowerCase().replace(/^https:\/\//, "").replace(/\/+$/, "");
+  if (domain !== undefined && !HOSTNAME.test(domain)) throw new Stop(`--domain takes a hostname such as host.example.com, not "${parsed.values.domain}"`);
   const stateDir = join(process.env.APPGOV_HOME?.trim() || join(homedir(), ".appgov"), "hosts", prefix);
-  return { space: url.origin, spaceOwner: resolve(owner.replace(/^~(?=\/)/, homedir())), prefix, account: parsed.values.account, stateDir };
+  return { space: url.origin, spaceOwner: resolve(owner.replace(/^~(?=\/)/, homedir())), prefix, account: parsed.values.account, ...(domain ? { domain } : {}), stateDir };
 }
+
+/**
+ * The hostname the Host is served on, from --domain and what the installer recorded: a rerun without --domain keeps
+ * the one it has. Another one than it has is refused: changing it is the operator's to do (see the README).
+ */
+export function chooseDomain(recorded, given) {
+  if (!given) return recorded ?? null;
+  if (recorded && recorded !== given) {
+    throw new Stop(
+      `this Host is served on ${recorded} already. To move it to ${given}: remove ${recorded} from the Worker in the Cloudflare dashboard (Workers, the Worker, Settings, Domains & Routes), delete "domain" from install.json in the installer's state directory, and run this again with --domain ${given}. Working copies that hold ${recorded} then need its new address.`,
+    );
+  }
+  return given;
+}
+
+/** The Host's own address: its domain when it has one, else its workers.dev address. */
+export const hostAddress = (domain, workersDev) => (domain ? `https://${domain}` : workersDev);
+
+/** The zone `hostname` is in, among the account's (the longest suffix that is one): its id and its nameservers. */
+export async function findZone(api, accountId, hostname) {
+  const labels = hostname.split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    const found = await api("GET", `/zones?name=${labels.slice(i).join(".")}&account.id=${accountId}`);
+    if (!found.ok) throw new Stop(`looking up the zone of ${hostname} failed (${found.status}: ${found.errors})`);
+    if (found.result?.[0]?.id) return { id: found.result[0].id, nameServers: found.result[0].name_servers ?? [] };
+  }
+  throw new Stop(`no zone of ${hostname} is in this Cloudflare account; add the zone first, or pick a hostname in a zone it has`);
+}
+
+/** Which Worker has `hostname` as a custom domain, or null. One that is not `service` is never taken over. */
+export async function domainHolder(api, accountId, hostname, service) {
+  const listed = await api("GET", `/accounts/${accountId}/workers/domains`);
+  if (!listed.ok) throw new Stop(`listing the account's Worker domains failed (${listed.status}: ${listed.errors})`);
+  const held = (listed.result ?? []).find((d) => d.hostname === hostname);
+  if (held && held.service !== service) throw new Stop(`${hostname} is a custom domain of another Worker (${held.service}); it is not taken over. Pick another hostname`);
+  return held ? held.service : null;
+}
+
+/** `hostname` as a custom domain of the Worker `service` (the API refuses a hostname with other DNS records). */
+export async function attachDomain(api, accountId, zoneId, hostname, service) {
+  const made = await api("PUT", `/accounts/${accountId}/workers/domains`, { environment: "production", hostname, service, zone_id: zoneId });
+  if (!made.ok) throw new Stop(`attaching ${hostname} to the Worker ${service} failed (${made.status}: ${made.errors}); if the hostname has DNS records of its own, remove them or pick another hostname`);
+}
+
+/**
+ * Until the zone's own nameservers answer for `hostname`, up to two minutes. They keep no "no such host" answer, as
+ * resolvers do (for up to the zone's 30 minutes), so this machine's resolver is asked only once the record is out.
+ * False when they could not be asked or did not answer in time.
+ */
+export async function waitForRecord(hostname, nameServers, { wait = 120_000, every = 2000, resolver } = {}) {
+  let asking = resolver;
+  if (!asking) {
+    const addresses = (await Promise.all(nameServers.map((ns) => lookup(ns, { all: true, family: 4 }).catch(() => [])))).flat().map((a) => a.address);
+    if (!addresses.length) return false;
+    asking = new Resolver({ timeout: 3000, tries: 1 });
+    asking.setServers(addresses);
+  }
+  for (const deadline = Date.now() + wait; Date.now() < deadline; ) {
+    for (const kind of ["resolve4", "resolve6"]) {
+      try {
+        if ((await asking[kind](hostname)).length) return true;
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, every));
+  }
+  return false;
+}
+
+/**
+ * Until the Host answers at `url` over valid HTTPS (a new certificate can take minutes). `first` delays the first try.
+ */
+export async function waitForHttps(url, { wait = HTTPS_WAIT_MS, every = 5000, first = 0, fetcher = fetch } = {}) {
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (first) await pause(first);
+  let unresolved = false;
+  for (const deadline = Date.now() + wait; Date.now() < deadline; ) {
+    try {
+      const res = await fetcher(`${url}/me`, { signal: AbortSignal.timeout(10_000) });
+      await res.body?.cancel();
+      if (res.status === 401) return;
+      unresolved = false;
+    } catch (err) {
+      unresolved = [err?.code, err?.cause?.code].includes("ENOTFOUND");
+    }
+    await pause(every);
+  }
+  throw new Stop(
+    unresolved
+      ? `${url} is attached, but this machine cannot look its name up yet: a lookup made before its DNS record was out is kept as "no such host" for up to 30 minutes. Nothing else changed; run the same command again in a while`
+      : `${url} does not answer over valid HTTPS yet; its certificate may still be on its way. Nothing else changed; run the same command again in a few minutes`,
+  );
+}
+
+/** The owner credentials file's content at `url`: the key it has (or `key`), the Host's address now. */
+export const ownerRecord = (existing, url, key) => ({ ...(existing ?? {}), url, key: existing?.key ?? key });
 
 const readJson = (file) => {
   try {
@@ -152,8 +257,8 @@ function frameworkCommit() {
   return commit;
 }
 
-/** The deployed Worker's configuration: the template with this install's names and absolute paths. */
-function workerConfig(options, accountId, commit) {
+/** The deployed Worker's configuration: the template with this install's names, absolute paths and address. */
+export function workerConfig(options, accountId, commit, hostUrl) {
   const template = JSON.parse(readFileSync(join(EDITION, "wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, ""));
   return {
     ...template,
@@ -162,7 +267,7 @@ function workerConfig(options, accountId, commit) {
     account_id: accountId,
     main: join(EDITION, "worker", "index.ts"),
     assets: { ...template.assets, directory: PAGE },
-    vars: { ...template.vars, APPGOV_SPACE_ORIGIN: options.space, APPGOV_LOCATION_HINT: LOCATION },
+    vars: { ...template.vars, APPGOV_SPACE_ORIGIN: options.space, APPGOV_LOCATION_HINT: LOCATION, APPGOV_HOST_URL: hostUrl },
     r2_buckets: [{ binding: "FOLDERS", bucket_name: `${options.prefix}-folders` }],
     containers: template.containers.map((c) => ({
       ...c,
@@ -238,7 +343,14 @@ export async function install(options) {
   }
   const sub = await cfApi(session, "GET", `/accounts/${accountId}/workers/subdomain`);
   if (!sub.ok || !sub.result?.subdomain) throw new Stop(`the account has no workers.dev subdomain yet (${sub.errors || sub.status}); open Workers in the Cloudflare dashboard once to choose one, then run this again`);
-  const url = `https://${options.prefix}.${sub.result.subdomain}.workers.dev`;
+  const workersDev = `https://${options.prefix}.${sub.result.subdomain}.workers.dev`;
+  // The owner's domain, checked before anything changes: its zone is in the account, and no other Worker has it.
+  const api = (method, path, body) => cfApi(session, method, path, body);
+  const domain = chooseDomain(record.domain, options.domain);
+  const zone = domain ? await findZone(api, accountId, domain) : null;
+  let attached = domain ? (await domainHolder(api, accountId, domain, options.prefix)) === options.prefix : false;
+  const url = hostAddress(domain, workersDev);
+  const exists = scripts.result.some((s) => s.id === options.prefix);
 
   const space = await spaceOwner(options.space, options.spaceOwner);
   try {
@@ -281,12 +393,23 @@ export async function install(options) {
     writePrivate(paths.secrets, kept);
     record.worker = options.prefix;
     record.url = url;
+    record.workers_dev = workersDev;
+    if (domain) record.domain = domain;
     record.bucket = bucket;
     record.space = options.space;
     writePrivate(paths.install, record);
 
     // --- 4. the Worker and its container ------------------------------------------------------------------------
-    writePrivate(paths.config, workerConfig(options, accountId, commit));
+    // A Worker that runs already gets the domain first, and it answers there over HTTPS before this deploy starts
+    // sending the page there; a new one gets it right after its first deploy.
+    if (domain && !attached && exists) {
+      log(`attaching ${domain} to the Worker ${options.prefix}`);
+      await attachDomain(api, accountId, zone.id, domain, options.prefix);
+      attached = true;
+      log(`waiting until ${url} answers over HTTPS`);
+      await waitForHttps(url, { first: (await waitForRecord(domain, zone.nameServers)) ? 0 : 20_000 });
+    }
+    writePrivate(paths.config, workerConfig(options, accountId, commit, url));
     let deployed = false;
     for (let attempt = 1; attempt <= 3 && !deployed; attempt++) {
       if (attempt > 1) log(`deploy attempt ${attempt - 1} failed; trying again`);
@@ -295,6 +418,16 @@ export async function install(options) {
       if (!deployed && ACCOUNT_TROUBLE.test(run.output)) throw new Stop("the deploy failed for a reason that looks like the account's (plan, permission or quota); the exact error is above. Nothing was retried");
     }
     if (!deployed) throw new Stop("the deploy failed three times; the output is above. Run the same command again once the cause is fixed");
+    let justAttached = false;
+    if (domain && !attached) {
+      log(`attaching ${domain} to the Worker ${options.prefix}`);
+      await attachDomain(api, accountId, zone.id, domain, options.prefix);
+      justAttached = true;
+    }
+    if (domain) {
+      log(`waiting until ${url} answers over HTTPS`);
+      await waitForHttps(url, { first: justAttached && !(await waitForRecord(domain, zone.nameServers)) ? 20_000 : 0 });
+    }
   } finally {
     await space.close();
   }
@@ -315,8 +448,13 @@ export async function install(options) {
   const signedIn = (await login.json()).session;
   await storeViews(url, signedIn);
   await fetch(`${url}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${signedIn}` } }).catch(() => {});
-  if (!existsSync(paths.owner)) writePrivate(paths.owner, { url, key: ownerKey });
+  // The owner credentials file and the CLI's session follow the Host's address; the key and the session stay.
+  const owner = readJson(paths.owner);
+  if (!owner || owner.url !== url) writePrivate(paths.owner, ownerRecord(owner, url, ownerKey));
+  const cliSession = readJson(join(options.stateDir, "session.json"));
+  if (cliSession && cliSession.url !== url) writePrivate(join(options.stateDir, "session.json"), { ...cliSession, url });
   log(`installed. The Host answers at ${url}; its owner page is ${url}/ (sign in with the key in the owner credentials file)`);
+  if (domain) log(`${workersDev} still answers the API, for working copies that hold it (their CLI says how to move: update), and sends the page to ${url}`);
   log(`owner credentials: ${paths.owner} (keep this file private; the CLI's login reads it)`);
   log(`next: node cloudflare/bin/appgov.mjs --host ${url} login, then token create --write <the directory your agent works in>`);
 }
@@ -335,9 +473,11 @@ async function storeViews(url, session) {
   } catch {}
   for (const name of apps.map((app) => app?.app_id).filter((name) => typeof name === "string" && /^[a-z][a-z0-9-]{0,29}$/.test(name))) {
     try {
+      const began = Date.now();
       const res = await fetch(`${url}/apps/${name}`, { headers, signal: AbortSignal.timeout(300_000) });
       const view = (await res.json().catch(() => ({}))).timing?.view;
-      log(res.ok ? `${name}: ${view === "stored" ? "its stored view is current" : "its view was read through its container and stored (unless its Durable Object still runs the build before)"}` : `${name}: not read (${res.status}); its first view will ask its container`);
+      const took = `${((Date.now() - began) / 1000).toFixed(1)} s`;
+      log(res.ok ? `${name}: ${view === "stored" ? `its stored view is current (${took})` : `its view was read through its container and stored, in ${took} (unless its Durable Object still runs the build before)`}` : `${name}: not read (${res.status}); its first view will ask its container`);
     } catch {
       log(`${name}: not read in time; its first view will ask its container`);
     }
