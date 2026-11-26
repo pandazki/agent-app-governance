@@ -250,13 +250,16 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect((await cli(copy(), ["container", "stop"], { owner: true })).code).toBe(2);
     const stopped = await inTerminal(copy(), ["container", "stop"], { owner: true, answers: ["stop"] });
     expect(stopped.out).toContain("stopped the Host's container");
+    // Status is read from the app's stored view: no container starts for it.
     const status = await cli(copy(), ["status", "--timing"]);
     expect(status.code).toBe(0);
-    expect(status.out).toMatch(/load the record from R2 into the container +\d+ ms/);
-    expect(stack.starts()).toBe(before + 1);
+    expect(status.out).toMatch(/read the stored view from R2 \(no container\) +\d+ ms/);
+    expect(stack.starts()).toBe(before);
     writeFileSync(join(copy(), "app", "public", "style.css"), "body { background: #ffffff; }\n");
     const submitted = await cli(copy(), ["submit", "White background", "--timing"]);
     expect(submitted.code).toBe(0);
+    expect(submitted.out).toMatch(/load the record from R2 into the container +\d+ ms/);
+    expect(stack.starts()).toBe(before + 1);
     // The answer carries where the time went, and --timing prints it.
     for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2"]) {
       expect(submitted.out).toContain(step);

@@ -7,7 +7,7 @@ import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../h
 import { collectSteps, timedSync } from "../../host/src/steps";
 import { dataLeft, dataLeftLine } from "./data-left";
 import { copySignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "./folder";
-import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, PAGE_CHANNEL, PRINCIPAL_HEADER, SECRET_HEADER, type Principal } from "./protocol";
+import { APP_HEADER, APP_NAME, CHANNEL_HEADER, FOLDER_HEADER, PAGE_CHANNEL, PRINCIPAL_HEADER, SECRET_HEADER, VIEW_SCHEMA, type Principal, type StoredView } from "./protocol";
 
 // ---------------------------------------------------------------------------
 // The Host's HTTP face inside the container.
@@ -74,6 +74,17 @@ const text = (value: unknown, field: string, fallback?: string): string => {
 };
 
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/**
+ * The versions `version` was built on, newest first, by the rule undo follows (host/src/host.ts `builtOn`, and the
+ * owner page's `lineage` in local/src/page-views.ts, which this image does not carry): the versions it can go back to.
+ */
+function builtOnChain(history: readonly { kind?: string; version?: unknown; base_version?: unknown }[], version: string | null): string[] {
+  const out: string[] = [];
+  const baseOf = (v: string) => history.find((entry) => entry.version === v && entry.kind !== "restore")?.base_version;
+  for (let at = version ? baseOf(version) : undefined; typeof at === "string" && !out.includes(at) && at !== version; at = baseOf(at)) out.push(at);
+  return out;
+}
 
 /** How the record names the credential a request was authenticated with. */
 export function credentialOf(principal: Principal): string {
@@ -165,6 +176,34 @@ export function createContainerServer(opts: ContainerServerOptions) {
       log(`could not put the working tree of ${name} back to its current version: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
+  /** `GET /apps/<app>`: each waiting change carries its files' signature as the CLI computes one, so a working copy can tell that its edits are that change and not something still to submit. */
+  const statusAnswer = async (name: string) => {
+    const status = await host.status(name);
+    const drafts = appPaths(appsDir, name).drafts;
+    // The risks the standing rule lets through in this mode: the owner page lists only the others as why a change waits.
+    return { ...status, auto_approved: host.autoApproved, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
+  };
+  /** `GET /apps/<app>/undo-plan/<version>`: what going back to a version would do, without doing it. */
+  const planAnswer = (name: string, to: string) => {
+    const plan = host.undoPlan(name, to);
+    const record = openRecord(appPaths(appsDir, name));
+    return { ...plan, data_left: plan.undone.length ? (dataLeft(plan.undone, to, (version) => record.versionDir(version)) ?? null) : null };
+  };
+  /** Everything a read of the app needs, for the Durable Object to store beside the folder (StoredView in protocol.ts). */
+  const viewOf = async (name: string, etag: string): Promise<StoredView> => {
+    const history = host.history(name);
+    const status = await statusAnswer(name);
+    const plans: Record<string, Record<string, unknown> | null> = {};
+    // Every version the current one was built on: the ones the owner page offers to go back to.
+    for (const version of builtOnChain(history, status.active_version)) {
+      try {
+        plans[version] = planAnswer(name, version) as unknown as Record<string, unknown>;
+      } catch {
+        plans[version] = null;
+      }
+    }
+    return { schema: VIEW_SCHEMA, app: name, folder_etag: etag, computed_at: new Date().toISOString(), status: status as unknown as Record<string, unknown>, history: history as unknown as Record<string, unknown>[], plans };
+  };
   const withCopy = (name: string, result: unknown) =>
     existsSync(appPaths(appsDir, name).info)
       ? { ...(result as object), working_copy: timedSync("export the working copy", () => exportWorkingCopy(appRoot(name), name, current(name))) }
@@ -189,6 +228,13 @@ export function createContainerServer(opts: ContainerServerOptions) {
     if (url.pathname === "/folder/summary" && method === "GET") {
       const summary = host.summaries().find((s) => s.app_id === name);
       return summary ? { status: 200, type: "application/json", body: JSON.stringify(summary) } : { status: 404, type: "application/json", body: JSON.stringify({ error: `no app named ${name}` }) };
+    }
+    if ((url.pathname === "/folder/view" || url.pathname === "/folder/check") && method === "GET") {
+      // Only of the folder the Durable Object read: otherwise it loads it first, as for any other route.
+      const expected = String(req.headers[FOLDER_HEADER] ?? "");
+      if (!expected || loaded.get(name) !== expected) throw new HostError(412, `the folder of ${name} on this container is not the one in R2; load it first`, "folder_not_loaded");
+      if (url.pathname === "/folder/check") return { status: 204, type: "text/plain", body: "" };
+      return { status: 200, type: "application/json", body: JSON.stringify(await viewOf(name, expected)) };
     }
     if (url.pathname === "/folder/saved" && method === "POST") {
       loaded.set(name, text(url.searchParams.get("etag"), "etag"));
@@ -237,22 +283,13 @@ export function createContainerServer(opts: ContainerServerOptions) {
     if (!APP_NAME.test(name)) throw new HostError(400, `app name must match ${APP_NAME}`);
     if (name !== req.headers[APP_HEADER]) throw new HostError(400, "this request was routed for another app");
     checkFolder(req, name);
-    if (parts.length === 2 && method === "GET") {
-      // Each waiting change carries its files' signature as the CLI computes one, so a working copy can tell that its
-      // edits are that change and not something still to submit.
-      const status = await host.status(name);
-      const drafts = appPaths(appsDir, name).drafts;
-      // The risks the standing rule lets through in this mode: the owner page lists only the others as why a change waits.
-      return { ...status, auto_approved: host.autoApproved, pending: status.pending.map((p) => ({ ...p, tree_signature: copySignature(join(drafts, p.change_id)) })) };
-    }
+    if (parts.length === 2 && method === "GET") return statusAnswer(name);
     if (parts.length === 3 && method === "GET" && parts[2] === "history") return { history: host.history(name) };
     if (parts.length === 4 && method === "GET" && parts[2] === "undo-plan") {
       // What going back to a version would do, without doing it: what the owner page shows before "Go back".
       const to = parts[3]!;
       if (!/^v\d+$/.test(to)) throw new HostError(400, "to must be a version name, e.g. v3");
-      const plan = host.undoPlan(name, to);
-      const record = openRecord(appPaths(appsDir, name));
-      return { ...plan, data_left: plan.undone.length ? (dataLeft(plan.undone, to, (version) => record.versionDir(version)) ?? null) : null };
+      return planAnswer(name, to);
     }
     if (parts.length === 3 && method === "GET" && parts[2] === "folder") return exportWorkingCopy(appRoot(name), name, current(name));
     if (parts.length === 3 && method === "POST") {

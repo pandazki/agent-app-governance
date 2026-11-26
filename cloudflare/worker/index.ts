@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
-import { APP_HEADER, CHANNEL_HEADER, SECRET_HEADER } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, folderKey, SECRET_HEADER, viewKey } from "../src/protocol";
 import type { PageDeps } from "./page";
 // Bundled as text (the `rules` in wrangler.jsonc): the CLI and the starter instructions this Worker was deployed with.
 import starterCli from "../bin/appgov.mjs";
@@ -74,7 +74,7 @@ function pageDeps(env: Env): PageDeps {
 const OPERATION_LIMIT_MS = 20 * 60_000;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const auth = env.AUTH.getByName("auth");
     const store: AuthStore = {
       addSession: (hash, expiresAt) => auth.addSession(hash, expiresAt),
@@ -98,14 +98,18 @@ export default {
         let cursor: string | undefined;
         do {
           const page = await env.FOLDERS.list({ prefix: "summaries/", cursor });
-          for (const object of page.objects) {
-            const body = await env.FOLDERS.get(object.key);
-            if (body) out.push(await body.json());
-          }
+          // Read side by side: the list waits for the slowest summary, not for all of them in a row.
+          const bodies = await Promise.all(page.objects.map(async (object) => (await env.FOLDERS.get(object.key))?.json()));
+          for (const body of bodies) if (body !== undefined) out.push(body);
           cursor = page.truncated ? page.cursor : undefined;
         } while (cursor);
         return out;
       },
+      views: {
+        view: async (app) => (await env.FOLDERS.get(viewKey(app)))?.json() ?? null,
+        folderEtag: async (app) => (await env.FOLDERS.head(folderKey(app)))?.etag ?? null,
+      },
+      waitUntil: (work) => ctx.waitUntil(work),
     });
   },
 } satisfies ExportedHandler<Env>;
@@ -198,7 +202,7 @@ export class AppHostObject extends DurableObject<Env> {
       const worker = this.env.WORKER_VERSION ? { version: this.env.WORKER_VERSION.id.slice(0, 8), uploaded: this.env.WORKER_VERSION.timestamp } : null;
       return json({ app, running: container.running, image, build, worker });
     }
-    if (op !== "create" && op !== "read" && op !== "write") return json({ error: "unknown operation", reason: "bad_op" }, 400);
+    if (op !== "create" && op !== "read" && op !== "write" && op !== "view" && op !== "warm") return json({ error: "unknown operation", reason: "bad_op" }, 400);
     const timing: Record<string, number> = {};
     try {
       timing.container = await this.ensure(request.headers.get(ORIGIN_HEADER) ?? "");

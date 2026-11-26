@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EDITION, editionHost, TEMPLATE } from "../src/edition";
-import { APP_HEADER, CHANNEL_HEADER, PRINCIPAL_HEADER, SECRET_HEADER } from "../src/protocol";
+import { APP_HEADER, CHANNEL_HEADER, folderKey, PRINCIPAL_HEADER, SECRET_HEADER, viewKey } from "../src/protocol";
 import { createContainerServer } from "../src/server";
 import { CfSpace } from "../src/space-cf";
 import { operate, withTiming, type FolderBucket, type HostPort, type StoredObject } from "../worker/folders";
@@ -96,6 +96,8 @@ interface Container {
 
 export interface Stack {
   url: string;
+  /** Operations the apps' Durable Objects ran, by kind (create, read, write, view, warm), in order. */
+  operations: string[];
   ownerKey: string;
   plane: FakePlane;
   bucket: MemoryBucket;
@@ -104,6 +106,8 @@ export interface Stack {
   starts(): number;
   /** Throw the container away, disk and all, as Cloudflare may at any time. */
   dropContainer(): Promise<void>;
+  /** A read of the Host in the app's container, as the owner, past the Worker: what the container computes now. */
+  containerRead(app: string, path: string): Promise<Response>;
   close(): Promise<void>;
 }
 
@@ -129,7 +133,11 @@ export function pageFromDist(spaceOrigin: string, dir = join(EDITION, "..", "loc
 
 export interface StackOptions {
   /** Awaited in the app's Durable Object before each operation: a test or a demo makes one take longer. */
-  readonly beforeOperation?: (method: string, path: string) => Promise<void>;
+  readonly beforeOperation?: (method: string, path: string, op: string) => Promise<void>;
+  /** The Worker's clock; the real one when absent. */
+  readonly now?: () => number;
+  /** While true, the apps' Durable Objects answer as the build before stored views: they refuse `view` and `warm`. */
+  readonly buildBefore?: () => boolean;
 }
 
 export async function startStack(options: StackOptions = {}): Promise<Stack> {
@@ -142,6 +150,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
   let container: Container | null = null;
   let started = 0;
   const queues = new Map<string, Promise<unknown>>();
+  const operations: string[] = [];
 
   const startContainer = async (origin: string): Promise<Container> => {
     const appsDir = mkdtempSync(join(tmpdir(), "appgov-cf-container-"));
@@ -179,7 +188,9 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       }
       return json({ app, running: container !== null });
     }
-    await options.beforeOperation?.(request.method, new URL(request.url).pathname);
+    operations.push(op);
+    if (options.buildBefore?.() && (op === "view" || op === "warm")) return json({ error: "unknown operation", reason: "bad_op" }, 400);
+    await options.beforeOperation?.(request.method, new URL(request.url).pathname, op);
     const timing: Record<string, number> = {};
     const began = Date.now();
     container ??= await startContainer(request.headers.get(ORIGIN_HEADER) ?? "");
@@ -194,7 +205,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       if (value !== null) headers[name] = value;
     }
     const body = request.method === "POST" ? await request.text() : undefined;
-    const res = await operate(bucket, port, { app, op: op as "create" | "read" | "write", method: request.method, path: new URL(request.url).pathname, headers, ...(body !== undefined ? { body } : {}) }, timing);
+    const res = await operate(bucket, port, { app, op: op as "create" | "read" | "write" | "view" | "warm", method: request.method, path: new URL(request.url).pathname, headers, ...(body !== undefined ? { body } : {}) }, timing);
     return withTiming(res, timing);
   };
 
@@ -202,6 +213,12 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     const was = container;
     container = null;
     await was?.close();
+  };
+
+  const queued = (name: string, req: Request): Promise<Response> => {
+    const run = (queues.get(name) ?? Promise.resolve()).then(() => serve(req));
+    queues.set(name, run.catch(() => {}));
+    return run;
   };
 
   const gateway = Bun.serve({
@@ -215,26 +232,32 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
         ownerKeyHash,
         auth,
         governance: "personal",
-        app: (name) => ({
-          fetch: (req) => {
-            const run = (queues.get(name) ?? Promise.resolve()).then(() => serve(req));
-            queues.set(name, run.catch(() => {}));
-            return run;
-          },
-        }),
+        app: (name) => ({ fetch: (req) => queued(name, req) }),
         summaries: async () =>
           [...bucket.objects.entries()].filter(([key]) => key.startsWith("summaries/")).map(([, value]) => JSON.parse(new TextDecoder().decode(value.bytes))),
+        views: {
+          view: async (app) => {
+            const found = bucket.objects.get(viewKey(app));
+            return found ? JSON.parse(new TextDecoder().decode(found.bytes)) : null;
+          },
+          folderEtag: async (app) => bucket.objects.get(folderKey(app))?.etag ?? null,
+        },
+        waitUntil: (work) => void work.catch(() => {}),
+        ...(options.now ? { now: options.now } : {}),
       }),
   });
 
   return {
     url: `http://127.0.0.1:${gateway.port}`,
+    operations,
     ownerKey,
     plane,
     bucket,
     auth,
     starts: () => started,
     dropContainer,
+    containerRead: (app, path) =>
+      queued(app, new Request(`https://app${path}`, { headers: { [OP_HEADER]: "read", [APP_HEADER]: app, [PRINCIPAL_HEADER]: JSON.stringify({ kind: "owner" }), "content-type": "application/json" } })),
     close: async () => {
       await dropContainer();
       gateway.stop(true);
