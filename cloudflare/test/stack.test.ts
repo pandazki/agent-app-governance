@@ -553,6 +553,23 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(centre2, ".pneuma-framework")));
   });
 
+  test("a file where the version the copy is on has a directory: the CLI sends it whole and says what the centre answers", async () => {
+    const extra = join(copy(), "app", "public", "extra");
+    mkdirSync(extra, { recursive: true });
+    writeFileSync(join(extra, "a.txt"), "a\n");
+    expect((await cli(copy(), ["submit", "A directory"])).out).toMatch(/published v\d+/);
+    rmSync(extra, { recursive: true, force: true });
+    writeFileSync(extra, "now a file\n");
+    const result = await cli(copy(), ["submit", "A file where the directory was"]);
+    // The centre cannot yet put a file where its working tree has a directory (as before this CLI); the CLI says so instead of failing itself.
+    expect(result.out).not.toContain("EISDIR");
+    expect(result.out).toContain("the submitted working tree was not taken");
+    rmSync(extra, { force: true });
+    await cli(copy(), ["discard"]);
+    rmSync(extra, { recursive: true, force: true });
+    expect((await cli(copy(), ["submit", "Without it"])).out).toMatch(/published v\d+/);
+  });
+
   describe("the workspace's awake slots", () => {
     const wake = (name: string) => stack.plane.fetch(`${stack.plane.origin}/apps/${name}/`, { headers: { authorization: `Bearer ${FAKE_TOKEN}` } }).then((r) => r.text());
     // Previews still on the plane that a test here made (a change that waits from an earlier test keeps its own).

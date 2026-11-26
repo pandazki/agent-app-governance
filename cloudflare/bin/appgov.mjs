@@ -262,13 +262,14 @@ function applyCopy(dir, copy, uploaded, sent = []) {
   for (const [path] of incoming) {
     if (path.split("/").some((part) => !part || part === "." || part === "..") || path.startsWith("/")) fail(`the centre sent a path this CLI will not write: ${path}`, 3);
   }
+  for (const version of Object.keys(omitted?.versions ?? {})) if (!/^v\d+$/.test(version)) fail(`the centre named a version this CLI will not write: ${version}`, 3);
   // The record follows the centre: every version directory the answer left out as held here stays, the rest goes.
   const keep = new Set(Object.entries(omitted?.versions ?? {}).filter(([, from]) => from === "held").map(([v]) => v));
   const record = join(dir, FRAMEWORK_DIR);
   if (!keep.size || !existsSync(record)) rmSync(record, { recursive: true, force: true });
   else {
     for (const entry of readdirSync(record)) if (entry !== "versions") rmSync(join(record, entry), { recursive: true, force: true });
-    for (const version of readdirSync(join(record, "versions"))) if (!keep.has(version)) rmSync(join(record, "versions", version), { recursive: true, force: true });
+    for (const version of existsSync(join(record, "versions")) ? readdirSync(join(record, "versions")) : []) if (!keep.has(version)) rmSync(join(record, "versions", version), { recursive: true, force: true });
   }
   const write = (path, body) => {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
@@ -1037,7 +1038,7 @@ switch (command) {
     const onBase = baseVersion ? join(DIR, FRAMEWORK_DIR, "versions", baseVersion) : null;
     const asSent = (byReference) =>
       entries.map(([path, body]) =>
-        byReference && onBase && existsSync(join(onBase, path)) && readFileSync(join(onBase, path)).equals(body)
+        byReference && onBase && existsSync(join(onBase, path)) && lstatSync(join(onBase, path)).isFile() && readFileSync(join(onBase, path)).equals(body)
           ? { path, same: createHash("sha1").update(body).digest("hex") }
           : { path, body: body.toString("base64") },
       );
