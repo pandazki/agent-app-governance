@@ -194,7 +194,9 @@ describe("the runbook and Start here, checked without an install", () => {
   test("Start here gives each edition one sentence for the agent, with this repository's address and the runbook", () => {
     for (const doc of ["README.md", "README.zh-CN.md"]) {
       const text = read(doc);
-      const start = text.indexOf("## ", text.indexOf("\n"));
+      // The README opens with the problem and how it is solved; "Start here" follows, found by its heading.
+      const start = text.search(/^## (Start here|从这里开始)$/m);
+      expect(start).toBeGreaterThan(-1);
       const sentences = [...text.slice(start, text.indexOf("\n## ", start + 3)).matchAll(/`(Install the [^`]+)`/g)].map(([, s]) => s!);
       expect(sentences).toEqual([
         `Install the local edition of ${REPO_URL} on this computer, following AGENTS.md in that repository.`,
