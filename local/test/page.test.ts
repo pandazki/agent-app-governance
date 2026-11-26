@@ -707,7 +707,9 @@ describe("whether the app is there, on the page", () => {
     expect(appHtml).not.toContain("Open the app");
     expect(appHtml).not.toContain("To change this app, tell your agent");
     // The typed name is asked in the page's one-line field, the sign-in screen's own.
-    expect(appHtml).toMatch(/<input type="text" autoComplete="off" spellCheck="false" aria-label="Type the app&#x27;s name, notes, to clear it" placeholder="notes" maxLength="64" class="h-9 w-full rounded-control bg-field /);
+    const label = /<label for="([^"]+)"[^>]*>Type the app&#x27;s name, notes, to clear it<\/label>/.exec(appHtml);
+    expect(label).not.toBeNull();
+    expect(appHtml).toContain(`<input id="${label![1]}" type="text" autoComplete="off" spellCheck="false" placeholder="notes" maxLength="64" class="owner-input"`);
     expect(appHtml).not.toContain("<textarea");
   });
 

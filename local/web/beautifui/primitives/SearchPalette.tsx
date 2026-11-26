@@ -8,6 +8,7 @@
 // The card, input row, clear button, empty state and row sizes are the library's.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ContextNote } from "./ContextNote";
 import { Monogram } from "../atoms/EntityChip";
 
 export type PaletteItem = {
@@ -22,6 +23,7 @@ export type PaletteItem = {
 export type PaletteLabels = {
   placeholder: string;
   ariaLabel: string;
+  clearLabel: string;
   emptyTitle: string;
   emptyHint: string;
 };
@@ -126,8 +128,8 @@ export default function SearchPalette({
             className="min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-3"
           />
           {query && (
-            <button
-              aria-label="Clear search"
+            <ContextNote label={labels.clearLabel} control={(id) => <button
+              aria-labelledby={id}
               type="button"
               onClick={() => {
                 setQuery("");
@@ -140,19 +142,13 @@ export default function SearchPalette({
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
-            </button>
+            </button>} />
           )}
         </div>
 
         {/* results / empty state */}
         {empty ? (
-          <div className="flex flex-col items-center justify-center gap-1 px-4 py-8" style={{ animation: "fade-in 250ms ease-out both" }}>
-            <span className="mb-1.5 flex size-8 items-center justify-center rounded-control bg-inset text-ink-3 shadow-hairline">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M21 21l-4.3-4.3" />
-              </svg>
-            </span>
+          <div className="flex flex-col items-center justify-center gap-1 px-4 py-4" style={{ animation: "fade-in 250ms ease-out both" }}>
             <span className="text-[13px] font-medium text-ink">{labels.emptyTitle}</span>
             <span className="text-[12px] text-ink-3">{labels.emptyHint}</span>
           </div>

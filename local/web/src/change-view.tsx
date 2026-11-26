@@ -1,22 +1,21 @@
 import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
-import { EntityChip } from "../beautifui/atoms/EntityChip";
-import { ValuePill } from "../beautifui/atoms/ValuePill";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { CheckOption, Drawer, FieldRow, Meter } from "../beautifui/primitives/Recommendation";
 import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
 import { Collapsible, FileChips } from "../beautifui/primitives/ToolChips";
 import { Section, Surface } from "../beautifui/site";
-import { act, fill, hue, useOwner, usePage, useUi } from "./lib";
+import { act, fill, useOwner, usePage, useUi } from "./lib";
 import type { ChangeModel, Notice, Side } from "./model";
 import { TONE_VAR } from "./home";
-import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, OpensElsewhere, Picture, RichText, StatePill } from "./parts";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
+import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, Picture, RichText, StatePill } from "./parts";
 
 /** What a failed write says: the plain line, and the Host's own words under Details. */
 export function Failure({ text, detail }: { text: string; detail: string }) {
   const ui = useUi();
   return (
-    <div role="alert" className="mt-2 rounded-control bg-red-tint px-2.5 py-2 text-[12.5px] text-red" style={{ animation: "fade-in 200ms ease-out both" }}>
+    <div role="alert" className="mt-2 rounded-control bg-red-tint px-2.5 py-2 text-[12.5px] text-red">
       <p className="font-medium">{text}</p>
       {detail && (
         <Collapsible label={ui.details} className="mt-1 [&_button]:text-red/80">
@@ -33,7 +32,7 @@ export function refusalText(refusals: Readonly<Record<string, string>>, data: Re
 }
 
 export function noticeRow(notice: Notice, i: number): TaskRow {
-  return { key: `n${i}`, wrap: true, label: <span className="font-normal leading-relaxed">{notice.text}</span>, status: notice.tone === "red" ? "failed" : notice.tone === "orange" ? "caution" : "plain" };
+  return { key: `n${i}`, wrap: true, label: <span className="leading-relaxed">{notice.text}</span>, status: notice.tone === "red" ? "failed" : notice.tone === "orange" ? "caution" : "plain" };
 }
 
 type Again = "idle" | "working" | { error: string; detail: string };
@@ -69,16 +68,16 @@ const GREEN_TICK = (
 );
 
 /** One side of before and after: a card with its label, a way to open the real thing, and its picture. */
-function SideCard({ side, name, index }: { side: Side; name: string; index: number }) {
+function SideCard({ side, name }: { side: Side; name: string }) {
   const ui = useUi();
   const owner = useOwner();
   const [again, showAgain] = useShowAgain(side);
   return (
-    <div className="flex flex-col overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 400ms cubic-bezier(0.23,1,0.32,1) ${index * 100}ms both` }}>
-      <div className="flex h-12 items-center gap-2.5 border-b border-line px-3">
+    <div className="flex flex-col overflow-hidden rounded-card bg-surface shadow-card">
+      <div className="flex min-h-12 items-center gap-2.5 border-b border-line px-3">
         <span className="shrink-0 text-[13px] font-medium text-ink">{side.label}</span>
         {side.note && (
-          <span className="min-w-0 truncate text-[11.5px] text-ink-3">
+          <span className="min-w-0 text-[12px] text-ink-3">
             <RichText rich={side.note} />
           </span>
         )}
@@ -91,15 +90,15 @@ function SideCard({ side, name, index }: { side: Side; name: string; index: numb
       </div>
       {side.shot && <Picture shot={side.shot} name={name} className={side.empty ? "border-b border-line opacity-60 grayscale" : ""} />}
       {side.empty && (
-        <div className={side.shot ? "" : "flex aspect-[16/10] flex-col items-center justify-center"}>
+        <div className="my-auto">
           <EmptyState
             title={side.empty.text}
             icon={side.empty.tone === "green" ? GREEN_TICK : undefined}
           />
           {side.again && (
-            <div className="-mt-6 flex flex-col items-center px-4 pb-6">
+            <div className="flex flex-col items-center px-4 pb-4">
               {again === "working" ? (
-                <LoadingState label={ui.preview_again_working} variant="Dots" />
+                <LoadingState label={ui.preview_again_working} />
               ) : owner.state === "yes" ? (
                 <Button variant="secondary" size="sm" className="text-[12.5px]" onClick={showAgain}>
                   {side.again.label}
@@ -118,16 +117,16 @@ function SideCard({ side, name, index }: { side: Side; name: string; index: numb
  * One side as a row, where the Host never takes pictures: the card's bar on its own (its label, when the preview ends
  * itself, a way to open it), and what stands in for the preview when there is none.
  */
-function SideRow({ side, index }: { side: Side; index: number }) {
+function SideRow({ side }: { side: Side }) {
   const ui = useUi();
   const owner = useOwner();
   const [again, showAgain] = useShowAgain(side);
   return (
-    <div className="overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 400ms cubic-bezier(0.23,1,0.32,1) ${index * 100}ms both` }}>
-      <div className="flex min-h-12 items-center gap-2.5 py-2 pr-2 pl-3">
+    <div className="overflow-hidden rounded-card bg-surface shadow-card">
+      <div className="flex min-h-12 flex-wrap items-center gap-x-2.5 gap-y-1 py-2 pr-2 pl-3">
         <span className="shrink-0 text-[13px] font-medium text-ink">{side.label}</span>
         {side.note && (
-          <span className="min-w-0 truncate text-[11.5px] text-ink-3">
+          <span className="min-w-0 text-[12px] text-ink-3">
             <RichText rich={side.note} />
           </span>
         )}
@@ -146,7 +145,7 @@ function SideRow({ side, index }: { side: Side; index: number }) {
           )}
           {side.again &&
             (again === "working" ? (
-              <LoadingState label={ui.preview_again_working} variant="Dots" />
+              <LoadingState label={ui.preview_again_working} />
             ) : owner.state === "yes" ? (
               <Button variant="secondary" size="xs" onClick={showAgain}>
                 {side.again.label}
@@ -210,17 +209,13 @@ function DecisionCard({ model }: { model: ChangeModel }) {
   };
 
   return (
-    <div className="w-full overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}>
+    <div className="w-full overflow-hidden rounded-card bg-surface shadow-card">
       <div className="primitive-card-pad">
-        <span className="text-[14px] font-medium text-ink">{ui.decide_title}</span>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">
-          {model.intent}
-          <span className="whitespace-nowrap">
-            {" "}
-            <EntityChip name={model.appTitle} color={hue(model.name)} />
-          </span>
-          {d.oneWay && <ValuePill tone="red">{ui.one_way}</ValuePill>}
-        </p>
+        <p className="text-[14px] font-semibold leading-relaxed text-ink [overflow-wrap:anywhere]" dir="auto">{model.intent}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-ink-2">
+          <span>{model.appTitle}</span>
+          {d.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
+        </div>
         {d.blocked && can && <p className="mt-2 rounded-control bg-orange-tint px-2.5 py-2 text-[12.5px] leading-relaxed text-orange">{d.blocked}</p>}
       </div>
 
@@ -234,7 +229,7 @@ function DecisionCard({ model }: { model: ChangeModel }) {
             </li>
           ))}
         </ul>
-        {d.consequence && <p className="mt-2 rounded-control bg-red-tint px-2.5 py-2 text-[12.5px] leading-relaxed text-red">{d.consequence}</p>}
+        {d.consequence && <p className="mt-2 rounded-control border-s-2 border-red bg-red-tint px-2.5 py-2 text-[13px] font-medium leading-relaxed text-red">{d.consequence}</p>}
         {d.check && (
           <div className="mt-2">
             <CheckOption checked={ticked} onChange={setTicked} disabled={busy}>
@@ -307,26 +302,18 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
   if (model.gone) {
     return (
       <>
-        <Header crumbs={crumbs} title={model.intent} onSearch={onSearch} />
-        <Section number="01" title={model.appTitle} index={1}>
-          <Surface>
-            <EmptyState title={model.intent} />
-            <div className="-mt-4 flex justify-center pb-6">
-              <ButtonLink href={model.appHref} variant="secondary" size="sm">
-                {model.appTitle}
-              </ButtonLink>
-            </div>
-          </Surface>
-        </Section>
+        <Header crumbs={crumbs} title={model.intent} onSearch={onSearch}
+          action={<ButtonLink href={model.appHref} variant="secondary">{model.appTitle}</ButtonLink>} />
       </>
     );
   }
   const checks: TaskRow[] = model.checked.map((row, i) => ({
     key: `c${i}`,
     label: row.text,
+    wrap: row.tone === "caution",
     status: row.tone === "caution" ? "caution" : "done",
     ...(row.files?.length
-      ? { amount: String(row.files.length), details: <FileChips files={row.files.slice(0, 24)} more={row.files.length > 24 ? `+${row.files.length - 24}` : undefined} /> }
+      ? { details: <FileChips files={row.files.slice(0, 24)} more={row.files.length > 24 ? `+${row.files.length - 24}` : undefined} /> }
       : {}),
   }));
   const why: TaskRow[] = [
@@ -335,19 +322,20 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
           {
             key: "one-way",
             label: model.oneWay.title,
+            wrap: true,
             status: "caution" as const,
             details: (
               <>
-                <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>
-                {model.oneWay.why && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
-                {model.oneWay.said && <p className="mt-1 text-[12px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
+                <p className="text-[13px] leading-relaxed text-ink">{model.oneWay.body}</p>
+                {model.oneWay.why && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
+                {model.oneWay.said && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
               </>
             ),
             defaultOpen: true,
           },
         ]
       : []),
-    ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: <span className="font-normal">{line}</span>, status: "caution" })),
+    ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: line, wrap: true, status: "caution" })),
   ];
   return (
     <>
@@ -358,27 +346,25 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
         pills={<StatePill tone="orange">{ui.waiting_title}</StatePill>}
         onSearch={onSearch}
       />
-      <Section number="01" title={`${model.before.label} · ${model.after.label}`} note={model.after.open ? ui.preview_open_hint : undefined} index={1}>
+      <Section title={`${model.before.label} · ${model.after.label}`} aside={
+        (model.after.open || (model.before.open && model.opensElsewhere)) && (
+          <ContextNote label={ui.open_new}>
+            {model.after.open && <span className="block">{ui.preview_open_hint}</span>}
+            {model.opensElsewhere}
+          </ContextNote>
+        )
+      }>
         <Surface>
-          {model.picturesNever ? (
-            // No picture is ever taken here: two rows, as wide as the running app's card on the app's page.
-            <div className="mx-auto flex w-full max-w-[720px] flex-col gap-2">
-              <SideRow side={model.before} index={0} />
-              <SideRow side={model.after} index={1} />
-              {(model.before.open || model.after.open) && model.opensElsewhere && (
-                <div className="-mt-2">
-                  <OpensElsewhere text={model.opensElsewhere} />
-                </div>
-              )}
+          {model.picturesOn ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SideCard side={model.before} name={model.name} />
+              <SideCard side={model.after} name={model.name} />
             </div>
           ) : (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SideCard side={model.before} name={model.name} index={0} />
-                <SideCard side={model.after} name={model.name} index={1} />
-              </div>
-              {(model.before.open || model.after.open) && model.opensElsewhere && <OpensElsewhere text={model.opensElsewhere} />}
-            </>
+            <div className="flex flex-col gap-2">
+              <SideRow side={model.before} />
+              <SideRow side={model.after} />
+            </div>
           )}
           {model.notices.length > 0 && (
             <div className="mx-auto mt-3 w-full max-w-[720px]">
@@ -387,23 +373,19 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
           )}
         </Surface>
       </Section>
-      <Section number="02" title={ui.checked_title} index={2}>
+      <Section title={ui.checked_title}>
         <Surface>
           <div className="grid gap-3 lg:grid-cols-2">
             <TaskRows rows={checks} />
             <div className="flex flex-col gap-1.5">
-              <p className="px-0.5 text-[11.5px] font-medium text-ink-3">{ui.why_title}</p>
+              <p className="px-0.5 text-[13px] font-semibold text-ink">{ui.why_title}</p>
               <TaskRows rows={why} />
             </div>
           </div>
         </Surface>
       </Section>
-      <Section number="03" title={ui.decision_title} note={ui.decide_lead} index={3}>
-        <Surface>
-          <div className="mx-auto max-w-[480px]">
-            <DecisionCard model={model} />
-          </div>
-        </Surface>
+      <Section title={ui.decide_title} aside={<ContextNote label={ui.decision_title}>{ui.decide_lead}</ContextNote>}>
+        <div className="mx-auto max-w-[640px]"><DecisionCard model={model} /></div>
       </Section>
       <DetailsBlock facts={model.facts} />
     </>
