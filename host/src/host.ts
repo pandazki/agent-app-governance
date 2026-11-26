@@ -58,6 +58,7 @@ import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type Governanc
 import { choicesFor, clearingWords, downOf, LIFECYCLE_KINDS, runtimeFacts, standingOf, type ClearingFacts, type DownFacts, type OwnerChoices, type RuntimeFacts, type Standing } from "./lifecycle";
 import { askApp, DEFAULT_MANAGER, managerFrom, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
+import { DEFAULT_ROOM, publishMakingRoom, type Room } from "./room";
 import { timed, timedSync } from "./steps";
 import { noRequestsFacts, PREVIEW_REQUESTS_FILE, readPreviewRequests, type PreviewRequestFacts } from "./preview-requests";
 import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
@@ -115,6 +116,8 @@ export interface AppHostOptions {
   readonly previewTtlSeconds?: number;
   /** This Host as the manager of what it publishes on PneumaSpace, and where a person acts through it. Default `appgov`, no url. */
   readonly manager?: { readonly name: string; readonly url?: string };
+  /** How long a release or a preview waits for an awake slot on PneumaSpace when every one is held (host/src/room.ts). Default one minute. */
+  readonly room?: Room;
   /**
    * Runs the scaffold's verify command in a draft. Default: `sh -c <command>`, with Node's test runner asked
    * for a JUnit report beside its usual output, so the entry can say how many of the tests are the app's own.
@@ -761,7 +764,7 @@ export class AppHost {
     this.layout = opts.layout ?? TEMPLATE_LAYOUT;
     this.log = opts.log ?? (() => {});
     this.manager = opts.manager ?? { name: DEFAULT_MANAGER };
-    this.previews = new Previews({ space: opts.space, manager: this.manager, ttlSeconds: opts.previewTtlSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS, log: this.log });
+    this.previews = new Previews({ space: opts.space, manager: this.manager, ttlSeconds: opts.previewTtlSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS, log: this.log, ...(opts.room ? { room: opts.room } : {}) });
     mkdirSync(opts.appsDir, { recursive: true });
   }
 
@@ -1067,7 +1070,8 @@ export class AppHost {
       checks.push({ id: "space-preview", status: "failed", detail: declared.detail.slice(0, 600) });
       return { ok: false, output: `${tests.output}\n${declared.detail}`, rejected: { reason: "invalid_preview_requests", detail: `${declared.detail}\nNothing was published or released.` } };
     }
-    const booted = await this.previews.boot(previewName(name, changeId), draftRoot, { file: declared.file, requests: declared.requests });
+    // With every awake slot held, the app's own live instance may sleep to make room: the release replaces it anyway.
+    const booted = await this.previews.boot(previewName(name, changeId), draftRoot, { file: declared.file, requests: declared.requests }, [name]);
     const output = `${tests.output}\n${booted.output}`;
     // PneumaSpace refused the preview for a reason that is not the change's: no check failed, and the caller gives it its own reason.
     if (!booted.ok && booted.refused) return { ok: false, output, refused: `${booted.refused}.\n${booted.output.slice(-600)}` };
@@ -1312,7 +1316,10 @@ export class AppHost {
       }
     }
 
-    const published = await timed("publish the release", () => this.opts.space.publish(name, releaseRoot, { manager: this.manager }));
+    // Nothing is put to sleep for a release, which puts the app's own instance away itself; it only waits for a slot.
+    const published = await timed("publish the release", () =>
+      publishMakingRoom(this.opts.space, this.opts.room ?? DEFAULT_ROOM, this.manager.name, [], () => this.opts.space.publish(name, releaseRoot, { manager: this.manager })),
+    );
     const probe = published.code === 0 ? await timed("wait until the release answers", () => this.opts.space.probe(name)) : NOT_PROBED;
     if (published.code !== 0 || !probe.ok) {
       // A refused publish never reached an existing address. Everything else did: a build that went up
@@ -2456,7 +2463,7 @@ export class AppHost {
       const pending = this.readPending(paths, record, file);
       if ("problem" in pending) throw new HostError(409, malformedPendingLine(`${changeId}.json`, pending.problem), "malformed_pending");
       this.refuseUnfinishedUndo(paths, record);
-      const done = await this.previews.ensure(previewName(name, changeId), join(paths.drafts, changeId), pending.draft_signature, pending.preview_app_id);
+      const done = await this.previews.ensure(previewName(name, changeId), join(paths.drafts, changeId), pending.draft_signature, pending.preview_app_id, [name]);
       if (!done.ok) throw new HostError(done.reason === "preview_failed" || done.reason === "preview_unknown" ? 502 : 409, done.detail, done.reason);
       if (done.republished) {
         // A new app under the same name: the discard has to carry its id from now on.

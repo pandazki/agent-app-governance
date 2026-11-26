@@ -102,6 +102,12 @@ export interface PublishResult extends CommandResult {
   readonly app?: string;
 }
 
+/** Who holds the workspace's awake slots on PneumaSpace now, and how many there are. */
+export interface AwakeSlots {
+  readonly limit: number;
+  readonly apps: readonly { readonly name: string; readonly manager: string | null }[];
+}
+
 export interface PublishOptions {
   /**
    * Publish an ephemeral app, which ends itself with its data `ttlSeconds` after its first publish.
@@ -166,6 +172,11 @@ export interface SpaceRuntime {
    * is gone from PneumaSpace now. Never throws.
    */
   readonly purge?: (name: string, manager?: string) => Promise<boolean>;
+  /**
+   * The workspace's awake slots and the apps that hold them now, for a publish refused because all were held (its
+   * output then has a `quota {"resource":"awake"}` line; host/src/room.ts). Absent where the runtime cannot tell.
+   */
+  awake?(): Promise<AwakeSlots>;
   /** Where each of the app's bindings keeps its data. Throws when the platform has no such app or does not answer. */
   state(name: string): Promise<SpaceState>;
   /**
