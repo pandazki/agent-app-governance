@@ -445,7 +445,7 @@ function printChange(result, appName) {
     if (result.one_way) console.log(`ONE-WAY: ${String(result.one_way).replace(/\.+$/, "")}. Going back past this version needs the owner's confirmation.`);
     if (result.note) console.log(result.note);
     if (result.test_warning) console.log(result.test_warning);
-    if (result.preview_requests) console.log(`preview: ${result.preview_requests.note}`);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     return 0;
   }
   if (result.status === "release_failed") {
@@ -462,7 +462,7 @@ function printChange(result, appName) {
     console.log(`risks: ${result.risks.join(", ")}`);
     for (const line of result.disclosure) console.log(`  - ${line}`);
     if (result.test_warning) console.log(result.test_warning);
-    if (result.preview_requests) console.log(`preview: ${result.preview_requests.note}`);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide with" : "They decide with";
     console.log(`Show this to the owner. ${look}: node ${STATE_DIR}/appgov.mjs approve ${result.change_id}   (or deny)`);

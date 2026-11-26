@@ -1247,7 +1247,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   if (previewCheck?.status === "passed") {
     // What the preview showed: the app's own requests answering, or only that it started (src/preview-requests.ts).
     const answered = previewCheck.requests?.answered;
-    checked.push({ text: typeof answered === "number" && answered > 0 ? fill(w.requests_in_preview, { n: answered }) : w.started_in_preview, tone: "done" });
+    checked.push({ text: typeof answered === "number" && answered > 0 ? (answered === 1 ? w.requests_in_preview_one : fill(w.requests_in_preview, { n: answered })) : w.started_in_preview, tone: "done" });
   }
   checked.push({ text: paths.length === 1 ? w.files_one : fill(w.files_other, { n: paths.length }), tone: "done", files: paths.slice(0, 40) });
   // Only what the standing policy could not approve is why the change waits; in review-all mode that is every risk.

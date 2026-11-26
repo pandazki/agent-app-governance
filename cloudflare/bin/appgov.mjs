@@ -531,7 +531,7 @@ function printChange(result) {
     if (result.one_way) console.log(`ONE-WAY: ${String(result.one_way).replace(/\.+$/, "")}. Going back past this version needs the owner's confirmation.`);
     if (result.note) console.log(result.note);
     if (result.test_warning) console.log(result.test_warning);
-    if (result.preview_requests) console.log(`preview: ${result.preview_requests.note}`);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     return 0;
   }
   if (result.status === "release_failed") {
@@ -547,7 +547,7 @@ function printChange(result) {
     console.log(`risks: ${result.risks.join(", ")}`);
     for (const line of result.disclosure) console.log(`  - ${line}`);
     if (result.test_warning) console.log(result.test_warning);
-    if (result.preview_requests) console.log(`preview: ${result.preview_requests.note}`);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide, signed in as the owner, in their own terminal, with" : "They decide, signed in as the owner, in their own terminal, with";
     console.log(`Show this to the owner. ${look}: node ${SELF} approve ${result.change_id}   (or deny)`);
@@ -933,7 +933,7 @@ switch (command) {
         for (const line of p.disclosure) console.log(`  - ${line}`);
         if (p.tests) console.log(`  tests: ${p.tests.note}`);
         if (p.test_warning) console.log(`  ${p.test_warning}`);
-        if (p.preview_requests) console.log(`  preview: ${p.preview_requests.note}`);
+        if (p.preview_requests) console.log(`  ${p.preview_requests.note}`);
         if (p.preview) console.log(`  ${previewLine(p.preview, p.change_id)}`);
       }
       for (const line of s.malformed_pending ?? []) console.log(line);
@@ -1072,7 +1072,7 @@ switch (command) {
     for (const line of pending.disclosure) console.log(`  - ${line}`);
     if (pending.tests) console.log(`tests: ${pending.tests.note}`);
     if (pending.test_warning) console.log(pending.test_warning);
-    if (pending.preview_requests) console.log(`preview: ${pending.preview_requests.note}`);
+    if (pending.preview_requests) console.log(pending.preview_requests.note);
     if (pending.preview) console.log(previewLine(pending.preview, args[0]));
     await confirmAsOwner(command, what);
     const result = await call("POST", `${base}/changes/${args[0]}/${command}`, { reason: args.slice(1).join(" ") || undefined }, { owner: true });

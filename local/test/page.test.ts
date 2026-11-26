@@ -293,7 +293,7 @@ describe("the owner page: what it shows", () => {
     expect(model.intent).toBe("“let my family in without signing in”");
     expect(words(model.meta)).toBe("Claude Code made this change · {rel}");
     // The app's starter request (src/preview.json) answered on the preview: the page says so in a few words.
-    expect(model.checked.map((row) => row.text)).toEqual(["Its tests passed (2 tests, 0 of them for this app)", "None of those tests were written for this app itself.", "Its own requests answered as expected when it was tried out (1)", "1 file changed"]);
+    expect(model.checked.map((row) => row.text)).toEqual(["Its tests passed (2 tests, 0 of them for this app)", "None of those tests were written for this app itself.", "Its own request passed when it was tried out", "1 file changed"]);
     expect(model.facts.find((fact) => fact.label === "Preview" && fact.value.startsWith("passed: "))).toBeUndefined();
     // Only what the standing policy could not approve is why it waits: not the code change itself.
     expect(model.why).toEqual(["Anyone with the address could open the app without signing in."]);

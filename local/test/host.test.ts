@@ -3025,6 +3025,13 @@ describe("the requests an app declares, made against its preview", () => {
     expect(host.history("todo").at(-1)!.guarantees).toContain("previewed");
   });
 
+  test("a change to the requests alone is not app code without a test", async () => {
+    declare([{ path: "/", expect: { status: 200, contains: "src/app.ts" } }, { path: "/missing", expect: { status: 404 } }]);
+    const result = await host.submit({ name: "todo", intent: "check more of it", agent: "codex" });
+    expect(result).toMatchObject({ status: "published", preview_requests: { answered: 2 } });
+    expect((result as { test_warning?: string }).test_warning).toBeUndefined();
+  });
+
   test("without the file, the change goes on as before, and the record says the preview only showed the app starts", async () => {
     rmSync(app("todo", "src", "preview.json"));
     edit("todo", "src/extra.ts", "export const extra = 1;\n");

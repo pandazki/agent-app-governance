@@ -245,7 +245,9 @@ export function testCoverage(run: CheckRun, root: string, layout: AppLayout = TE
  * that cannot be told. Nothing when the change touched no app code, or when app tests ran. It blocks nothing.
  */
 export function testWarning(changedPaths: readonly string[], coverage: TestCoverage | undefined, layout: AppLayout = TEMPLATE_LAYOUT): string | undefined {
-  const code = changedPaths.filter((path) => layout.code_roots.some((root) => path.startsWith(root)));
+  // The preview's requests (src/preview-requests.ts) live in the test directory, which may be inside a code root: they are not code.
+  const requests = `${layout.test_dir}/preview.json`;
+  const code = changedPaths.filter((path) => path !== requests && layout.code_roots.some((root) => path.startsWith(root)));
   if (!code.length || !coverage) return undefined;
   const shown = shortList(code);
   if (coverage.app_tests === 0) {
