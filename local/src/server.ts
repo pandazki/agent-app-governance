@@ -140,7 +140,7 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
     if (method === "GET" && url.pathname === "/healthz") return { ok: true };
     if (parts[0] !== "apps") throw new HostError(404, "not found");
     if (parts.length === 1) {
-      if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: host.summaries() };
+      if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: await host.summaries() };
       if (method === "POST") {
         const input = await body(req);
         return host.create(text(input.name, "name"), typeof input.intent === "string" ? input.intent : undefined);

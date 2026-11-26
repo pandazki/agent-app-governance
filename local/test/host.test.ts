@@ -258,7 +258,7 @@ describe("changes a person has to decide", () => {
       `.appgov/pending/c-copy.json is not a waiting change in the shape this Host writes (its change_id is not c-copy, the file's name), ${tail}`,
       `.appgov/pending/c-undated.json is not a waiting change in the shape this Host writes (created_at is missing or not text), ${tail}`,
     ]);
-    expect(host.summaries()).toMatchObject([{ app_id: "todo", pending: [{ change_id: result.change_id }], malformed_pending: status.malformed_pending }]);
+    expect(await host.summaries()).toMatchObject([{ app_id: "todo", pending: [{ change_id: result.change_id }], malformed_pending: status.malformed_pending }]);
     // The owner page names it in plain words on the home page and in the app, with the Host's line under Details.
     const overview = await host.overview();
     const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: overview.summaries };
@@ -321,7 +321,7 @@ describe("changes a person has to decide", () => {
       expect(await host.resolve("todo", waiting.change_id, "approved", subject)).toMatchObject({ status: "published", approved_by: ["policy:auto"] });
       expect(host.history("todo").at(-1)!.approval!.by).toEqual(["policy:auto"]);
     }
-    const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/app/todo", apps: host.summaries() };
+    const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/app/todo", apps: await host.summaries() };
     const said = JSON.stringify(appModel("todo", await host.status("todo"), host.history("todo"), ctx).history);
     expect(said).not.toContain("you confirmed");
     expect(said).toContain("approved automatically");
@@ -411,10 +411,14 @@ describe("one artifact, both control planes, any host", () => {
     const otherSpace = new FakeSpace();
     const otherHost = makeHost(elsewhere, otherSpace);
 
-    expect(await otherHost.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", uncommitted: [] });
+    expect(await otherHost.status("todo")).toMatchObject({ active_version: "v2", previous_version: "v1", uncommitted: [], standing: "vanished" });
     expect(otherHost.history("todo").map((h) => h.intent)).toEqual(["Create the app from the PneumaSpace template", "first change"]);
 
+    // The other platform has no app of that name: to its Host the app looks gone, so agents wait until the owner
+    // publishes it there, knowing it starts with no stored data.
     writeFileSync(join(elsewhere, "todo", "src", "server.ts"), "export const changed = 2;\n");
+    expect(await hostError(otherHost.submit({ name: "todo", intent: "second change, new agent", agent: "codex" }))).toMatchObject({ status: 409, reason: "app_vanished" });
+    await otherHost.publishAgain("todo", { subject: OWNER });
     const result = await otherHost.submit({ name: "todo", intent: "second change, new agent", agent: "codex" });
     expect(result).toMatchObject({ status: "published", version: "v3" });
     expect(otherSpace.live.has("todo")).toBe(true);
@@ -1617,7 +1621,7 @@ describe("recorded but not live", () => {
     expect(stuck).toMatchObject({ active_version: "v2", serving_version: "v1" });
     expect(stuck.serving_uncertain).toContain("could not be put back on v1");
     // list and the owner page say it the way status does, and name no version as served.
-    expect(recording.summaries()[0]).toMatchObject({ serves_other_version: true, serving_uncertain: stuck.serving_uncertain });
+    expect((await recording.summaries())[0]).toMatchObject({ serves_other_version: true, serving_uncertain: stuck.serving_uncertain });
     const overview = await recording.overview();
     const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: overview.summaries };
     expect(homeModel(overview, ctx).apps[0]).toMatchObject({ state: "uncertain", stateLabel: "Can't confirm what's running" });
@@ -1632,9 +1636,9 @@ describe("recorded but not live", () => {
     const settled = await recording.status("todo");
     expect(settled).toMatchObject({ active_version: "v2", serving_version: "v2" });
     expect(settled.serving_uncertain).toBeUndefined();
-    expect(recording.summaries()[0]!).not.toHaveProperty("serving_uncertain");
+    expect((await recording.summaries())[0]!).not.toHaveProperty("serving_uncertain");
     // The summary's last change is the release that went live, not the attempt that failed before it.
-    expect(recording.summaries()[0]).toMatchObject({ last_change: { kind: "release", outcome: "published", version: "v2" } });
+    expect((await recording.summaries())[0]).toMatchObject({ last_change: { kind: "release", outcome: "published", version: "v2" } });
   });
 
   test("record mode: the same submit again, with no new edits, releases that version as it is and records no new one", async () => {
@@ -2005,7 +2009,7 @@ describe("what the second review found", () => {
         "Submit and approve are refused until an undo puts a version on the address and sees it answer: run undo.",
     );
     // The owner page says it as the case that holds changes up, and does not offer "let it go live".
-    const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: withData.summaries() };
+    const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: await withData.summaries() };
     expect(uncertainKind(status.serving_uncertain)).toBe("undo");
     const page = changeModel("todo", status, waiting.change_id, ctx);
     expect(page.decision.blocked).toBe("This can't go live yet: the last time you went back, it didn't finish. Go back again first; you can still say no.");
@@ -2061,7 +2065,7 @@ describe("what the second review found", () => {
     expect(stuck).toMatchObject({ active_version: "v1", serving_version: "v1" });
     expect(stuck.serving_uncertain).toContain("the address could not be put back on v1 and may still serve the rejected build");
     // list and the owner page say it too, although the versions agree.
-    expect(noPreview.summaries()[0]).toMatchObject({ serves_other_version: false, serving_uncertain: stuck.serving_uncertain });
+    expect((await noPreview.summaries())[0]).toMatchObject({ serves_other_version: false, serving_uncertain: stuck.serving_uncertain });
     // The owner page tells this case from an unfinished undo: nothing is held up.
     const overview = await noPreview.overview();
     const ctx: PageContext = { lang: "en", now: Date.now(), pictures: NO_PICTURES, path: "/", apps: overview.summaries };
@@ -2218,8 +2222,9 @@ describe("app directories made before the change record", () => {
   });
 
   test("a version the preset finds one-way is declared so when the app is put on the record, once", async () => {
-    // v2 is a column drop released by an earlier Host, which had no way to say it was one-way.
-    await legacyApp("todo", true, DROP_NOTE);
+    // v2 is a column drop released by an earlier Host, which had no way to say it was one-way, and serves on PneumaSpace.
+    const root = await legacyApp("todo", true, DROP_NOTE);
+    await space.publish("todo", join(root, STATE_DIR_NAME, "versions", "v2"));
     const declared = () => host.history("todo").filter((h) => h.kind === "declaration");
     expect(declared()).toHaveLength(1);
     expect(declared()[0]).toMatchObject({ version: "v2", one_way: { reason: DROP_REASON }, guarantees: [], outcome: "one_way_declared" });
@@ -2419,7 +2424,7 @@ describe("every app at a glance, and the directory that holds them", () => {
     await host.create("broken");
     writeFileSync(app("broken", ".appgov", "app.json"), "{ not json");
 
-    const summaries = host.summaries();
+    const summaries = await host.summaries();
     expect(summaries.map((s) => s.app_id)).toEqual(["broken", "calm", "dirty", "waits"]);
     expect(summaries[0]).toMatchObject({ app_id: "broken", error: expect.stringContaining("JSON") });
     expect(summaries[1]).toMatchObject({
@@ -2448,7 +2453,7 @@ describe("every app at a glance, and the directory that holds them", () => {
     space.refuse = (name) => name === "free";
     edit("free", "src/server.ts", "export const n = 2;\n");
     await recording.submit({ name: "free", intent: "two", agent: "codex" });
-    expect(recording.summaries()[0]).toMatchObject({ active_version: "v2", serving_version: "v1", serves_other_version: true, last_change: { outcome: "release_failed" } });
+    expect((await recording.summaries())[0]).toMatchObject({ active_version: "v2", serving_version: "v1", serves_other_version: true, last_change: { outcome: "release_failed" } });
   });
 
   test("the apps directory gets an AGENTS.md block, a CLAUDE.md and a copy of the CLI, each rewritten only when stale", async () => {

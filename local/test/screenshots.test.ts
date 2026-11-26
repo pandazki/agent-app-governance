@@ -170,7 +170,7 @@ describe("the screenshot keeper", () => {
     edit("unsure", "src/extra.ts", "export const extra = 1;\n");
     expect((await recording.submit({ name: "unsure", intent: "add", agent: "codex" })).status).toBe("release_failed");
     space.unhealthy = null;
-    expect(host.summaries().find((s) => s.app_id === "unsure")).toMatchObject({ serving_uncertain: expect.any(String) });
+    expect((await host.summaries()).find((s) => s.app_id === "unsure")).toMatchObject({ serving_uncertain: expect.any(String) });
     const shooter = fakeShooter();
     await keeper(shooter).scan();
     expect(shooter.asked).toEqual([]);

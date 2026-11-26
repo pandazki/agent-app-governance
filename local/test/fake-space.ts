@@ -202,6 +202,53 @@ export class FakeSpace implements SpaceRuntime {
     return true;
   }
 
+  async remove(name: string, manager?: string): Promise<boolean> {
+    if (this.failDiscard?.(name)) {
+      this.log.push(`remove ${name} failed`);
+      return false;
+    }
+    const app = this.live.get(name);
+    if (!app || app.status === "purging") return false;
+    if (this.unnamed(name, manager)) {
+      this.log.push(`remove ${name} refused (managed)`);
+      return false;
+    }
+    app.status = "removed";
+    this.log.push(`remove ${name}`);
+    return true;
+  }
+
+  /** As the local gateway does it: a publish registers a removed app again, with its id and so its data. */
+  async resume(name: string, options: { readonly dir: string; readonly manager?: { readonly name: string; readonly url?: string | null } }): Promise<boolean> {
+    if (this.live.get(name)?.status !== "removed") return false;
+    this.log.push(`resume ${name}`);
+    return (await this.publish(name, options.dir, options.manager ? { manager: options.manager } : {})).code === 0;
+  }
+
+  /** Whether this runtime may purge: the local gateway's admin token may; the Cloudflare plane's tokens may not (set false). */
+  purges = true;
+
+  get purge(): ((name: string, manager?: string) => Promise<boolean>) | undefined {
+    if (!this.purges) return undefined;
+    return async (name: string, manager?: string) => {
+      const app = this.live.get(name);
+      if (!app) return true;
+      if (app.status === "registered" || this.unnamed(name, manager)) {
+        this.log.push(`purge ${name} refused`);
+        return false;
+      }
+      this.live.delete(name);
+      this.log.push(`purge ${name}`);
+      return true;
+    };
+  }
+
+  /** What someone at PneumaSpace's console would do behind the Host's back: remove and purge the app, data and all. */
+  vanish(name: string): void {
+    this.live.delete(name);
+    this.log.push(`vanish ${name}`);
+  }
+
   async state(name: string): Promise<SpaceState> {
     if (!this.live.has(name) && !this.bindings.has(name)) throw new Error(`PneumaSpace has no app named ${name}`);
     return { app: name, release: null, bundle: null, bindings: this.bindings.get(name) ?? [] };

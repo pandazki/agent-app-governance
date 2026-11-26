@@ -269,7 +269,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
       return tar ? { status: 200, type: "application/x-tar", body: Buffer.from(tar) } : { status: 204, type: "text/plain", body: "" };
     }
     if (url.pathname === "/folder/summary" && method === "GET") {
-      const summary = host.summaries().find((s) => s.app_id === name);
+      const summary = (await host.summaries()).find((s) => s.app_id === name);
       return summary ? { status: 200, type: "application/json", body: JSON.stringify(summary) } : { status: 404, type: "application/json", body: JSON.stringify({ error: `no app named ${name}` }) };
     }
     if ((url.pathname === "/folder/view" || url.pathname === "/folder/check" || url.pathname === "/folder/plan") && method === "GET") {
