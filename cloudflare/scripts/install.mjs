@@ -108,17 +108,31 @@ export async function attachDomain(api, accountId, zoneId, hostname, service) {
   if (!made.ok) throw new Stop(`attaching ${hostname} to the Worker ${service} failed (${made.status}: ${made.errors}); if the hostname has DNS records of its own, remove them or pick another hostname`);
 }
 
-/** Until the Host answers at `url` over valid HTTPS (a new certificate can take minutes). */
-async function waitForHttps(url, wait = HTTPS_WAIT_MS) {
+/**
+ * Until the Host answers at `url` over valid HTTPS (a new certificate can take minutes). Right after the hostname is
+ * attached, the first lookup waits a little: one made before its DNS record is out is answered "no such host", and
+ * resolvers keep that answer for up to the zone's 30 minutes.
+ */
+export async function waitForHttps(url, { wait = HTTPS_WAIT_MS, every = 5000, first = 0, fetcher = fetch } = {}) {
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (first) await pause(first);
+  let unresolved = false;
   for (const deadline = Date.now() + wait; Date.now() < deadline; ) {
     try {
-      const res = await fetch(`${url}/me`, { signal: AbortSignal.timeout(10_000) });
+      const res = await fetcher(`${url}/me`, { signal: AbortSignal.timeout(10_000) });
       await res.body?.cancel();
       if (res.status === 401) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 5000));
+      unresolved = false;
+    } catch (err) {
+      unresolved = [err?.code, err?.cause?.code].includes("ENOTFOUND");
+    }
+    await pause(every);
   }
-  throw new Stop(`${url} does not answer over valid HTTPS yet; its certificate may still be on its way. Run the same command again in a few minutes`);
+  throw new Stop(
+    unresolved
+      ? `${url} is attached, but this machine cannot look its name up yet: a lookup made before its DNS record was out is kept as "no such host" for up to 30 minutes. Nothing else changed; run the same command again in a while`
+      : `${url} does not answer over valid HTTPS yet; its certificate may still be on its way. Nothing else changed; run the same command again in a few minutes`,
+  );
 }
 
 /** The owner credentials file's content at `url`: the key it has (or `key`), the Host's address now. */
@@ -370,7 +384,7 @@ export async function install(options) {
       await attachDomain(api, accountId, zoneId, domain, options.prefix);
       attached = true;
       log(`waiting until ${url} answers over HTTPS`);
-      await waitForHttps(url);
+      await waitForHttps(url, { first: 20_000 });
     }
     writePrivate(paths.config, workerConfig(options, accountId, commit, url));
     let deployed = false;
@@ -381,16 +395,18 @@ export async function install(options) {
       if (!deployed && ACCOUNT_TROUBLE.test(run.output)) throw new Stop("the deploy failed for a reason that looks like the account's (plan, permission or quota); the exact error is above. Nothing was retried");
     }
     if (!deployed) throw new Stop("the deploy failed three times; the output is above. Run the same command again once the cause is fixed");
+    let justAttached = false;
     if (domain && !attached) {
       log(`attaching ${domain} to the Worker ${options.prefix}`);
       await attachDomain(api, accountId, zoneId, domain, options.prefix);
+      justAttached = true;
+    }
+    if (domain) {
+      log(`waiting until ${url} answers over HTTPS`);
+      await waitForHttps(url, { first: justAttached ? 20_000 : 0 });
     }
   } finally {
     await space.close();
-  }
-  if (domain) {
-    log(`waiting until ${url} answers over HTTPS`);
-    await waitForHttps(url);
   }
 
   // --- 5. the owner's credentials, and a check that they sign in ---------------------------------------------------

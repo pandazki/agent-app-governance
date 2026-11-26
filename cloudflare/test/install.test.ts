@@ -15,6 +15,7 @@ const install = (await import(join(import.meta.dir, "..", "scripts", "install.mj
   attachDomain(api: Api, accountId: string, zoneId: string, hostname: string, service: string): Promise<void>;
   ownerRecord(existing: Record<string, unknown> | null, url: string, key: string): Record<string, unknown>;
   workerConfig(options: Record<string, unknown>, accountId: string, commit: string, hostUrl: string): { vars: Record<string, string>; routes?: unknown };
+  waitForHttps(url: string, options: { wait?: number; every?: number; first?: number; fetcher?: (url: string, init?: unknown) => Promise<Response> }): Promise<void>;
   Stop: new (message: string) => Error;
 };
 type Api = (method: string, path: string, body?: unknown) => Promise<{ status: number; ok: boolean; result?: unknown; errors: string }>;
@@ -78,6 +79,29 @@ describe("the installer and the Host's address", () => {
     expect(free.calls.at(-1)).toEqual({ method: "PUT", path: "/accounts/acct/workers/domains", body: { environment: "production", hostname: "host.example.com", service: "appgov-host", zone_id: "zone-example.com" } });
     // Run again: it is the Worker's now, and nothing more is asked.
     expect(await install.domainHolder(free.api, "acct", "host.example.com", "appgov-host")).toBe("appgov-host");
+  });
+
+  test("the wait for HTTPS ends when the Host answers there, and says when it is this machine's lookup that fails", async () => {
+    let asked = 0;
+    await install.waitForHttps("https://host.example.com", {
+      wait: 2000,
+      every: 5,
+      fetcher: async (url) => {
+        asked++;
+        expect(url).toBe("https://host.example.com/me");
+        if (asked < 3) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+        return new Response("{}", { status: 401 });
+      },
+    });
+    expect(asked).toBe(3);
+    const notFound = async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } });
+    };
+    await expect(install.waitForHttps("https://host.example.com", { wait: 30, every: 5, fetcher: notFound })).rejects.toThrow(/is attached, but this machine cannot look its name up yet/);
+    const noCertificate = async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ERR_TLS_CERT_ALTNAME_INVALID" } });
+    };
+    await expect(install.waitForHttps("https://host.example.com", { wait: 30, every: 5, fetcher: noCertificate })).rejects.toThrow(/does not answer over valid HTTPS yet; its certificate may still be on its way/);
   });
 
   test("the Worker and the owner credentials file are given the Host's address; the key stays", () => {
