@@ -3,13 +3,13 @@ import { buttonVariants } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
 import { ValuePill } from "../beautifui/atoms/ValuePill";
 import { Meter } from "../beautifui/primitives/Recommendation";
-import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
+import { badgeFor } from "../beautifui/primitives/TaskRows";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { CheckResult, RuntimeCheck } from "./life-view";
 import { Section, Surface } from "../beautifui/site";
-import { fill, hue, usePage, useUi } from "./lib";
+import { hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
-import { AppMark, Details, DetailsBlock, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
+import { AppMark, Details, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
 
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
@@ -73,11 +73,10 @@ function AppTile({ app }: { app: AppCard }) {
           <Picture shot={app.shot} name={app.name} className="transition-[filter] duration-200 group-hover/app:brightness-[0.98]" />
         </a>
       )}
-      <div className="flex flex-1 items-end gap-2 px-3 pb-3 pt-1.5">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 pt-1.5">
+        <div className="min-w-0 flex-1 basis-36">
           <StatePill tone={app.tone}>{app.stateLabel}</StatePill>
-          {/* A div: the foundation sets text-wrap on every p. Two lines, so who changed it is not cut off beside a button. */}
-          <div className="mt-1.5 line-clamp-2 text-[12px] text-ink-3">
+          <div className="mt-1.5 text-[12px] text-ink-3">
             <RichText rich={app.meta} />
           </div>
         </div>
@@ -92,18 +91,16 @@ function AppTile({ app }: { app: AppCard }) {
 }
 
 /** A file among the waiting changes the Host could not read as one: it cannot be decided, so it is a caution row, not a card. */
-function problemRow(problem: Problem, i: number): TaskRow {
-  return {
-    key: `p${i}`,
-    label: (
-      <a href={problem.href} className="font-normal leading-relaxed hover:underline hover:decoration-line-strong hover:underline-offset-2">
-        {problem.text}
-      </a>
-    ),
-    status: "caution",
-    wrap: true,
-    details: <Details facts={[{ label: problem.appTitle, value: problem.line }]} />,
-  };
+function ProblemRow({ problem }: { problem: Problem }) {
+  return (
+    <div className="flex items-start gap-2 rounded-card bg-surface p-3 shadow-card">
+      {badgeFor("caution")}
+      <div className="min-w-0">
+        <a href={problem.href} className="text-[13px] leading-relaxed text-ink [overflow-wrap:anywhere] hover:underline">{problem.text}</a>
+        <Details facts={[{ label: problem.appTitle, value: problem.line }]} />
+      </div>
+    </div>
+  );
 }
 
 export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => void }) {
@@ -123,13 +120,13 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
             )}
             {model.problems.length > 0 && (
               <div className={model.waiting.length ? "mt-3" : ""}>
-                <TaskRows rows={model.problems.map(problemRow)} />
+                {model.problems.map((problem, i) => <ProblemRow key={i} problem={problem} />)}
               </div>
             )}
           </Surface>
         </Section>
       )}
-      <Section title={ui.all_apps} aside={model.checked && <RuntimeCheck checked={model.checked} />} note={model.apps.length ? fill(model.apps.length === 1 ? ui.apps_one : ui.apps_other, { n: model.apps.length }) : undefined}>
+      <Section title={ui.all_apps} aside={model.checked && <RuntimeCheck checked={model.checked} />} note={model.apps.length ? String(model.apps.length) : undefined}>
         <Surface>
           {model.checked && <CheckResult checked={model.checked} />}
           {model.apps.length ? (
@@ -156,12 +153,12 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
           </Surface>
         </Section>
       )}
-      <div className="px-5 py-4 sm:px-8">
+      <div className="flex flex-col gap-1.5 px-5 py-4 sm:px-8">
         <Collapsible label={ui.hint_title} defaultOpen={!model.apps.length && !model.down.cards.length}>
           <div className="max-w-[560px]"><HintCard hint={model.hint} /></div>
         </Collapsible>
+        <Details facts={model.facts} checked={model.checked} />
       </div>
-      <DetailsBlock facts={model.facts} />
     </>
   );
 }

@@ -9,7 +9,7 @@ import { TaskPill } from "../beautifui/primitives/TaskRows";
 import { SentPill } from "../beautifui/primitives/Recommendation";
 import { SegmentLinks, ThemeToggle } from "../beautifui/site";
 import { absoluteTime, act, hue, isMac, relativeTime, sayNext, useNow, useOwner, usePage, useUi } from "./lib";
-import type { Fact, Hint, Rich, Shot, Tone } from "./model";
+import type { Checked, Fact, Hint, Rich, Shot, Tone } from "./model";
 
 // --- words and moments ----------------------------------------------------------
 
@@ -155,7 +155,11 @@ export function OwnerPill() {
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !ref.current?.contains(event.target as Node)) setOpen(false);
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
+      } else if (ref.current?.contains(event.target as Node)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", close);
@@ -249,11 +253,11 @@ export function Header({
     } catch {}
   };
   return (
-    // Above the sections, whose entry animation makes each its own layer: the owner card opens over them.
+    // Keep the owner menu above the page sections.
     <header className="relative z-20 border-b border-dashed border-line px-5 pt-5 pb-5 sm:px-8 sm:pt-6 sm:pb-6">
-      <div className="flex items-center justify-between gap-2">
-        {crumbs.some(c => c.href) ? <Crumbs items={crumbs} /> : <span />}
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="flex items-center gap-2">
+        {crumbs.some((item) => item.href) && <Crumbs items={crumbs} />}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {!bare && onSearch && <SearchButton onOpen={onSearch} />}
           <SegmentLinks
             label={ui.language}
@@ -290,11 +294,12 @@ export function Header({
 
 // --- "Details" ------------------------------------------------------------------
 
-export function Details({ facts, label }: { facts: readonly Fact[]; label?: string }) {
+export function Details({ facts, label, checked }: { facts: readonly Fact[]; label?: string; checked?: Checked | null }) {
   const ui = useUi();
-  if (!facts.length) return null;
+  if (!facts.length && !checked) return null;
   return (
     <Collapsible label={label ?? ui.details}>
+      {checked && <p className="text-[12px] text-ink-2"><RichText rich={checked.text} /></p>}
       <dl className="flex flex-col gap-1.5 py-0.5">
         {facts.map((fact, i) => (
           <div key={i} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[9.5rem_minmax(0,1fr)]">

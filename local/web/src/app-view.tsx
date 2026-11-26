@@ -20,7 +20,7 @@ function historyRow(row: HistoryRow, ui: AppModel["ui"]): TaskRow {
     amount: row.when.parts.length ? <RichText rich={row.when} /> : undefined,
     status: BADGE_STATUS[row.badge],
     pill: row.pill ? <TaskPill tone={row.pill.tone === "accent" ? "accent" : row.pill.tone}>{row.pill.label}</TaskPill> : undefined,
-    defaultOpen: row.badge === "waiting",
+    defaultOpen: row.badge === "waiting" || Boolean(row.oneWay),
     details: (
       <>
         {row.standing && (
@@ -119,11 +119,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
               <p className="px-3 pb-2 text-[12px] text-ink-3">{model.shot.caption}</p>
             ) : null}
           </div>
-          {model.notices.length > 0 && (
-            <div>
-              <TaskRows rows={model.notices.map(noticeRow)} />
-            </div>
-          )}
+          {model.notices.length > 0 && <TaskRows rows={model.notices.map(noticeRow)} />}
           {model.checked && <CheckResult checked={model.checked} />}
         </div>
       </Section>
@@ -161,7 +157,7 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
             <LifeBlock life={model.life} />
           </Collapsible>
         )}
-        <Details facts={model.facts} />
+        <Details facts={model.facts} checked={model.checked} />
       </div>
     </>
   );

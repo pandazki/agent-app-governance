@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { Drawer } from "../beautifui/primitives/Recommendation";
-import { act, useOwner, usePage, useUi } from "./lib";
+import { act, useNow, useOwner, usePage, useUi } from "./lib";
 import type { Checked, LifeCard, LifeVerb } from "./model";
 import { ContextNote } from "./context-note";
 import { RetryIcon } from "../beautifui/primitives/TaskRows";
@@ -131,7 +131,7 @@ export function LifeBlock({ life }: { life: LifeCard }) {
 export function RuntimeCheck({ checked }: { checked: Checked }) {
   const ui = useUi();
   return (
-    <ContextNote label={ui.check_now} href={checked.href ?? undefined} icon={RetryIcon}>
+    <ContextNote label={checked.href ? ui.check_now : ui.details} href={checked.href ?? undefined} icon={RetryIcon}>
       {checked.href && <strong className="block">{ui.check_now}</strong>}
       <RichText rich={checked.text} />
     </ContextNote>
@@ -139,7 +139,11 @@ export function RuntimeCheck({ checked }: { checked: Checked }) {
 }
 
 export function CheckResult({ checked }: { checked: Checked }) {
+  const now = useNow();
+  const stamp = checked.text.parts.find((part) => typeof part !== "string");
+  const stale = stamp && now - Date.parse(stamp.at) >= 5 * 60_000;
   if (checked.failed) return <p role="alert" className="runtime-failure">{checked.failed} <RichText rich={checked.text} /></p>;
-  if (new URLSearchParams(location.search).get("check") !== "1") return null;
+  const requested = typeof location !== "undefined" && new URLSearchParams(location.search).get("check") === "1";
+  if (!stale && !requested) return null;
   return <p role="status" className="text-[12px] text-ink-2"><RichText rich={checked.text} /></p>;
 }

@@ -144,9 +144,12 @@ export default function TaskRows({
         const head = (
           <>
             <span className="flex size-6 shrink-0 items-center justify-center">{badgeFor(row.status, row.step)}</span>
-            <span className={`${row.wrap ? "" : "line-clamp-2 "}min-w-0 flex-1 text-[13px] font-medium text-ink [overflow-wrap:anywhere]`}>{row.label}</span>
+            <span className="min-w-0 flex-1">
+              <span className={`${row.wrap ? "block" : "line-clamp-2"} text-[13px] font-medium text-ink [overflow-wrap:anywhere]`}>{row.label}</span>
+              {row.pill && <span className="mt-1 block sm:hidden">{row.pill}</span>}
+            </span>
             {row.amount !== undefined && <span className="hidden shrink-0 text-[12.5px] text-ink-2 tabular-nums sm:inline">{row.amount}</span>}
-            {row.pill}
+            {row.pill && <span className="hidden sm:inline-flex">{row.pill}</span>}
           </>
         );
         return (
