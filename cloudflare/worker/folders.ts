@@ -120,12 +120,13 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   const summary = await host.fetch(`/folder/summary?app=${op.app}`, { method: "GET" });
   if (summary.ok) await bucket.put(summaryKey(op.app), await summary.text());
   else await summary.body?.cancel();
-  // The view of the folder just saved. If it cannot be had, the one stored before names the older folder's etag, and
-  // the next reader asks for a new one.
+  lap("save");
+  // The view of the folder just saved, timed on its own (`view`). If it cannot be had, the one stored before names the
+  // older folder's etag, and the next reader asks for a new one.
   const view = await host.fetch(`/folder/view?app=${op.app}`, { method: "GET", headers: { [FOLDER_HEADER]: put.etag } });
   if (view.ok) await bucket.put(viewKey(op.app), await view.text());
   else await view.body?.cancel();
-  lap("save");
+  lap("view");
   return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 }
 

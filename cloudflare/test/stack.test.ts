@@ -261,7 +261,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(submitted.out).toMatch(/load the record from R2 into the container +\d+ ms/);
     expect(stack.starts()).toBe(before + 1);
     // The answer carries where the time went, and --timing prints it.
-    for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2"]) {
+    for (const step of ["the Host's operation", "copy the working tree into a draft", "check the draft", "tests", "publish the preview", "publish the release", "upload the package", "wait until the preview answers", "release the upload", "wait until the release answers", "record the version", "discard the preview", "save the record to R2", "compute the app's view in the container and store it in R2"]) {
       expect(submitted.out).toContain(step);
     }
   });
