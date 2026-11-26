@@ -486,7 +486,7 @@ function printTiming(what, wall, timing, header) {
     row(1, "(the Host's other work: open, classify, decide, write files)", Math.max(0, timing.host_ms - covered));
   }
   if (centre.save !== undefined) row(0, "save the record to R2", centre.save);
-  if (centre.view !== undefined && centre.save !== undefined) row(0, "compute the app's view in the container and store it in R2", centre.view);
+  if (centre.view !== undefined && centre.save !== undefined) row(0, "store the app's summary and view in R2, both computed in the container", centre.view);
   const known = (centre.container ?? 0) + (centre.load ?? 0) + (centre.op ?? 0) + (centre.save ?? 0) + (centre.view ?? 0);
   if (known) row(0, "(the network, the Worker and the Durable Object)", wall - known);
   console.error(lines.join("\n"));

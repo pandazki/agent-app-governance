@@ -95,7 +95,7 @@ for (const n of SIZES) {
   const wall = Math.round(performance.now() - t0);
   const change = /needs_approval (\S+):/.exec(sent.out)?.[1];
   const step = (label: string) => Number(new RegExp(`${label}[^\\n]*?(\\d+) ms`).exec(sent.out)?.[1] ?? NaN);
-  const centre = { save: step("save the record to R2"), view: step("compute the app's view in the container and store it in R2") };
+  const centre = { save: step("save the record to R2"), view: step("store the app's summary and view in R2, both computed in the container") };
   const viewBytes = stack.bucket.objects.get(viewKey(app))?.bytes.length ?? 0;
   rows.push(`${n} versions | folder ${kb(tarBytes)} | write: submit ${wall} ms at the CLI, save ${centre.save} ms, view ${centre.view} ms, view stored ${kb(viewBytes)}`);
   console.log(rows.at(-1));

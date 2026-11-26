@@ -1415,6 +1415,9 @@ export class AppHost {
     const control: ControlPlane = actor?.control ?? "owner";
     const who = { ...provenanceFields(actor?.agentProvenance), ...credentialField(actor?.credential) };
     let releaseRoot: string | undefined;
+    const previewed = () => earnedByChecks(checks).includes(GUARANTEES.previewed);
+    /** The preview's discard, once it has started. */
+    let dropping: Promise<void> | undefined;
     try {
       let approval: HostEntryFields["approval"];
       let approvedBy: readonly string[] = [];
@@ -1435,6 +1438,11 @@ export class AppHost {
         });
         approval = { preset: this.opts.policy.preset_id, route: decision.route_id, by: decision.satisfied_by_subjects, reason_code: decision.reason_code };
         approvedBy = decision.satisfied_by_subjects;
+      }
+      // As on a submit: where the release does not draw on the preview's upload, the preview goes while the release goes out.
+      if (previewed() && this.opts.space.releaseUsesPreviewUpload === false) {
+        dropping = this.previews.drop(previewName(name, changeId), preview.id);
+        dropping.catch(() => {});
       }
       releaseRoot = this.privateCopy(draftRoot);
       const released = await this.publishRelease({
@@ -1499,7 +1507,7 @@ export class AppHost {
         guarantees,
       };
     } finally {
-      if (earnedByChecks(checks).includes(GUARANTEES.previewed)) await this.previews.drop(previewName(name, changeId), preview.id);
+      if (previewed()) await (dropping ?? this.previews.drop(previewName(name, changeId), preview.id));
       rmSync(draftRoot, { recursive: true, force: true });
       if (releaseRoot) rmSync(releaseRoot, { recursive: true, force: true });
     }
