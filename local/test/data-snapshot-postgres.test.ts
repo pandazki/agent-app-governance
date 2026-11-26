@@ -477,6 +477,12 @@ describe("postgres-template: covers", () => {
     expect(space.log).toEqual([]);
   });
 
+  test("covers an app on PostgreSQL that PneumaSpace does not serve now, whose bindings it holds suspended (taken down, or being purged)", async () => {
+    space.bindings.set("todo", [pg(DB, "suspended")]);
+    expect(await capability().covers!({ appRoot: appRoot() })).toEqual({ covered: true });
+    expect(server.opened).toBe(0);
+  });
+
   test("does not cover an app on SQLite, one switched back to SQLite, or one with no database, and says why in a sentence for the owner", async () => {
     space.bindings.set("todo", [sqlite()]);
     const onSqlite = await capability().covers!({ appRoot: appRoot() });

@@ -192,8 +192,8 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
   }
 
   /** The app's active PostgreSQL database, as PneumaSpace says, not as a guess from its name; or, when it has none, why. */
-  async function whereData(name: string, how = true): Promise<{ readonly database: string } | { readonly reason: string }> {
-    const db = await dbBindings(name);
+  async function whereData(name: string, how = true, known?: readonly SpaceBinding[]): Promise<{ readonly database: string } | { readonly reason: string }> {
+    const db = known ?? (await dbBindings(name));
     const postgres = db.find((binding) => binding.provider === "postgres" && binding.state === "active");
     if (!postgres) return { reason: notOnPostgres(name, db, how) };
     const database = postgres.location.database;
@@ -315,7 +315,12 @@ export function postgresTemplateSnapshot(opts: PostgresTemplateOptions): HostDat
 
     async covers({ appRoot }) {
       // Only reads. Throws only when PneumaSpace does not answer: then nobody can tell yet.
-      const where = await whereData(appName(appRoot), false);
+      const name = appName(appRoot);
+      const db = await dbBindings(name);
+      // PneumaSpace suspends every binding of an app it does not serve (taken down, or being purged): one whose
+      // database is PostgreSQL is covered still, as it will be once it serves. One that moved to another engine has that one active.
+      if (!db.some((binding) => binding.state === "active") && db.some((binding) => binding.provider === "postgres")) return { covered: true };
+      const where = await whereData(name, false, db);
       return "reason" in where ? { covered: false, reason: where.reason } : { covered: true };
     },
 
