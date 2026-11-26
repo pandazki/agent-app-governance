@@ -7,7 +7,9 @@
   "name": "appgov-host",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-13",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: the Worker lists the apps on PneumaSpace itself (worker/runtime-check.ts), and the
+  // plane may be on the same zone as the Host's domain; this sends that request out as from the Internet.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
   "vars": {

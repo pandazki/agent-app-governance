@@ -2,7 +2,7 @@
 
 [中文版](./reference.zh-CN.md) · [Back to the guide](../README.md)
 
-The guide covers starting the stack and everyday use. This file covers the rest: the CLI in full, the modes, the risk rules, undo, the PostgreSQL option, starting an agent from the Host, running beside other services, and the tests.
+The guide covers starting the stack and everyday use. This file covers the rest: the CLI in full, the modes, the risk rules, undo, taking an app down and clearing it, the PostgreSQL option, starting an agent from the Host, running beside other services, and the tests.
 
 ## The CLI
 
@@ -10,18 +10,22 @@ Every app has a copy of the CLI at `.appgov/appgov.mjs`, the apps folder has one
 
 | Command | What it does |
 | --- | --- |
-| `status [<name>]` | The current version, the address, the version undo goes back to, the owner, the mode, whether a data snapshot capability is on, who manages the app on PneumaSpace, files not submitted, and changes that wait, each with its preview |
+| `status [<name>]` | Whether the app is there (first, when it is not), the current version, the address, the version undo goes back to, the owner, the mode, whether a data snapshot capability is on, who manages the app on PneumaSpace, files not submitted, and changes that wait, each with its preview |
 | `history [<name>]` | Every attempt, oldest first, with what was guaranteed for each |
-| `list` | Every app: version, address, last change, changes that wait, files not submitted |
+| `list` | Every app: version, address, whether it is there, last change, changes that wait, files not submitted |
 | `submit "<intent>"` | Take the working tree through the Host. `--one-way "<what is lost>"` declares that the change deletes or rewrites stored data, in any mode (see [one-way changes](#one-way-changes-and-undo)) |
 | `discard` | Put the working tree back to the current version, dropping edits that were never submitted |
 | `undo "<why>"` | Go back one version. `--to <version>` goes straight to an earlier one; `--accept-one-way` is the owner's confirmation to go back past a one-way change |
 | `approve <id>`, `deny <id> [why]` | The owner's decision on a waiting change. Each needs a terminal and asks you to type the word |
 | `preview <id>` | Publish a waiting change's preview again after it ended itself |
 | `create <name>` | Create and publish a new app |
+| `take-down [<name>] [why]` | The owner's: stop serving the app and keep everything (see [taking an app down](#taking-an-app-down-and-clearing-it)) |
+| `bring-back [<name>] [why]` | The owner's: serve a taken-down app again, with the data PneumaSpace kept |
+| `publish-again [<name>] [why]` | The owner's: create the app anew on PneumaSpace from its current version, once PneumaSpace no longer has it. It starts with no stored data |
+| `clear [<name>]` | The owner's: forget an app that does not serve, and purge it on PneumaSpace. Asks you to type the app's name |
 | `guide [--write <file>]` | Print a short block for an agent's user-level instructions: the Host's address, the apps folder and the commands. `--write` puts it in that file between markers and replaces it on later runs |
 
-In an app's folder, commands act on that app; elsewhere, name it with `--app <name>` (or as a word, for `status` and `history`). `--json` prints the Host's answer as JSON.
+In an app's folder, commands act on that app; elsewhere, name it with `--app <name>` (or as a word, for `status`, `history`, `take-down`, `bring-back`, `publish-again` and `clear`). `--json` prints the Host's answer as JSON.
 
 The CLI takes the Host's address from the first of these that has one: the `--host <url>` flag; `APPGOV_HOST`; a `.appgov/host.json` written by a Host, looked for in the current folder and each folder above it, then next to the CLI file itself, then in `apps/.appgov/host.json` beside the folder that holds the CLI (which is how `local/bin/appgov.mjs` finds `local/apps/.appgov/host.json`); and last `http://127.0.0.1:8090`. When it cannot reach the Host, it says which address it tried and where that address came from.
 
@@ -118,6 +122,53 @@ In `record` mode a submit is neither classified nor approved by these rules, tho
 - **Going back past a one-way change waits for the owner, in every mode.** The undo is refused (`crosses_one_way_change`; the CLI exits 2) and nothing is touched. The message lists each one-way version and why, and says which case applies: (a) the Host saved the data before that change, the data returns to that snapshot, and everything stored since is set aside and will not be in the app; or (b) only the code returns, and the older version may fail on today's data. The API answer carries `data_restore: "snapshot"` or `"none"`.
 - **The owner confirms** with `undo --accept-one-way "<why>"` in a terminal, typing `accept`, or on the page from the owner link. The confirmation carries the version the plan started from; if another version went live in between, the Host answers `plan_changed` (409) and nothing changes. The Host answers 403 to anyone but the owner. The history entry records `one_way_crossed`, `confirmed_by`, and in case (a) where the replaced data went. When a version gone back past was declared one-way by its submitter, the undo's answer lists it in `declared_one_way` with the words, and the CLI prints them: going back puts back its code, not what it did to stored data.
 
+## Taking an app down and clearing it
+
+Whether an app is there comes from two places: the Host's own record (whether the owner took it down through this Host, which is a `take_down` entry in the history not followed by a `bring_back` or `publish_again` one) and what PneumaSpace says about the app. The Host asks PneumaSpace at every `status`, for every app in `list` and on the page, and before every submit, approval and undo; on this edition every read asks it live. `status` and `list` carry PneumaSpace's answer as `runtime` (`serving`, `removed`, `gone` or `unknown`, with `checked_at`), the owner's take-down as `taken_down` (who, when, through what), and the two together as `standing`. `status` also carries `choices`, what the owner may do now, and `clearing`, what clearing would delete and leave.
+
+| `standing` | What it means | What the owner may do |
+| --- | --- | --- |
+| `running` | PneumaSpace serves the app, and nobody took it down here | Take it down |
+| `down` | The owner took it down through this Host. PneumaSpace keeps it removed, with its data, or no longer has it | Bring it back, or publish it again when PneumaSpace no longer has it; clear it |
+| `removed_elsewhere` | PneumaSpace holds it removed, with its data, but not through this Host | Bring it back, or clear it |
+| `vanished` | PneumaSpace has no such app any more (or is purging it), and this Host did not take it down, so its stored data is gone | Publish it again, or clear it |
+| `unconfirmed` | PneumaSpace did not answer | Nothing, until it answers |
+
+An app the Host has as taken down that PneumaSpace serves again (brought back in its console) stays `down`. The owner can take it down again, or bring it back, which records it as back without touching PneumaSpace.
+
+What each act does:
+
+- **Take down** calls PneumaSpace's `remove`, with the Host's manager name. The address stops answering; PneumaSpace keeps the app's stored data, and the Host keeps the folder, the versions and the history. The history gets a `take_down` entry naming who did it and through what (`"channel": "owner-page"` from the page), with the owner's reason in its intent. Changes that wait stay: approving one is refused until the app is back, and saying no still works.
+- **Bring back** serves the current version again with the data PneumaSpace kept. The local gateway has no resume action, so the Host publishes the current version onto the removed app, and the gateway registers it again with the same id and the same data. The Host then asks the home page once; the `bring_back` entry says so when it did not answer.
+- **Publish again** is only for an app PneumaSpace no longer has. It publishes the current version as a new app with empty storage, and the `publish_again` entry says that the data the app stored before is not there any more.
+- **Clear** checks first that `confirm` is the app's name, then that PneumaSpace does not serve the app: it never goes in one step from `running`. It discards the previews of the changes that wait, purges the app on PneumaSpace with all its stored data when PneumaSpace holds it removed, and then deletes the app's folder, `apps/<name>/`: the source, every version, the history and the changes that wait. That folder is also where your agent works. No history is left to write in; the Host's log keeps one line saying who cleared the app. When PneumaSpace refuses the purge, nothing is cleared. The data snapshots the PostgreSQL option made (the databases named in the history) are not deleted: `status` lists them in `clearing.keeps`, and the CLI and the page show those lines before you type the name.
+
+Whether clearing purges is a capability of the Host's PneumaSpace runtime (`SpaceRuntime.purge`), not a setting. The local gateway lets the Host purge a removed app. The Cloudflare edition's plane gives the Host no purge authority, so there clearing leaves the app removed on PneumaSpace, with its data, for the PneumaSpace owner to purge.
+
+**The CLI.** `take-down`, `bring-back`, `publish-again` and `clear` take the app's name as a word outside an app's folder; any other words are the owner's reason. Each refuses to run without a terminal, shows the app's standing and what the act does (for `clear`, what it deletes and what stays), and asks you to type the command's name, or for `clear` the app's name. It sends `APPGOV_OWNER` (default `user:me`) as the subject.
+
+**The routes.** The first three answer `standing`, `runtime`, `taken_down` and a `note` that says what happened. `clear` answers `deleted`, `kept` and `space_holds` (whether PneumaSpace still holds the app). The JSON API's rule for writes applies: no `Origin` or `Sec-Fetch-Site`, and `content-type: application/json`.
+
+| Route | Body |
+| --- | --- |
+| `POST /apps/<name>/take-down`, `/bring-back`, `/publish-again` | `subject` (only the app's owner is accepted), and optionally `reason` |
+| `POST /apps/<name>/clear` | The same, and `confirm`: the app's name |
+| `POST /owner/apps/<name>/take-down`, `/bring-back`, `/publish-again`, `/clear` | The page's, with the owner link's token. The subject is the app's owner and the entry says `"channel": "owner-page"`. Optionally `reason`; for `clear`, `confirm` |
+
+**Refusals.** None of them writes anything, and the CLI exits 3.
+
+| Code | Status | When |
+| --- | --- | --- |
+| `app_down` | 409 | A submit, an approval or an undo while the owner has the app taken down. The message names who took it down and when, and says that the owner brings it back |
+| `app_removed_elsewhere` | 409 | The same, while the app is taken down on PneumaSpace, not through this Host |
+| `app_vanished` | 409 | The same, while PneumaSpace has no such app: a release would only create it again, empty. The owner publishes it again or clears it |
+| `owner_required` | 403 | Taking down, bringing back, publishing again or clearing, asked by anyone but the app's owner |
+| `confirm_name` | 400 | Clearing without the app's name, exactly, in `confirm` |
+| `clear_running` | 409 | Clearing while PneumaSpace serves the app: take it down first |
+| `cannot_take_down`, `cannot_bring_back`, `cannot_publish_again` | 409 | The act does not fit the app's standing now: for example bringing back an app PneumaSpace no longer has, or publishing again one it still has |
+| `space_unknown` | 502 | PneumaSpace did not answer, so whether the app is there is unknown |
+| `space_refused` | 502 | PneumaSpace refused the remove, the publish or the purge, or did not answer it |
+
 ## Data snapshots for PostgreSQL
 
 This is an optional practice, not something pneuma-framework or PneumaSpace promises. With it, the Host copies an app's PostgreSQL database right before a one-way change first goes live, and a confirmed undo past that change puts the copy back. The code is `src/data-snapshot-postgres.ts`; the copy is PostgreSQL's `CREATE DATABASE ... TEMPLATE`.
@@ -152,7 +203,7 @@ Limits:
 - Each snapshot and each restore is a full copy; time and disk grow with the database. The app is stopped while its database is copied or swapped.
 - Between the older code going out and the data coming back, the older code runs on the newer data and may answer errors.
 - `APPGOV_DATA_SNAPSHOT_URL` is superuser access to every app's database on that server.
-- Snapshots and replaced databases stay until someone drops them. A replaced database still belongs to the app's PostgreSQL role, so while one is left, PneumaSpace's purge of the app fails; drop the replaced databases first.
+- Snapshots and replaced databases stay until someone drops them, and clearing the app does not drop them. A replaced database still belongs to the app's PostgreSQL role, so while one is left, PneumaSpace's purge of the app fails, and clearing the app is refused with `space_refused`; drop the replaced databases first.
 
 ## Starting the agent from the Host (`bun run drive`)
 
@@ -235,7 +286,7 @@ Copying the folder to another machine and pointing a Host at it continues the sa
 
 ## On one machine: what the owner checks do
 
-- `approve`, `deny` and `undo --accept-one-way` refuse to run without a terminal, and the Host answers 403 when a decision that needs the owner comes from another subject. The owner is the one named in the app's `.appgov/app.json`, taken from `APPGOV_OWNER` (default `user:me`) when the app was created. The Host takes the subject from the request, so this stops an honest agent from approving its own change, not another program on the machine.
+- `approve`, `deny`, `undo --accept-one-way`, `take-down`, `bring-back`, `publish-again` and `clear` refuse to run without a terminal, and the Host answers 403 when a decision that needs the owner comes from another subject. The owner is the one named in the app's `.appgov/app.json`, taken from `APPGOV_OWNER` (default `user:me`) when the app was created. The Host takes the subject from the request, so this stops an honest agent from approving its own change, not another program on the machine.
 - The owner link: the Host makes a random token once, keeps it in its state volume (`/state/owner-token`, readable by the Host's user only) and prints the link at every start. The token rides in the part of the address after `#`, which a browser sends to no server; the page keeps it in that tab and sends it with each decision, from the page's own origin. A decision on the page passes the same checks as one in a terminal and writes the same history entry, plus `"channel": "owner-page"`. A program that can read the Host's log can read the link.
 - The Host's JSON API refuses what only a browser would send: a request that changes something must not carry `Origin` or `Sec-Fetch-Site` and must say `content-type: application/json`. This keeps a web page from acting through the API; it is not authentication.
 - Pictures: the `screenshot` service is a headless Chrome. The Host asks it for a picture of an app when a version goes live, when a waiting change has a preview, and again after `APPGOV_SCREENSHOT_REFRESH_HOURS` (default 24). Each picture is taken with no cookie, so an app that asks visitors to sign in gets no picture. A pictured page's own requests may go only to its own address or over https, but a WebSocket and anything a frame from another site requests are not filtered, so a page's scripts, a preview's included, can send requests to every service on the compose network. PneumaSpace's admin API there takes some writes without a login, such as stopping an app. Where that matters, set `APPGOV_SCREENSHOT_CDP=` to switch pictures off; nothing else changes.

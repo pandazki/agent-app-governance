@@ -4,7 +4,7 @@ import LoadingState from "../beautifui/primitives/LoadingState";
 import { Section, Surface } from "../beautifui/site";
 import type { SignInModel } from "./model";
 import { Failure } from "./change-view";
-import { Header } from "./parts";
+import { Header, TextField } from "./parts";
 
 /**
  * Before the owner signs in (the Cloudflare edition): one field for the owner key and one button, in the cards'
@@ -48,19 +48,7 @@ export function SignInView({ model }: { model: SignInModel }) {
         <Surface>
           <form onSubmit={submit} className="mx-auto w-full max-w-[440px] overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}>
             <div className="primitive-card-pad">
-              <input
-                type="password"
-                name="key"
-                value={key}
-                onChange={(event) => setKey(event.target.value)}
-                autoComplete="current-password"
-                autoFocus
-                spellCheck={false}
-                aria-label={ui.signin_key}
-                placeholder={ui.signin_key}
-                disabled={busy}
-                className="h-9 w-full rounded-control bg-field px-3 font-mono text-[12.5px] text-ink shadow-inset-field outline-none placeholder:font-sans placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60"
-              />
+              <TextField type="password" name="key" value={key} onChange={setKey} autoComplete="current-password" autoFocus label={ui.signin_key} disabled={busy} />
               <p className="mt-2 text-[12px] leading-relaxed text-ink-3">{ui.signin_where}</p>
               {failure && <Failure text={failure} detail="" />}
             </div>

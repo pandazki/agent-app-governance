@@ -371,6 +371,33 @@ export class CfSpace implements SpaceRuntime {
     }
   }
 
+  /** The plane's typed action `remove`: the address answers 404, the data and releases stay. Removing a removed app changes nothing. */
+  async remove(name: string, manager?: string): Promise<boolean> {
+    try {
+      const found = await this.find(name);
+      if (!found || found.status === "purging" || found.status === "purged") return false;
+      if (found.status !== "removed") await this.api("POST", `/apps/${found.id}/actions`, { type: "remove" }, manager);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The plane's typed action `resume`: a removed app serves its current release again, with its data. `dir` is not needed here. */
+  async resume(name: string, options: { readonly dir: string; readonly manager?: { readonly name: string } }): Promise<boolean> {
+    try {
+      const found = await this.find(name);
+      if (!found || found.status !== "removed") return false;
+      await this.api("POST", `/apps/${found.id}/actions`, { type: "resume" }, options.manager?.name);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // No `purge`: the plane gives tokens no purge authority, on purpose. Clearing an app leaves it removed here, with its
+  // data, for the PneumaSpace owner to purge in the console.
+
   async state(name: string): Promise<SpaceState> {
     const found = await this.find(name);
     if (!found) throw new Error(`PneumaSpace has no app named ${name}`);

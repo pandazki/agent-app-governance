@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { AGENT_SOURCES, AppHost, HostError, type AgentProvenance } from "../../host/src/host";
+import { LIFECYCLE_VERBS, lifecycle, reasonOf } from "./lifecycle-routes";
 import { servePage, type PagePictures } from "./owner";
 import type { PageAssets } from "./page";
 
@@ -140,7 +141,7 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
     if (method === "GET" && url.pathname === "/healthz") return { ok: true };
     if (parts[0] !== "apps") throw new HostError(404, "not found");
     if (parts.length === 1) {
-      if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: host.summaries() };
+      if (method === "GET") return { governance: host.governanceMode, ...(host.consoleUrl ? { console: host.consoleUrl } : {}), apps: await host.summaries() };
       if (method === "POST") {
         const input = await body(req);
         return host.create(text(input.name, "name"), typeof input.intent === "string" ? input.intent : undefined);
@@ -179,6 +180,8 @@ export function createHostServer(host: AppHost, options: HostServerOptions = {})
       }
       if (parts[2] === "discard") return host.discard(name);
       if (parts[2] === "adopt") return host.adopt(name), { ok: true };
+      // Whether the app is there: the owner's, like approve. The subject comes from the body and only the owner's is accepted.
+      if (LIFECYCLE_VERBS.has(parts[2]!)) return lifecycle(host, name, parts[2]!, { subject: text(input.subject, "subject"), ...reasonOf(input) }, input.confirm);
     }
     // The owner asks for a waiting change's preview again, once it has ended itself.
     if (parts.length === 5 && method === "POST" && parts[2] === "changes" && parts[4] === "preview") return host.preview(name, parts[3]!);

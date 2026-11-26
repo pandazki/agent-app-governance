@@ -54,7 +54,8 @@ import {
 } from "./artifact";
 import { DECLARED_ONE_WAY_MARK, RUN_UNDO } from "./constants";
 import { classifyRisks, decide, governancePolicy, holdsOwnerRole, type GovernanceMode, type RiskPolicy } from "./policy";
-import { DEFAULT_MANAGER, readManager, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
+import { choicesFor, clearingWords, downOf, LIFECYCLE_KINDS, runtimeFacts, standingOf, type ClearingFacts, type DownFacts, type OwnerChoices, type RuntimeFacts, type Standing } from "./lifecycle";
+import { askApp, DEFAULT_MANAGER, managerFrom, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
 import { timed, timedSync } from "./steps";
 import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
@@ -127,6 +128,12 @@ export interface AppHostOptions {
    * everything stored since the snapshot leaves the app; without it, only code goes back.
    */
   readonly dataSnapshot?: HostDataSnapshot;
+  /**
+   * Agents work in copies of the app held apart from this Host's directory (the Cloudflare edition's working copies):
+   * clearing an app leaves them where they are. Without it, the app's directory is the one agents work in (the local
+   * edition), and clearing deletes it with the record.
+   */
+  readonly workingCopiesApart?: boolean;
   /**
    * This Host's own address as the person's machine reaches it, e.g. http://127.0.0.1:8090. When set,
    * the Host records it in `.appgov/host.json` of the apps directory and of every app (at start, and
@@ -383,6 +390,51 @@ export interface AppStatus {
   readonly malformed_pending?: readonly string[];
   /** Who PneumaSpace says manages the app. */
   readonly space_manager: ManagerState;
+  /** What PneumaSpace said about the app, and when (asked for this status). */
+  readonly runtime: RuntimeFacts;
+  /** The owner took the app down through this Host, or null. */
+  readonly taken_down: DownFacts | null;
+  /** What the two mean together (lifecycle.ts): `running`, `down`, `removed_elsewhere`, `vanished` or `unconfirmed`. */
+  readonly standing: Standing;
+  /** What the owner may do about the app's being there, now. */
+  readonly choices: OwnerChoices;
+  /** What clearing the app would delete and keep: said before the owner types the name. */
+  readonly clearing: ClearingFacts;
+}
+
+/** What clearing an app does, as this Host's runtime allows it. */
+export type { ClearingFacts };
+
+/** An owner's act on the app's being there: who, through what, with what credential. */
+export interface OwnerAct {
+  /** The subject asking; only the app's owner may. */
+  readonly subject: string;
+  /** Where it came from when not the CLI, e.g. `owner-page`. */
+  readonly channel?: string;
+  /** The credential the request was authenticated with, where one was. */
+  readonly credential?: string;
+  /** Why, in the owner's words; optional. */
+  readonly reason?: string;
+}
+
+/** What taking down, bringing back or publishing again answers. */
+export interface LifecycleResult {
+  readonly app: string;
+  readonly standing: Standing;
+  readonly runtime: RuntimeFacts;
+  readonly taken_down: DownFacts | null;
+  /** One plain sentence: what happened and what stays. */
+  readonly note: string;
+}
+
+/** What clearing answers: the Host no longer has the app. */
+export interface ClearResult {
+  readonly app: string;
+  readonly cleared: true;
+  readonly deleted: readonly string[];
+  readonly kept: readonly string[];
+  /** Whether PneumaSpace still holds the app (removed, with its data), and so its name, slot and storage. */
+  readonly space_holds: boolean;
 }
 
 /** A change waiting for the owner, as a list of apps shows it. */
@@ -417,6 +469,10 @@ export type AppSummary =
       /** As in `status`: a line for each file in `.appgov/pending/` left out of `pending`. Absent when there is none. */
       readonly malformed_pending?: readonly string[];
       readonly uncommitted: readonly string[];
+      /** As in `status`: what PneumaSpace said and when, whether the owner took it down here, and what that means. */
+      readonly runtime: RuntimeFacts;
+      readonly taken_down: DownFacts | null;
+      readonly standing: Standing;
     }
   /** An app directory this Host could not read; the others are listed regardless. */
   | { readonly app_id: string; readonly error: string };
@@ -935,9 +991,16 @@ export class AppHost {
     return { ok: booted.ok, output };
   }
 
-  /** Before a write to the app on PneumaSpace: refused when another manager runs it; when nobody does, the publish marks it as this Host's, and the note says so. */
-  private async claim(name: string, act: "submit" | "approval" | "undo"): Promise<string | undefined> {
-    const manager = await readManager(this.opts.space, name, this.manager.name);
+  /**
+   * Before a write to the app on PneumaSpace, from one answer of PneumaSpace's: refused while the app is not there to
+   * write to (taken down by the owner, removed on PneumaSpace, or gone from it, which a release would only create
+   * again, empty), and when another manager runs it; when nobody does, the publish marks it as this Host's, and the
+   * note says so.
+   */
+  private async claim(name: string, act: "submit" | "approval" | "undo", record: ChangeRecord): Promise<string | undefined> {
+    const answer = await askApp(this.opts.space, name);
+    refuseNotThere(name, act, record, standingOf(downOf(record.history<HostEntryFields>()), runtimeFacts(answer)));
+    const manager = managerFrom(answer, name, this.manager.name);
     if (manager.state === "other") throw new HostError(409, `${manager.note}. Nothing was checked, recorded or released.`, "managed_elsewhere", undefined, { manager: manager.name! });
     // In the result only: who manages the app is PneumaSpace's fact, which status asks for and its audit keeps.
     return manager.state === "unmanaged" ? `PneumaSpace had no manager for ${name}; this ${act} marked it as managed by ${this.manager.name}` : undefined;
@@ -1319,7 +1382,7 @@ export class AppHost {
       if (input.oneWay !== undefined && !input.oneWay.trim()) throw new HostError(400, "one_way must say, in words, what putting files back would not undo");
       this.refuseUnfinishedUndo(paths, record);
       // Refused before anything is checked or recorded when another manager runs the app on PneumaSpace.
-      const adopted = await this.claim(input.name, "submit");
+      const adopted = await this.claim(input.name, "submit", record);
       let workingTree: string | undefined;
       if (input.runAgent) {
         // A host-driven change is made in a draft and then written over the working tree.
@@ -1895,7 +1958,7 @@ export class AppHost {
           throw new HostError(409, `the working tree has edits that are not part of this change (${beyond.join(", ")}); submit or discard them, then approve again`);
         }
         // PneumaSpace is asked only once nothing here refuses the approval: who manages the app, then whether the preview stands.
-        adopted = await this.claim(name, "approval");
+        adopted = await this.claim(name, "approval", record);
         if (this.opts.preview !== false) await this.previewStanding(name, changeId);
         workingTree = sourceSignature(paths.root);
       }
@@ -2012,7 +2075,7 @@ export class AppHost {
         throw new HostError(403, `${options.subject || "nobody"} cannot confirm going back past a one-way change (only the owner decides)`);
       }
       // Refused before anything is touched when another manager runs the app on PneumaSpace.
-      const adopted = await this.claim(name, "undo");
+      const adopted = await this.claim(name, "undo", record);
 
       const plan = record.planRestore(target);
       const cap = this.opts.dataSnapshot;
@@ -2285,6 +2348,150 @@ export class AppHost {
     });
   }
 
+  // --- whether the app is there: take down, bring back, publish again, clear (owner only) -------------------------
+
+  /** Only the app's owner acts on whether it is there, whatever the Host's front authenticated. */
+  private requireOwner(name: string, info: AppInfo, act: OwnerAct, what: string): void {
+    if (!holdsOwnerRole(this.ownerPolicy(name, info), act.subject)) throw new HostError(403, `${act.subject || "nobody"} cannot ${what} ${name} (only the owner decides)`, "owner_required");
+  }
+
+  /** PneumaSpace's answer now, with what it means beside the Host's own record. */
+  private async presence(name: string, record: ChangeRecord): Promise<{ runtime: RuntimeFacts; taken_down: DownFacts | null; standing: Standing; choices: OwnerChoices }> {
+    const runtime = runtimeFacts(await askApp(this.opts.space, name));
+    const taken_down = downOf(record.history<HostEntryFields>());
+    const standing = standingOf(taken_down, runtime);
+    return { runtime, taken_down, standing, choices: choicesFor(standing, runtime) };
+  }
+
+  /** Refused, saying why, when the owner may not do `choice` now. */
+  private refuseChoice(name: string, choice: keyof OwnerChoices, now: { runtime: RuntimeFacts; standing: Standing; choices: OwnerChoices }): void {
+    if (now.choices[choice]) return;
+    if (now.runtime.state === "unknown") throw new HostError(502, `PneumaSpace did not answer (${now.runtime.note ?? "no answer"}), so whether ${name} is there is unknown. Nothing changed; ask again in a minute.`, "space_unknown");
+    const why: Record<keyof OwnerChoices, string> = {
+      take_down: now.standing === "down" ? `the owner took ${name} down already` : `${name} is not serving on PneumaSpace now (${standingWords(name, now.standing)})`,
+      bring_back:
+        now.runtime.state === "gone"
+          ? `PneumaSpace has no app named ${name} any more, so there is nothing to bring back; publish it again instead (its stored data is not there any more)`
+          : `${name} is serving and was not taken down`,
+      publish_again: `PneumaSpace still has ${name} (${now.runtime.state === "removed" ? "removed, with its data: bring it back instead" : "serving"}); publishing again is for an app it no longer has`,
+      clear: `${name} is serving on PneumaSpace: take it down first, then clear it. Clearing never goes in one step from serving`,
+    };
+    throw new HostError(409, `${why[choice]}. Nothing changed.`, choice === "clear" ? "clear_running" : `cannot_${choice}`);
+  }
+
+  /** The entry an owner's act on the app's being there leaves in the history. */
+  private lifecycleEntry(record: ChangeRecord, kind: "take_down" | "bring_back" | "publish_again", intent: string, act: OwnerAct, extra: Partial<HostEntryFields> = {}): void {
+    record.note<HostEntryFields>({
+      changeId: this.changeId(),
+      kind,
+      intent: act.reason ? `${intent}: ${act.reason}` : intent,
+      agent: act.subject,
+      guarantees: [],
+      extra: {
+        outcome: kind === "take_down" ? "taken_down" : kind === "bring_back" ? "brought_back" : "published_again",
+        control: "owner",
+        ...(act.channel ? { channel: act.channel } : {}),
+        ...(act.credential ? { credential: act.credential } : {}),
+        ...extra,
+      } as HostEntryFields,
+    });
+  }
+
+  private async lifecycleResult(name: string, record: ChangeRecord, note: string): Promise<LifecycleResult> {
+    const now = await this.presence(name, record);
+    return { app: name, standing: now.standing, runtime: now.runtime, taken_down: now.taken_down, note };
+  }
+
+  /**
+   * Take the app down and keep everything: PneumaSpace stops serving it (its typed action `remove`, with this Host's
+   * name as manager) and keeps its stored data; the Host keeps its record and history. While it is down, a submit, an
+   * approval and an undo are refused, saying the owner took it down. Owner only.
+   */
+  takeDown(name: string, act: OwnerAct): Promise<LifecycleResult> {
+    return this.serial(name, async () => {
+      const { info, record } = this.open(name);
+      this.requireOwner(name, info, act, "take down");
+      this.refuseChoice(name, "take_down", await this.presence(name, record));
+      if (!(await this.opts.space.remove(name, this.manager.name))) throw new HostError(502, `PneumaSpace did not take ${name} down (it refused or did not answer). Nothing was recorded; ${name} serves as before.`, "space_refused");
+      this.lifecycleEntry(record, "take_down", `Take ${name} down`, act);
+      return this.lifecycleResult(name, record, `${name} is taken down: it serves nothing. PneumaSpace keeps it removed, with its stored data, and this Host keeps its record and history. Bring it back to serve it again.`);
+    });
+  }
+
+  /** Serve the app again with the data PneumaSpace kept: after the owner took it down here, or it was removed on PneumaSpace. Owner only. */
+  bringBack(name: string, act: OwnerAct): Promise<LifecycleResult> {
+    return this.serial(name, async () => {
+      const { info, record } = this.open(name);
+      this.requireOwner(name, info, act, "bring back");
+      const now = await this.presence(name, record);
+      this.refuseChoice(name, "bring_back", now);
+      const current = record.current();
+      if (!current) throw new HostError(409, `${name} has no active version`);
+      if (now.runtime.state === "removed" && !(await this.opts.space.resume(name, { dir: record.versionDir(current), manager: this.manager }))) {
+        throw new HostError(502, `PneumaSpace did not bring ${name} back (it refused or did not answer). Nothing was recorded; ${name} is still taken down.`, "space_refused");
+      }
+      const probe = await this.opts.space.probe(name);
+      this.lifecycleEntry(record, "bring_back", `Bring ${name} back`, act, probe.ok ? {} : { address_note: `brought back, but GET / answered ${probe.status} ${probe.detail}`.trim() });
+      return this.lifecycleResult(
+        name,
+        record,
+        probe.ok ? `${name} is back: it serves ${current} again, with the data PneumaSpace kept.` : `${name} is back on PneumaSpace, but its address answered ${probe.status} when the Host looked: open it and see.`,
+      );
+    });
+  }
+
+  /**
+   * Create the app again on PneumaSpace from this Host's current version, once PneumaSpace no longer has it. Its stored
+   * data is not there any more: the app starts with none. Owner only.
+   */
+  publishAgain(name: string, act: OwnerAct): Promise<LifecycleResult> {
+    return this.serial(name, async () => {
+      const { info, record } = this.open(name);
+      this.requireOwner(name, info, act, "publish again");
+      this.refuseChoice(name, "publish_again", await this.presence(name, record));
+      const current = record.current();
+      if (!current) throw new HostError(409, `${name} has no active version`);
+      const published = await this.opts.space.publish(name, record.versionDir(current), { manager: this.manager });
+      if (published.code !== 0) throw new HostError(502, `PneumaSpace did not take ${name} (${published.output.slice(-300).trim()}). Nothing was recorded.`, "space_refused");
+      const probe = await this.opts.space.probe(name);
+      this.lifecycleEntry(record, "publish_again", `Publish ${name} again`, act, {
+        note: "created again on PneumaSpace from this version; the stored data the app had there before is not there any more",
+        ...(probe.ok ? {} : { address_note: `published again, but GET / answered ${probe.status} ${probe.detail}`.trim() }),
+      });
+      return this.lifecycleResult(name, record, `${name} is on PneumaSpace again, serving ${current}, with no stored data: what it stored there before is not there any more.`);
+    });
+  }
+
+  /**
+   * Forget the app: its versions, history and waiting changes. Only once PneumaSpace does not serve it (taken down, or
+   * gone), never in one step from serving, and only with its name typed as `confirm`. Where this Host's runtime may
+   * purge (`SpaceRuntime.purge`), the app is purged on PneumaSpace with its stored data; where it may not, PneumaSpace
+   * keeps it removed, with its data, for its owner to purge there. Owner only.
+   */
+  clear(name: string, act: OwnerAct & { readonly confirm: string }): Promise<ClearResult> {
+    return this.serial(name, async () => {
+      const { paths, info, record } = this.open(name);
+      this.requireOwner(name, info, act, "clear");
+      if (act.confirm !== name) throw new HostError(400, `clearing ${name} needs its name typed exactly as the confirmation; nothing changed`, "confirm_name");
+      const now = await this.presence(name, record);
+      this.refuseChoice(name, "clear", now);
+      const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true);
+      // Previews of the changes that wait end with the app's record; each ends itself anyway.
+      for (const pending of this.pendingChanges(paths, record).pending) await this.previews.drop(previewName(name, pending.change_id), pending.preview_app_id);
+      let spaceHolds = now.runtime.state === "removed";
+      if (spaceHolds && this.opts.space.purge) {
+        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now.
+        if (!(await this.opts.space.purge(name, this.manager.name)) && runtimeFacts(await askApp(this.opts.space, name)).state !== "gone") {
+          throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing was cleared; ${name} is still taken down, with its data.`, "space_refused");
+        }
+        spaceHolds = false;
+      }
+      rmSync(paths.root, { recursive: true, force: true });
+      this.log(`${name}: cleared by ${act.subject}${act.channel ? ` (${act.channel})` : ""}${spaceHolds ? "; PneumaSpace keeps it removed, with its data" : ""}`);
+      return { app: name, cleared: true, deleted: facts.deletes, kept: facts.keeps, space_holds: spaceHolds };
+    });
+  }
+
   /** Files in the working tree that differ from the record's current version. */
   private uncommitted(record: ChangeRecord): string[] {
     const current = record.current();
@@ -2330,7 +2537,24 @@ export class AppHost {
       uncommitted: this.uncommitted(record),
       pending,
       ...(malformed.length ? { malformed_pending: malformed } : {}),
-      space_manager: await readManager(this.opts.space, name, this.manager.name),
+      ...(await this.presenceFields(name, record)),
+    };
+  }
+
+  /** `space_manager`, `runtime`, `taken_down`, `standing`, `choices` and `clearing`, from one answer of PneumaSpace's. */
+  private async presenceFields(name: string, record: ChangeRecord): Promise<Pick<AppStatus, "space_manager" | "runtime" | "taken_down" | "standing" | "choices" | "clearing">> {
+    const answer = await askApp(this.opts.space, name);
+    const history = record.history<HostEntryFields>();
+    const runtime = runtimeFacts(answer);
+    const taken_down = downOf(history);
+    const standing = standingOf(taken_down, runtime);
+    return {
+      space_manager: managerFrom(answer, name, this.manager.name),
+      runtime,
+      taken_down,
+      standing,
+      choices: choicesFor(standing, runtime),
+      clearing: clearingFacts(name, history, runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true),
     };
   }
 
@@ -2343,26 +2567,31 @@ export class AppHost {
     return readdirSync(this.opts.appsDir).filter((name) => existsSync(appPaths(this.opts.appsDir, name).info)).sort();
   }
 
-  /** Every app at a glance, in one call: "how many apps, which versions, anything waiting for me". */
-  summaries(): AppSummary[] {
-    return this.list().map((name) => {
-      try {
-        return this.summary(name);
-      } catch (err) {
-        return { app_id: name, error: err instanceof Error ? err.message : String(err) };
-      }
-    });
+  /**
+   * Every app at a glance, in one call: "how many apps, which versions, anything waiting for me", and whether each is
+   * there: PneumaSpace is asked about each app, all at once.
+   */
+  async summaries(): Promise<AppSummary[]> {
+    return Promise.all(
+      this.list().map(async (name) => {
+        try {
+          return await this.summary(name);
+        } catch (err) {
+          return { app_id: name, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
   }
 
   /** Keyed by the directory name, which is what every command takes; `app.json` sits in the app directory, where an agent can edit it. */
-  private summary(name: string): AppSummary {
+  private async summary(name: string): Promise<AppSummary> {
     const { paths, info, record } = this.open(name);
     const active = record.current();
     const serving = readServingVersion(paths);
     const last = record
       .history<HostEntryFields>()
       // "release" is a recorded version going live later, as it was: without it the summary would stop at the failed attempt.
-      .filter((entry) => entry.kind === "create" || entry.kind === "change" || entry.kind === "decision" || entry.kind === "restore" || entry.kind === "release")
+      .filter((entry) => entry.kind === "create" || entry.kind === "change" || entry.kind === "decision" || entry.kind === "restore" || entry.kind === "release" || (LIFECYCLE_KINDS as readonly string[]).includes(entry.kind))
       .at(-1);
     const { pending, malformed } = this.pendingChanges(paths, record);
     return {
@@ -2392,6 +2621,7 @@ export class AppHost {
       })),
       ...(malformed.length ? { malformed_pending: malformed } : {}),
       uncommitted: this.uncommitted(record),
+      ...(await this.presence(name, record).then(({ runtime, taken_down, standing }) => ({ runtime, taken_down, standing }))),
     };
   }
 
@@ -2434,7 +2664,7 @@ export class AppHost {
       ...(this.opts.hostUrl ? { host_url: this.opts.hostUrl } : {}),
       ...(this.opts.consoleUrl ? { console_url: this.opts.consoleUrl } : {}),
       manager: this.manager.name,
-      summaries: this.summaries(),
+      summaries: await this.summaries(),
       apps,
       generated_at: new Date().toISOString(),
     };
@@ -2470,6 +2700,55 @@ function cannotVouch(record: ChangeRecord, serving: string | null): { readonly w
     if (typeof note === "string" && !note.startsWith(NOT_TOUCHED)) return note.includes("could not be put back") ? { why: note, undoUnfinished: false } : undefined;
   }
   return undefined;
+}
+
+/** The app's standing in a few words, for a refusal. */
+function standingWords(name: string, standing: Standing): string {
+  if (standing === "down") return "the owner took it down";
+  if (standing === "removed_elsewhere") return "it was taken down on PneumaSpace, not through this Host";
+  if (standing === "vanished") return `PneumaSpace has no app named ${name} any more`;
+  return "PneumaSpace did not say";
+}
+
+/**
+ * A release, an approval or an undo writes to the app on PneumaSpace: refused while it is not there to write to. One
+ * that vanished behind this Host's back is never created again by one of them, empty and unannounced: the owner chooses.
+ */
+function refuseNotThere(name: string, act: "submit" | "approval" | "undo", record: ChangeRecord, standing: Standing): void {
+  const nothing = act === "submit" ? "Nothing was checked, recorded or released." : act === "approval" ? "Nothing was approved or released, and the change still waits." : "Nothing changed.";
+  if (standing === "down") {
+    const down = downOf(record.history<HostEntryFields>())!;
+    throw new HostError(
+      409,
+      `${name} is taken down: ${down.by} took it down on ${down.at.slice(0, 10)}. It serves nothing and takes no changes until the owner brings it back. ${nothing} ` +
+        `Ask the owner; they bring it back on the Host's page or with bring-back in a terminal.`,
+      "app_down",
+      undefined,
+      { taken_down_at: down.at, taken_down_by: down.by },
+    );
+  }
+  if (standing === "removed_elsewhere") {
+    throw new HostError(
+      409,
+      `${name} was taken down on PneumaSpace, not through this Host; PneumaSpace keeps its stored data. ${nothing} The owner chooses: bring it back with its data, or clear this Host's record of it.`,
+      "app_removed_elsewhere",
+    );
+  }
+  if (standing === "vanished") {
+    const current = record.current();
+    throw new HostError(
+      409,
+      `PneumaSpace has no app named ${name} any more, and this Host did not take it down, so the data it stored there is gone. A release would only create it again, empty. ${nothing} ` +
+        `The owner chooses: publish it again from ${current ?? "its current version"} (it starts with no stored data), or clear this Host's record of it.`,
+      "app_vanished",
+    );
+  }
+}
+
+/** What clearing `name` would delete and keep, with this Host's runtime and data snapshot capability as they are. */
+export function clearingFacts(name: string, history: readonly HistoryEntry[], runtime: RuntimeFacts, space: Pick<SpaceRuntime, "purge">, snapshotCapability: string | null, copiesApart = false): ClearingFacts {
+  const snapshots = [...new Set(history.map((entry) => entry.data_ref?.ref).filter((ref): ref is string => typeof ref === "string" && ref.length > 0))];
+  return clearingWords(name, runtime, Boolean(space.purge), snapshots, snapshotCapability, copiesApart);
 }
 
 /** The one line status, list and the owner page show while `cannotVouch` holds; undefined otherwise. */

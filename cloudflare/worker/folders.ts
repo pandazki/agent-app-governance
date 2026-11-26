@@ -1,5 +1,5 @@
 import { FOLDER_HEADER, folderKey, PLANS_KEPT, plansKey, summaryKey, TIMING_HEADER, VIEW_SCHEMA, viewKey, type StoredPlans } from "../src/protocol";
-import { putInIndex } from "./apps-index";
+import { dropFromIndex, putInIndex } from "./apps-index";
 
 // ---------------------------------------------------------------------------
 // One operation on one app, as its Durable Object runs it.
@@ -47,6 +47,8 @@ export interface FolderBucket {
   put(key: string, value: ArrayBuffer | string, condition?: { etagMatches?: string; etagDoesNotMatch?: string }): Promise<{ etag: string } | null>;
   /** Every object whose key starts with `prefix`, with its etag. */
   list(prefix: string): Promise<{ key: string; etag: string }[]>;
+  /** Deletes these objects; one that is not there is no error. */
+  delete(keys: readonly string[]): Promise<void>;
 }
 
 /** The Host in the app's container. The caller adds the shared secret. */
@@ -56,7 +58,7 @@ export interface HostPort {
 
 export interface Operation {
   readonly app: string;
-  readonly op: "create" | "read" | "write" | "view" | "warm" | "plan";
+  readonly op: "create" | "read" | "write" | "clear" | "view" | "warm" | "plan";
   readonly method: string;
   /** The Host's route, e.g. /apps/todo/changes. */
   readonly path: string;
@@ -103,6 +105,15 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   }
   const text = await res.text();
   lap("op");
+  // The owner cleared the app: the Host forgot its directory, and its objects go (folder, summary, view, plans, index
+  // entry). Its stored data on PneumaSpace is not this Host's to delete here; the answer says what stays there.
+  if (op.op === "clear" && res.ok) {
+    await host.fetch(`/folder/forget?app=${op.app}`, { method: "POST" });
+    await bucket.delete([key, summaryKey(op.app), viewKey(op.app), plansKey(op.app)]);
+    await dropFromIndex(bucket, op.app);
+    lap("save");
+    return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
+  }
   if (op.op === "view" && res.ok) {
     await bucket.put(viewKey(op.app), text);
     lap("save");

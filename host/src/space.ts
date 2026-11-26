@@ -131,6 +131,25 @@ export interface SpaceRuntime {
    * `manager` names the manager on both writes. Resolves like `discard`. Never throws.
    */
   takeDown(name: string, manager?: string): Promise<boolean>;
+  /**
+   * Take a durable app down and keep it (PneumaSpace's `remove`): its address stops answering, its stored data, its
+   * releases and its name stay. `manager` names the manager on the write. Resolves to whether PneumaSpace holds the app
+   * removed now; false when it refused, did not answer, or has no such app. Never throws.
+   */
+  remove(name: string, manager?: string): Promise<boolean>;
+  /**
+   * Bring a removed app back with the data it kept. `dir` is the version the Host has current: a runtime that brings
+   * an app back by publishing it again (the local gateway registers a removed app again on a publish, with its data)
+   * publishes it; one with an action for it (the Cloudflare plane's `resume`) leaves it. Resolves like `remove`.
+   */
+  resume(name: string, options: { readonly dir: string; readonly manager?: SpaceManager }): Promise<boolean>;
+  /**
+   * A capability, present only where this Host may delete an app's stored data for good: purge a removed app
+   * (PneumaSpace's `purge`). The Cloudflare plane gives tokens no purge authority, on purpose, so its runtime has none,
+   * and clearing an app there leaves the app removed on PneumaSpace for its owner to purge. Resolves to whether the app
+   * is gone from PneumaSpace now. Never throws.
+   */
+  readonly purge?: (name: string, manager?: string) => Promise<boolean>;
   /** Where each of the app's bindings keeps its data. Throws when the platform has no such app or does not answer. */
   state(name: string): Promise<SpaceState>;
   /**
@@ -167,16 +186,30 @@ export interface ManagerState {
   readonly note: string;
 }
 
+/** PneumaSpace's answer about one app: what `SpaceRuntime.app` resolved to, or the error it threw. Never throws. */
+export async function askApp(space: SpaceRuntime, app: string): Promise<{ readonly app: SpaceApp | null } | { readonly error: unknown }> {
+  try {
+    return { app: await space.app(app) };
+  } catch (error) {
+    return { error };
+  }
+}
+
 /** Ask PneumaSpace who manages `app`, and say it as `ours` would. Never throws. */
 export async function readManager(space: SpaceRuntime, app: string, ours: string): Promise<ManagerState> {
-  let listed: SpaceApp | null;
-  try {
-    listed = await space.app(app);
-  } catch (err) {
+  return managerFrom(await askApp(space, app), app, ours);
+}
+
+/** Who manages `app`, from PneumaSpace's answer (`askApp`), said as `ours` would. */
+export function managerFrom(answer: { readonly app: SpaceApp | null } | { readonly error: unknown }, app: string, ours: string): ManagerState {
+  if ("error" in answer) {
+    const err = answer.error;
     return { state: "unknown", name: null, note: `PneumaSpace did not answer (${err instanceof Error ? err.message : String(err)}), so who manages ${app} there is unknown` };
   }
+  const listed = answer.app;
   const manager = listed?.manager;
-  if (!listed) return { state: "absent", name: null, note: `PneumaSpace has no app named ${app}; the next release or undo publishes it again` };
+  // An older CLI prints this line as it is: it says the whole fact on its own.
+  if (!listed) return { state: "absent", name: null, note: `PneumaSpace has no app named ${app}, so the data it stored is gone with it; a release or undo is refused until the owner publishes it again or clears it` };
   if (!manager) return { state: "unmanaged", name: null, note: `not marked as managed on PneumaSpace; the next release or undo through this Host marks it as managed by ${ours}` };
   if (manager.name === ours) return { state: "this_host", name: ours, note: `managed on PneumaSpace by this Host (${ours}); a write to it there that does not name this Host is refused` };
   return {
@@ -215,11 +248,11 @@ export class Space implements SpaceRuntime {
     });
   }
 
-  private async admin(method: string, path: string, manager?: string): Promise<Response> {
+  private async admin(method: string, path: string, manager?: string, timeoutMs = 30_000): Promise<Response> {
     return fetch(`${this.opts.adminUrl.replace(/\/$/, "")}${path}`, {
       method,
       headers: { ...(this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {}), ...(manager ? { [MANAGER_HEADER]: manager } : {}) },
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -292,6 +325,34 @@ export class Space implements SpaceRuntime {
       return false;
     }
   }
+
+  async remove(name: string, manager?: string): Promise<boolean> {
+    try {
+      // Removing an app that is removed already answers 200 too.
+      return (await this.admin("POST", `/api/apps/${encodeURIComponent(name)}/remove`, manager)).ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The local gateway has no resume: a publish registers a removed app again, with the same id and the data it kept. */
+  async resume(name: string, options: { readonly dir: string; readonly manager?: SpaceManager }): Promise<boolean> {
+    const published = await this.publish(name, options.dir, options.manager ? { manager: options.manager } : {});
+    return published.code === 0;
+  }
+
+  /**
+   * The admin token may purge here (it already ends what a failed create left). Only a removed app can be purged. The
+   * gateway answers once the app's storage is destroyed, which took 36 s on a trial stack with key-value data.
+   */
+  readonly purge = async (name: string, manager?: string): Promise<boolean> => {
+    try {
+      const res = await this.admin("POST", `/api/apps/${encodeURIComponent(name)}/purge`, manager, 180_000);
+      return res.ok || res.status === 404;
+    } catch {
+      return false;
+    }
+  };
 
   async state(name: string): Promise<SpaceState> {
     const path = `/api/apps/${encodeURIComponent(name)}/state`;

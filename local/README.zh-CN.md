@@ -123,6 +123,25 @@ node .appgov/appgov.mjs undo --to v2 "原因" # 直接退回到更早的某个�
 
 **单向改动**是指放回旧代码也撤销不了的改动，比如删掉一列。在 `personal` 和 `review-all` 模式下由规则标出（默认就是上面 `personal` 一行列出的那些 SQL，以及去掉一项存放数据的能力）。不管哪种模式，agent 也可以自己标出：提交时加 `--one-way "<会丢失什么>"`。应用的 `AGENTS.md` 要求它，只要改动会删除或改写应用已经存下的数据（不论存在哪种存储里），就这样做。规则定下一个改动至少要过哪一关，agent 只能往上加，不能往下减：在 `personal` 和 `review-all` 模式下，agent 标出的改动即使规则什么也没发现也会等你决定，它的原话会作为 agent 自己的声明给你看，和规则发现的东西分开。不管哪种模式，越过单向改动往回退都会被拒绝，直到你确认：在你的终端里运行 `node .appgov/appgov.mjs undo --accept-one-way "原因"`（它会要你输入 `accept`），或者在应用页面上确认。除非 PostgreSQL 那项设置事先存了数据副本，否则回去的只有代码，旧版本可能读不了现在的数据。
 
+## 收起、恢复或清除应用
+
+每次你运行 `status` 或 `list`、打开应用页面，或者有改动被提交、批准或回退时，Host 都会问 PneumaSpace 这个应用还在不在。不在的时候，`status`、`list` 和页面会先说明这一点：是你收起了它，是它在 PneumaSpace 上被收起了（比如在控制台里），是 PneumaSpace 上已经没有它了，还是 PneumaSpace 没有回应。应用被收起或不见了的时候，提交、批准等待中的改动和回退都会被拒绝，也不会有任何东西自动把它重新建出来。
+
+这些事由你来做，在你自己的终端里。每条命令都会先说明要做什么，再要你输入命令名（`clear` 要输入应用名）；应用名后面的话是你的理由，历史会记下来。
+
+```sh
+node bin/appgov.mjs take-down todo "原因"   # 收起：停止服务；这里的历史和 PneumaSpace 上存储的数据都保留
+node bin/appgov.mjs bring-back todo         # 恢复：重新提供服务，带着 PneumaSpace 保留的数据
+node bin/appgov.mjs publish-again todo      # 重新发布：只在 PneumaSpace 上已经没有它时可用，重新创建，没有存储的数据
+node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不提供服务时可用
+```
+
+应用被收起期间，agent 的 `submit` 会被拒绝，并用一句话说明是你收起了它。`clear` 只对不提供服务的应用有效，所以正在服务的应用要先收起。它会删掉应用目录 `apps/<name>/`（源码、每一个版本、历史和等待中的改动）；在这个版本上，它还会在 PneumaSpace 上彻底删除（purge）这个应用和它存储的全部数据。这无法撤销。PostgreSQL 那项设置做的数据快照不会被删掉，确认时会列出它们的名字。
+
+如果一个应用在 Host 不知情的情况下在 PneumaSpace 上被移除并彻底删除，`status` 和页面会说它不在 PneumaSpace 上，它存储的数据已经不在了。由你选择：重新发布（没有任何存储的数据），或者清除。
+
+在从主人链接打开的应用页面上，同样的操作在应用页面底部、和应用详情放在一起的"收起或清除"里；应用不在的时候，这一栏默认展开。你收起的应用单独放在应用列表下方一个折叠起来的区域里。路由和拒绝原因见[参考文档](./docs/reference.zh-CN.md#收起和清除应用)。
+
 ## 看起来不对劲时
 
 | 你看到的 | 意思 | 怎么办 |
@@ -132,6 +151,7 @@ node .appgov/appgov.mjs undo --to v2 "原因" # 直接退回到更早的某个�
 | `recorded vN, but it did not go live`，或 `status` 显示 `the address serves vM, not vN` | `record` 模式：第 N 版已经记录，地址上跑的仍是第 M 版。 | 修好原因再提交（没有新编辑时，第 N 版会原样发布），或者回退。 |
 | `the Host cannot vouch for what the address serves` | Host 不知道地址上跑的是哪个版本：要么发布或回退失败后，没能把地址放回去；要么回退已经发出去，却没能记进历史。 | 照那一行说的做。第一种情况，下一次有应答的发布或回退就会把它理清。第二种情况，在你运行 `undo` 之前，提交和批准都会被拒绝。 |
 | `undo` 拒绝执行，提示往回退会越过一个 "that putting files back cannot undo" 的改动 | 中间隔着一个单向改动。 | 由你决定：在终端里运行 `undo --accept-one-way "原因"`，或者在页面上回退。 |
+| `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere` 或 `app_vanished` | 应用被收起了（被你，或者在 PneumaSpace 上），或者 PneumaSpace 上已经没有它了。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
 | `cannot reach the Host at ...` | Host 没在运行，或者在另一个地址上。 | 在 `local/` 里运行 `docker compose ps`。如果在别的地址，加上 `--host <url>`。 |
 
 ## 东西存在哪里
@@ -158,4 +178,4 @@ Docker 会在每个卷名前面加上 compose 项目名，比如 `agent-app-gove
 - `screenshot` 服务给应用拍截图时，应用的脚本（包括预览的脚本）仍然能向 compose 网络里的其他服务发请求。要关掉截图，在 `.env` 里写上 `APPGOV_SCREENSHOT_CDP=`。
 - 实际跑过的：在这份代码较早的一个版本上，在 macOS 上用 colima 和 Docker Desktop 跑过真实的 Claude Code 和 Codex 会话（改应用并提交）、等主人决定后被批准或拒绝的改动、越过单向改动的回退，以及 PostgreSQL 数据快照。在这份代码上：跑过离线测试，以及在 macOS 上用 colima 完成的一次创建、一次脚本化改动和一次回退。没跑过的：整台 Linux 机器、多用户、托管运行。
 
-[docs/reference.zh-CN.md](./docs/reference.zh-CN.md) 里有 CLI、各模式和每项记录下来的保证是什么意思、风险规则、单向改动与回退、PostgreSQL 那项设置、由 Host 启动 Claude Code 或 Codex（`bun run drive`）、和其他服务并排运行，以及测试。
+[docs/reference.zh-CN.md](./docs/reference.zh-CN.md) 里有 CLI、各模式和每项记录下来的保证是什么意思、风险规则、单向改动与回退、收起和清除应用、PostgreSQL 那项设置、由 Host 启动 Claude Code 或 Codex（`bun run drive`）、和其他服务并排运行，以及测试。

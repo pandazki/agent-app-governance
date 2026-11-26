@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { planeListing, RUNTIME_KEY } from "./runtime-check";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
 import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
 import { APP_HEADER, CHANNEL_HEADER, folderKey, plansKey, SECRET_HEADER, viewKey } from "../src/protocol";
@@ -104,6 +105,11 @@ export default {
         folderEtag: async (app) => (await env.FOLDERS.head(folderKey(app)))?.etag ?? null,
       },
       waitUntil: (work) => ctx.waitUntil(work),
+      runtime: {
+        read: async () => (await env.FOLDERS.get(RUNTIME_KEY))?.json() ?? null,
+        list: () => planeListing(env.APPGOV_SPACE_ORIGIN, env.APPGOV_SPACE_TOKEN),
+        write: async (listing) => void (await env.FOLDERS.put(RUNTIME_KEY, JSON.stringify(listing))),
+      },
     });
   },
 } satisfies ExportedHandler<Env>;
@@ -128,6 +134,9 @@ function r2(bucket: R2Bucket): FolderBucket {
         cursor = page.truncated ? page.cursor : undefined;
       } while (cursor);
       return out;
+    },
+    delete: async (keys) => {
+      await bucket.delete([...keys]);
     },
   };
 }
@@ -220,7 +229,7 @@ export class AppHostObject extends DurableObject<Env> {
       const worker = this.env.WORKER_VERSION ? { version: this.env.WORKER_VERSION.id.slice(0, 8), uploaded: this.env.WORKER_VERSION.timestamp } : null;
       return json({ app, running: container.running, image, build, worker });
     }
-    if (op !== "create" && op !== "read" && op !== "write" && op !== "view" && op !== "warm" && op !== "plan") return json({ error: "unknown operation", reason: "bad_op" }, 400);
+    if (op !== "create" && op !== "read" && op !== "write" && op !== "clear" && op !== "view" && op !== "warm" && op !== "plan") return json({ error: "unknown operation", reason: "bad_op" }, 400);
     const timing: Record<string, number> = {};
     try {
       timing.container = await this.ensure(request.headers.get(ORIGIN_HEADER) ?? "");

@@ -407,3 +407,43 @@ describe("a decision on the page leaves the record the CLI leaves, and says it c
     expect(existsSync(join(run.work, "apps", "notes"))).toBe(true);
   });
 });
+
+describe("taking an app down and clearing it, from the page and the API", () => {
+  const fromCli = { "content-type": "application/json" };
+
+  test("only the owner: the page needs the owner link, the API refuses any other subject", async () => {
+    const run = await start();
+    await run.host.create("notes");
+    expect(await send(run, "POST", "/owner/apps/notes/take-down", { ...fromPage(run), [OWNER_HEADER]: "" }, "{}")).toMatchObject({ status: 403, data: { reason: "owner_link_required" } });
+    expect(await send(run, "POST", "/apps/notes/take-down", fromCli, JSON.stringify({ subject: "agent:codex" }))).toMatchObject({ status: 403, data: { reason: "owner_required" } });
+    expect(run.space.live.get("notes")!.status).toBe("registered");
+  });
+
+  test("down from the page and back through the API, each recorded with who and through what; an agent's submit is refused meanwhile", async () => {
+    const run = await start();
+    await run.host.create("notes");
+    const down = await send(run, "POST", "/owner/apps/notes/take-down", fromPage(run), JSON.stringify({ reason: "on holiday" }));
+    expect(down).toMatchObject({ status: 200, data: { standing: "down" } });
+    expect(history(run, "notes").at(-1)).toMatchObject({ kind: "take_down", intent: "Take notes down: on holiday", agent: "user:me", channel: PAGE_CHANNEL, control: "owner" });
+    expect(run.space.live.get("notes")!.status).toBe("removed");
+    edit(run, "notes", "src/a.ts", "export const a = 1;\n");
+    expect(await send(run, "POST", "/apps/notes/changes", fromCli, JSON.stringify({ intent: "a", agent: "codex" }))).toMatchObject({ status: 409, data: { reason: "app_down" } });
+    expect(await send(run, "POST", "/apps/notes/bring-back", fromCli, JSON.stringify({ subject: "user:me" }))).toMatchObject({ status: 200, data: { standing: "running" } });
+    expect(history(run, "notes").at(-1)).toMatchObject({ kind: "bring_back", agent: "user:me" });
+    expect(history(run, "notes").at(-1)!.channel).toBeUndefined();
+    expect(await send(run, "POST", "/apps/notes/changes", fromCli, JSON.stringify({ intent: "a", agent: "codex" }))).toMatchObject({ status: 200, data: { status: "published" } });
+  });
+
+  test("clearing from the page wants the name and a taken-down app; here it purges the app on PneumaSpace too", async () => {
+    const run = await start();
+    await run.host.create("notes");
+    expect(await send(run, "POST", "/owner/apps/notes/clear", fromPage(run), JSON.stringify({ confirm: "notes" }))).toMatchObject({ status: 409, data: { reason: "clear_running" } });
+    await send(run, "POST", "/owner/apps/notes/take-down", fromPage(run), "{}");
+    expect(await send(run, "POST", "/owner/apps/notes/clear", fromPage(run), "{}")).toMatchObject({ status: 400, data: { reason: "confirm_name" } });
+    const cleared = await send(run, "POST", "/owner/apps/notes/clear", fromPage(run), JSON.stringify({ confirm: "notes" }));
+    expect(cleared).toMatchObject({ status: 200, data: { cleared: true, space_holds: false } });
+    expect(existsSync(join(run.work, "apps", "notes"))).toBe(false);
+    expect(run.space.live.has("notes")).toBe(false);
+    expect((await send(run, "GET", "/apps", {})).data).toMatchObject({ apps: [] });
+  });
+});

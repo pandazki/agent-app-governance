@@ -371,6 +371,51 @@ export function Copy({ text }: { text: string }) {
   );
 }
 
+/**
+ * The page's one-line text field, as the sign-in screen asks for the owner key: also where a confirmation asks for a
+ * typed name. Monospace for what is typed exactly; the placeholder in the page's own font.
+ */
+export function TextField({
+  value,
+  onChange,
+  label,
+  placeholder,
+  type = "text",
+  name,
+  autoComplete = "off",
+  autoFocus = false,
+  disabled = false,
+  maxLength,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  placeholder?: string;
+  type?: "text" | "password";
+  name?: string;
+  autoComplete?: string;
+  autoFocus?: boolean;
+  disabled?: boolean;
+  maxLength?: number;
+}) {
+  return (
+    <input
+      type={type}
+      {...(name ? { name } : {})}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      autoComplete={autoComplete}
+      autoFocus={autoFocus}
+      spellCheck={false}
+      aria-label={label}
+      placeholder={placeholder ?? label}
+      disabled={disabled}
+      {...(maxLength ? { maxLength } : {})}
+      className="h-9 w-full rounded-control bg-field px-3 font-mono text-[12.5px] text-ink shadow-inset-field outline-none placeholder:font-sans placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60"
+    />
+  );
+}
+
 export function HintCard({ hint, title }: { hint: Hint; title?: string }) {
   return (
     <div className="w-full overflow-hidden rounded-card bg-surface shadow-card">

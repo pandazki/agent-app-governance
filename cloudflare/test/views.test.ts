@@ -100,7 +100,8 @@ async function until(check: () => boolean, ms = 30_000) {
   throw new Error("timed out");
 }
 /** The page model without what differs between two requests of the same view: the server's clock and the session's token. */
-const comparable = (model: PageModel) => JSON.stringify({ ...model, now: 0, access: null });
+// When PneumaSpace was asked is each view's own moment: the stored one was computed a moment before the other.
+const comparable = (model: PageModel) => JSON.stringify({ ...model, now: 0, access: null, ...("checked" in model ? { checked: null } : {}) }).replace(/\(asked [^)]*\)/g, "(asked)");
 
 beforeAll(async () => {
   stack = await startStack({
@@ -199,7 +200,9 @@ describe("reads from the stored view", () => {
       const { timing: _timing, ...rest } = (await (await stack.containerRead("notes", path)).json()) as Record<string, unknown>;
       return rest;
     };
-    expect(view.status).toEqual(await answer("/apps/notes"));
+    // What PneumaSpace said is the same; when it was asked is each one's own moment.
+    const asked = (status: Record<string, unknown>) => ({ ...status, runtime: { ...(status.runtime as object), checked_at: "(asked)" } });
+    expect(asked(view.status)).toEqual(asked(await answer("/apps/notes")));
     expect({ history: view.history } as Record<string, unknown>).toEqual(await answer("/apps/notes/history"));
     // The plan as the route answers it, but for the entries it reads beside it: the view's own history holds them all.
     const { entries, ...plan } = await answer("/apps/notes/undo-plan/v1");
@@ -304,8 +307,9 @@ describe("reads from the stored view", () => {
   test("a read says in Server-Timing where its time went in the Worker; the sign-in view says nothing", async () => {
     const steps = (header: string | null) => (header ?? "").split(", ").map((entry) => entry.split(";")[0]);
     const viewed = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
-    // The view is read beside the summaries (the listing and the index side by side), so the steps come in either order.
-    expect(steps(viewed.headers.get("server-timing")).sort()).toEqual(["r2-head", "r2-index", "r2-list", "r2-view", "source", "summaries"]);
+    // The view is read beside the summaries (the listing and the index side by side) and the kept listing of PneumaSpace
+    // (`runtime`), so the steps come in any order.
+    expect(steps(viewed.headers.get("server-timing")).sort()).toEqual(["r2-head", "r2-index", "r2-list", "r2-view", "runtime", "source", "summaries"]);
     expect(viewed.headers.get("server-timing")).toMatch(/source;desc="stored"$/);
     const token = String(JSON.parse(readFileSync(join(apps(), ".appgov", "centre.json"), "utf8")).token);
     const read = await fetch(`${stack.url}/apps/notes/history`, { headers: { authorization: `Bearer ${token}` } });

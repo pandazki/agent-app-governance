@@ -21,6 +21,7 @@ function slow(bucket: MemoryBucket): FolderBucket {
     get: (key) => around(() => bucket.get(key)),
     put: (key, value, condition) => around(() => bucket.put(key, value, condition)),
     list: (prefix) => around(() => bucket.list(prefix)),
+    delete: (keys) => around(() => bucket.delete(keys)),
   };
 }
 

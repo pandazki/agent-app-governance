@@ -145,6 +145,9 @@ export class FakePlane {
         if (app.expiresAt === null) return this.error(409, "discard", "Only ephemeral applications can be discarded.");
         app.status = "purged";
       } else if (type === "remove") app.status = "removed";
+      else if (type === "resume") {
+        if (app.status === "removed") app.status = app.current ? "registered" : "draft";
+      } else if (type === "purge") return this.error(403, "forbidden", "Tokens cannot purge; the owner purges in the console.");
       else if (type === "sleep") app.awake = false;
       else return this.error(400, "action", "Unknown application action.");
       return Response.json(this.detail(app));
@@ -168,6 +171,17 @@ export class FakePlane {
     app.awake = true;
     if (path === "" && release.files["public/index.html"] !== undefined) return new Response(release.files["public/index.html"], { headers: { "content-type": "text/html", "server-timing": "static;dur=1" } });
     return Response.json({ error: "Not found" }, { status: 404, headers: { "server-timing": "app;dur=3" } });
+  }
+
+  /** What the PneumaSpace owner does in the console behind the Host's back: remove and purge the app, data and all. */
+  vanish(name: string): void {
+    const app = this.live().find((a) => a.name === name);
+    if (app) app.status = "purged";
+  }
+
+  /** The app named `name` as the plane holds it now, in any status but purged. */
+  find(name: string): FakeApp | undefined {
+    return this.live().find((a) => a.name === name);
   }
 
   /** The files the app named `name` serves now. */

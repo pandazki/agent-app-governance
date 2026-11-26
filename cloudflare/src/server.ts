@@ -113,6 +113,14 @@ function planEntries(history: readonly Entry[], plan: { from: string | null; tar
 }
 
 /** How the record names the credential a request was authenticated with. */
+/** The owner's acts on whether an app is there, by the word their route ends in, with what the refusal calls each. */
+const LIFECYCLE: Readonly<Record<string, string>> = {
+  "take-down": "Taking an app down",
+  "bring-back": "Bringing an app back",
+  "publish-again": "Publishing an app again",
+  clear: "Clearing an app",
+};
+
 export function credentialOf(principal: Principal): string {
   return principal.kind === "owner" ? "owner session" : `agent token ${JSON.stringify(principal.label)} (${principal.id})`;
 }
@@ -269,7 +277,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
       return tar ? { status: 200, type: "application/x-tar", body: Buffer.from(tar) } : { status: 204, type: "text/plain", body: "" };
     }
     if (url.pathname === "/folder/summary" && method === "GET") {
-      const summary = host.summaries().find((s) => s.app_id === name);
+      const summary = (await host.summaries()).find((s) => s.app_id === name);
       return summary ? { status: 200, type: "application/json", body: JSON.stringify(summary) } : { status: 404, type: "application/json", body: JSON.stringify({ error: `no app named ${name}` }) };
     }
     if ((url.pathname === "/folder/view" || url.pathname === "/folder/check" || url.pathname === "/folder/plan") && method === "GET") {
@@ -394,6 +402,22 @@ export function createContainerServer(opts: ContainerServerOptions) {
       if (parts[2] === "discard") {
         checkBase(name, input.base_version);
         return withCopy(name, await host.discard(name));
+      }
+      // Whether the app is there: the owner's, with the owner session (the Worker refuses agent tokens before this, too).
+      if (LIFECYCLE[parts[2]!]) {
+        requireOwner(principal, LIFECYCLE[parts[2]!]!);
+        const act = {
+          subject: subjectOf(principal),
+          credential: credentialOf(principal),
+          ...(channelOf(req) ? { channel: channelOf(req) } : {}),
+          ...(typeof input.reason === "string" && input.reason.trim() ? { reason: input.reason.trim().slice(0, 500) } : {}),
+        };
+        if (parts[2] === "take-down") return host.takeDown(name, act);
+        if (parts[2] === "bring-back") return host.bringBack(name, act);
+        if (parts[2] === "publish-again") return host.publishAgain(name, act);
+        const cleared = await host.clear(name, { ...act, confirm: typeof input.confirm === "string" ? input.confirm : "" });
+        loaded.delete(name);
+        return cleared;
       }
     }
     if (parts.length === 5 && method === "POST" && parts[2] === "changes" && parts[4] === "preview") return host.preview(name, parts[3]!);

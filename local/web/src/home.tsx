@@ -3,6 +3,8 @@ import { EntityChip } from "../beautifui/atoms/EntityChip";
 import { ValuePill } from "../beautifui/atoms/ValuePill";
 import { Meter } from "../beautifui/primitives/Recommendation";
 import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
+import { Collapsible } from "../beautifui/primitives/ToolChips";
+import { CheckedLine } from "./life-view";
 import { Section, Surface } from "../beautifui/site";
 import { fill, hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
@@ -139,8 +141,26 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
           ) : (
             <EmptyState title={ui.empty_title} body={ui.empty_body} />
           )}
+          {model.checked && (
+            <div className="pt-3">
+              <CheckedLine checked={model.checked} />
+            </div>
+          )}
         </Surface>
       </Section>
+      {model.down.cards.length > 0 && (
+        <Section number={number()} title={ui.down_title} note={String(model.down.cards.length)} index={3}>
+          <Surface>
+            <Collapsible label={model.down.show}>
+              <div className="grid gap-3 pt-1 sm:grid-cols-2 lg:grid-cols-3">
+                {model.down.cards.map((app, i) => (
+                  <AppTile key={app.name} app={app} index={i} />
+                ))}
+              </div>
+            </Collapsible>
+          </Surface>
+        </Section>
+      )}
       <Section number={number()} title={ui.hint_title} index={3}>
         <Surface>
           <div className="mx-auto max-w-[560px]">

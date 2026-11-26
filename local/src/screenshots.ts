@@ -313,7 +313,7 @@ interface PictureIndex {
 
 /** What the keeper reads from the Host. `AppHost` has both. */
 export interface PictureSource {
-  summaries(): AppSummary[];
+  summaries(): Promise<AppSummary[]>;
   status(name: string): Promise<AppStatus>;
   history(name: string): HistoryEntry[];
 }
@@ -426,13 +426,15 @@ export class ScreenshotKeeper {
 
   private async pass(): Promise<void> {
     const shooter = this.opts.shooter!;
-    const summaries = this.opts.source.summaries();
+    const summaries = await this.opts.source.summaries();
     const listed = new Set<string>();
     for (const summary of summaries) {
       const name = summary.app_id;
       if (!APP_NAME.test(name)) continue;
       listed.add(name);
       if ("error" in summary) continue;
+      // An app PneumaSpace does not serve has nothing to take a picture of; the last one stays.
+      if (summary.standing !== "running" && summary.standing !== "unconfirmed") continue;
       const wanted: Want[] = [];
       // What the address serves, when the Host saw it answer: a version that went live, or that undo landed on.
       if (summary.serving_version && !summary.serving_uncertain && KEY.test(summary.serving_version)) {
