@@ -121,21 +121,30 @@ export class AuthRecords implements AuthStore {
     return true;
   }
 
-  /** Take the code: once. It is gone after this call whatever it finds, and a code past its time gives nothing. */
-  async takeCode(hash: string, now: number): Promise<StoredCode | null> {
-    const code = this.kv.get<StoredCode>(`code:${hash}`);
-    if (!code) return null;
-    this.kv.delete(`code:${hash}`);
-    if (code.expires_at <= now) return null;
+  /**
+   * Trade a code for an agent token, in one step: whether `where` may try at all (fewer than `allowed` wrong codes in
+   * these ten minutes), taking the code (once: it is gone whatever this finds), counting a wrong one, and keeping the
+   * token, named as the code's connection. Nothing else runs in between, so a burst of requests cannot pass the count
+   * together, and a code taken always becomes a token. `hash` is null for what cannot be a code at all.
+   */
+  async tradeCode(hash: string | null, where: string, now: number, allowed: number, tokenHash: string, token: Omit<StoredToken, "label">): Promise<{ token: StoredToken } | { refused: "too_many_attempts" | "bad_code" }> {
+    const slot = Math.floor(now / 600_000);
+    const name = `login:${where}`;
+    const kept = this.kv.get<{ slot: number; count: number }>(name);
+    const count = kept && kept.slot === slot ? kept.count : 0;
+    if (count >= allowed) return { refused: "too_many_attempts" };
+    const code = hash ? this.kv.get<StoredCode>(`code:${hash}`) : undefined;
+    if (hash && code) this.kv.delete(`code:${hash}`);
+    if (!code || code.expires_at <= now) {
+      this.kv.put(name, { slot, count: count + 1 });
+      return { refused: "bad_code" };
+    }
+    const made: StoredToken = { ...token, label: code.label };
+    this.kv.put(`token:${tokenHash}`, made);
+    this.kv.put(`token-id:${made.id}`, tokenHash);
     const fate = this.kv.get<CodeFate>(`code-id:${code.id}`);
-    if (fate) this.kv.put<CodeFate>(`code-id:${code.id}`, { ...fate, state: "used" });
-    return code;
-  }
-
-  /** The token a used code became: noted so the page that made the code can say which connection it is. */
-  async noteCodeToken(id: string, tokenId: string): Promise<void> {
-    const fate = this.kv.get<CodeFate>(`code-id:${id}`);
-    if (fate) this.kv.put<CodeFate>(`code-id:${id}`, { ...fate, token_id: tokenId });
+    if (fate) this.kv.put<CodeFate>(`code-id:${code.id}`, { ...fate, state: "used", token_id: made.id });
+    return { token: made };
   }
 
   async codeState(id: string, now: number): Promise<CodeState> {
@@ -146,12 +155,12 @@ export class AuthRecords implements AuthStore {
     return { state: "waiting", expires_at: fate.expires_at };
   }
 
-  /** The owner closed the code before it was used: it can no longer be taken. */
+  /** The owner closed the code before it was used: it can no longer be taken. False when it was not waiting. */
   async dropCode(id: string): Promise<boolean> {
     const fate = this.kv.get<CodeFate>(`code-id:${id}`);
-    if (!fate) return false;
+    if (!fate || fate.state !== "waiting") return false;
     this.kv.delete(`code:${fate.hash}`);
-    if (fate.state === "waiting") this.kv.put<CodeFate>(`code-id:${id}`, { ...fate, state: "cancelled" });
+    this.kv.put<CodeFate>(`code-id:${id}`, { ...fate, state: "cancelled" });
     return true;
   }
 }

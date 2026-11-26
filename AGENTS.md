@@ -6,7 +6,8 @@ This file is for a coding agent that a person asked to install or set up this pr
 
 - **Secrets stay where they are.** Never print, `cat`, copy, paste into the chat or read back to the person a key, a token, an owner link, a session, or the contents of any file under `~/.appgov/` or `~/.pneuma-space/`, or of a `.appgov/centre.json`. When the person needs one, tell them which file it is in, and let them open it.
 - **Touch only what you start.** Never stop, remove, restart or reconfigure a container, volume, network, compose project, Worker, bucket, database or DNS record that you did not create in this session. When a default name or port is taken, choose another as described below.
-- **When a step fails, stop.** Report the exact command and its whole output to the person. Do not work around it by editing files in this repository, and do not try other commands that change things.
+- **When a step fails, stop.** Report the exact command and its whole output to the person. Do not work around it by editing files in this repository, and do not try other commands that change things. To look at the Host's log for the cause, leave out the owner link's line: `docker compose logs host | grep -v "owner link"`.
+- **Long steps.** The first `docker compose up --build` and both Cloudflare installers take many minutes, longer than a tool's default command timeout. Run each with a timeout of at least 30 minutes, or in the background, and wait until it ends; never start a second copy while one runs.
 - The commands are for macOS or Linux, in bash or zsh, run from the repository's root unless a step says `cd`.
 
 ## 0. Which edition
@@ -37,8 +38,8 @@ cd agent-app-governance
 | Compose | `docker compose version --short` | 2.17 or newer | Older Compose cannot build the Host's image (it uses `additional_contexts`). Ask the person to update Docker. |
 | Node.js | `node --version` | v24 or newer | Ask the person to install Node.js 24. The apps' tests need it. |
 | git | `git --version` | A version | Ask the person to install git. |
-| Free ports | `lsof -nP -iTCP:8080 -iTCP:8081 -iTCP:9000 -iTCP:8090 -sTCP:LISTEN` (on Linux without lsof: `ss -ltn`) | Nothing listening on 8080, 8081, 9000 or 8090 | A port is taken: choose others, below. |
-| Compose project name | `docker ps -a --filter label=com.docker.compose.project=agent-app-governance --format '{{.Names}}'` | No output | Another stack uses the name, unless it is this same clone's earlier install (`docker compose ps` in `local/` lists it): then just go on. Otherwise choose another name, below. |
+| Free ports | macOS: `lsof -nP -iTCP:8080 -iTCP:8081 -iTCP:9000 -iTCP:8090 -sTCP:LISTEN`. Linux: `ss -ltn` (it also sees ports that Docker holds for other containers, which `lsof` as a normal user does not) | Nothing listening on 8080, 8081, 9000 or 8090 | A port is taken: choose others, below. |
+| Compose project name | `docker ps -a --filter label=com.docker.compose.project=agent-app-governance --format '{{.Label "com.docker.compose.project.working_dir"}}'` | No output, or lines that all name this clone's `local/` folder (an earlier install from here: go on) | Another folder's stack uses the name: choose another name, below. Starting this one under the same name would replace that stack's containers. |
 | Docker network name | `docker network ls --filter name=^agent-app-governance$ --format '{{.Name}}'` | No output, or the earlier install of this clone | Taken by something else: choose another name, below. |
 
 ### When a default port or name is taken
@@ -67,7 +68,7 @@ The first build takes several minutes: it builds PneumaSpace and the Host from s
 
 ### Check it worked, without the person
 
-From `local/`. Use the port from `.env` if you changed it.
+From `local/`. Use the ports from `.env` if you changed them.
 
 ```sh
 docker compose ps --format '{{.Service}} {{.State}}'          # six services, each "running"
@@ -114,21 +115,19 @@ You cannot do these: each needs the person's own Cloudflare sign-in or choice. A
 | Bun | `bun --version` | A version | The Host's installer builds the apps page with Bun. Ask the person to install it from https://bun.sh. |
 | Wrangler signed in | `(cd cloudflare && npm ci && npx wrangler whoami)` | "You are logged in", and the account | Stop point 1. |
 | PneumaSpace already there | `ls ~/.pneuma-space/hosts/*/owner.json` (names only; never open them) | No such file, or a file the person confirms is theirs to use | If one exists, ask whether to use that deployment instead of installing a new one. |
+| A Host already installed from this computer | `ls ~/.appgov/hosts/*/owner.json` (names only; never open them) | No such file | Each folder name there is a prefix the installer used. Ask whether to update that Host (run the installer with its prefix) or install another one (a new prefix). Never reuse a prefix without asking: the installer would redeploy that Host. |
 
 ### Install PneumaSpace (skip when the person has a deployment to use)
 
-From this repository's root, so that PneumaSpace lands next to it, not inside it:
+From this repository's root. PneumaSpace goes next to it, not inside it; if your sandbox does not let you write outside the current folder, ask the person to allow it.
 
 ```sh
-cd ..
-git clone https://github.com/pandazki/pneuma-space.git
-cd pneuma-space
-(cd cf && npm ci)
-node cf/scripts/install.mjs <space domain> --prefix <prefix>
-cd -    # back to this repository
+git clone https://github.com/pandazki/pneuma-space.git ../pneuma-space
+(cd ../pneuma-space/cf && npm ci)
+(cd ../pneuma-space && node cf/scripts/install.mjs <space domain> --prefix <prefix>)
 ```
 
-`<space domain>` is the person's answer to stop point 3, for example `space.example.com`. `<prefix>` names the Worker, its database and buckets, for example `space-example`; if the installer says a name is taken, choose another prefix, never remove what has it. The first run stops for stop point 4; run the same command again once the token is saved. It ends with the console's address and the owner credentials file, `~/.pneuma-space/hosts/<space domain>/owner.json`.
+`<space domain>` is the person's answer to stop point 3, for example `space.example.com`. `<prefix>` names the Worker, its database and buckets, for example `space-example`; if the installer says a name is taken, choose another prefix, never remove what has it. The first run stops for stop point 4; run the last line again, as it is, once the token is saved. It ends with the console's address and the owner credentials file, `~/.pneuma-space/hosts/<space domain>/owner.json`.
 
 ### Install the Host
 
@@ -159,7 +158,7 @@ The installer has already checked that the owner key signs in.
 > It is installed. Your apps page is `<host>`
 >
 > 1. Open it and sign in with your owner key: the value of `"key"` in `~/.appgov/hosts/<prefix>/owner.json` on this computer. Open that file yourself; I have not read it. Do not paste the key into a chat.
-> 2. On the page, under "Connect my AI assistant", name the connection (for example this computer's name), get a code, and paste the sentence it shows to Claude Code or Codex, opened in an empty folder for your apps, such as `~/apps`.
+> 2. On the page, under "Connect my AI assistant", name the connection (for example this computer's name), get a code, and paste the sentence it shows to Claude Code or Codex, opened in an empty folder for your apps, such as `~/apps`. For Codex, start it with `codex -c sandbox_workspace_write.network_access=true`. It is connected when it prints a line starting with "connected", and the page then shows the connection.
 > 3. Then say to it, for example: "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it."
 >
 > Your apps open on PneumaSpace at `https://<space domain>/apps/<name>/`; sign in there at `https://<space domain>/login` with the account and key in `~/.pneuma-space/hosts/<space domain>/owner.json`.

@@ -337,7 +337,7 @@ const en = {
   connect_again: "New code",
   connect_close: "Close",
   connect_more:
-    "Your assistant runs the command in its folder. It fetches this Host's own command-line tool from this Host and trades the code for a key of its own, saved in .appgov/centre.json there. The key never appears on this page or in the chat. The code works once, for ten minutes, and closing this panel makes it useless at once. You can revoke a connection at the bottom of this page.",
+    "Your assistant runs the command in its folder. It fetches this Host's own command-line tool from this Host and trades the code for a key of its own, saved in .appgov/centre.json there. The key never appears on this page or in the chat. The code works once, for ten minutes, and closing this panel or this tab makes it useless at once. Codex blocks the network by default: start it with codex -c sandbox_workspace_write.network_access=true, or let it ask you. You can revoke a connection at the bottom of this page.",
   connect_limit: "Five codes are waiting already. Close one, or wait ten minutes.",
   connections_title: "AI assistants",
   connect_another: "Connect another",
@@ -345,7 +345,7 @@ const en = {
   revoke_body: "{label} can no longer read or change your apps here. The folder it works in keeps its files. To connect it again, get a new code.",
   revoke_go: "Revoke it",
   connect_sentence:
-    "Connect this folder to my apps Host. This command gets the Host's own tool from my Host and trades a one-time code for an access key, saved in .appgov/ (never show it to anyone); after it, read AGENTS.md. Run it here: {command}",
+    "Connect this folder to my apps Host. This command gets the Host's own tool from my Host and trades a one-time code for an access key, saved in .appgov/ (never show it to anyone). It needs network access, and it worked only if it prints a line starting with \"connected\". Then read AGENTS.md. Run it here: {command}",
   start_connect: "Connect my AI assistant",
   start_connected: "Connected: {label}",
   start_ask: "Ask it for your first app",
@@ -735,7 +735,7 @@ const zh: Words = {
   connect_again: "换一个代码",
   connect_close: "关闭",
   connect_more:
-    "你的 AI 助手会在它的文件夹里运行这条命令：从这个 Host 下载 Host 自己的命令行工具，再用代码换一个它自己的密钥，存在那里的 .appgov/centre.json。密钥不会出现在这个页面上，也不会出现在对话里。代码只能用一次，10 分钟内有效；关掉这个面板，它就立刻作废。连接可以在本页底部撤销。",
+    "你的 AI 助手会在它的文件夹里运行这条命令：从这个 Host 下载 Host 自己的命令行工具，再用代码换一个它自己的密钥，存在那里的 .appgov/centre.json。密钥不会出现在这个页面上，也不会出现在对话里。代码只能用一次，10 分钟内有效；关掉这个面板或这个标签页，它就立刻作废。Codex 默认不让联网：用 codex -c sandbox_workspace_write.network_access=true 启动它，或者在它询问时允许。连接可以在本页底部撤销。",
   connect_limit: "已经有 5 个代码在等待了。关掉一个，或者等 10 分钟。",
   connections_title: "AI 助手",
   connect_another: "再连接一个",
@@ -743,7 +743,7 @@ const zh: Words = {
   revoke_body: "{label} 将不能再读取或修改你在这里的应用。它所在文件夹里的文件不受影响。想重新连接，就再获取一个代码。",
   revoke_go: "确认撤销",
   connect_sentence:
-    "把这个文件夹连接到我的应用 Host。下面的命令会从我的 Host 取得 Host 自己的命令行工具，用一次性代码换一个访问密钥，存进 .appgov/（不要把它显示给任何人）；运行完再读 AGENTS.md。在这里运行：{command}",
+    "把这个文件夹连接到我的应用 Host。下面的命令会从我的 Host 取得 Host 自己的命令行工具，用一次性代码换一个访问密钥，存进 .appgov/（不要把它显示给任何人）。它需要联网；只有输出以 \"connected\" 开头的一行才算成功。然后读 AGENTS.md。在这里运行：{command}",
   start_connect: "连接我的 AI 助手",
   start_connected: "已连接：{label}",
   start_ask: "让它做你的第一个应用",

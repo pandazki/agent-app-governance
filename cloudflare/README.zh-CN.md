@@ -43,11 +43,11 @@ node cloudflare/scripts/install.mjs https://space.example.com \
 
 1. **连接我的 AI 助手。** 给这个连接起个名字，比如用电脑的名字，然后按“获取代码”。页面会给出一段话，把它粘贴给在一个给应用用的空文件夹（比如 `~/apps`）里打开的 Claude Code 或 Codex：
 
-   > 把这个文件夹连接到我的应用 Host。下面的命令会从我的 Host 取得 Host 自己的命令行工具，用一次性代码换一个访问密钥，存进 .appgov/（不要把它显示给任何人）；运行完再读 AGENTS.md。在这里运行：`curl -fsS https://appgov-host.<subdomain>.workers.dev/connect | node - K7QM-4XPD`
+   > 把这个文件夹连接到我的应用 Host。下面的命令会从我的 Host 取得 Host 自己的命令行工具，用一次性代码换一个访问密钥，存进 .appgov/（不要把它显示给任何人）。它需要联网；只有输出以 "connected" 开头的一行才算成功。然后读 AGENTS.md。在这里运行：`curl -fsSo .appgov-connect.cjs https://appgov-host.<subdomain>.workers.dev/connect && node .appgov-connect.cjs K7QM-4XPD-2R9T`
 
-   `GET /connect` 返回一小段脚本，里面只有这个 Host 自己的 CLI 和它的地址，没有任何秘密。脚本把 CLI 写到 `.appgov/appgov.mjs`，再用它运行 `connect <code>`：CLI 在 Host 那里用代码换来一个 agent 令牌，写进 `.appgov/centre.json`（权限 0600，不会打印出来），然后写下 `token create --write` 会写的 `AGENTS.md` 和 `CLAUDE.md`（见下文）。除此之外什么也不写，除了你的 Host 也不从别处下载任何东西；连接失败时，脚本会把它写下的东西删掉。页面会一直等到代码被用掉，然后显示这个连接。
+   `GET /connect` 返回一小段脚本，里面只有这个 Host 自己的 CLI 和它的地址，没有任何秘密；下载失败时，命令会带着 curl 的报错停下。脚本先删掉自己，把 CLI 写到 `.appgov/appgov.mjs`，再用它运行 `connect <code>`：CLI 在 Host 那里用代码换来一个 agent 令牌，写进 `.appgov/centre.json`（权限 0600，不会打印出来），然后写下 `token create --write` 会写的 `AGENTS.md` 和 `CLAUDE.md`（见下文）。除此之外什么也不写，除了你的 Host 也不从别处下载任何东西；连接失败时，脚本会把它替换掉的东西放回去，把它写下的东西删掉。页面会一直等到代码被用掉，然后显示这个连接。Codex 默认不让联网：用 `codex -c sandbox_workspace_write.network_access=true` 启动它，或者在它询问时允许这条命令。
 
-   代码是 8 个字母和数字，只能用一次，10 分钟内有效；关掉面板，它就立刻作废；同一时间最多有 5 个代码在等待。只保存它的 SHA-256。输错的代码和输错的密钥一样计数：同一个地址十分钟内错 20 次，或者所有地址加起来错 200 次之后，这十分钟内不再接受任何代码。换来的令牌就是普通的 agent 令牌，名字是你给连接起的名字，有效 90 天，权限和 agent 令牌一样，不多不少。agent 令牌不能生成代码：代码只能在页面上、在你的会话里生成。
+   代码是 12 个字母和数字，只能用一次，10 分钟内有效；关掉面板或标签页，它就立刻作废；同一时间最多有 5 个代码在等待。只保存它的 SHA-256。输错的代码按地址计数（IPv6 地址按 /64 计）：同一个地址十分钟内错 20 次之后，这十分钟内不再接受它。没有所有地址共用的计数，否则任何人都能把它用光，挡住你自己的代码。核对计数、取走代码和生成令牌是一步完成的。换来的令牌就是普通的 agent 令牌，名字是你给连接起的名字，有效 90 天，权限和 agent 令牌一样，不多不少。agent 令牌不能生成代码：代码只能在页面上、在你的会话里生成。
 
 2. **让它做你的第一个应用。** 页面接着会给出一句可以说的话，你也可以用自己的话说想要什么。agent 会用 `node .appgov/appgov.mjs create <name>` 创建应用，然后在那里把它做出来。
 

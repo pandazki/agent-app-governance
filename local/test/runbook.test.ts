@@ -99,7 +99,11 @@ describe("the runbook and Start here, checked without an install", () => {
     expect(RUNBOOK).toContain("six services");
     // The checks it runs against the stack answer where it says.
     expect(compose).toContain("http://127.0.0.1:8081/healthz");
-    expect(read("local/src/serve.ts")).toContain("owner link");
+    // `grep "owner link"` in the hand-off finds the link's own line: no other line the Host prints at start says those words.
+    const serve = read("local/src/serve.ts");
+    expect(serve.split("\n").filter((line) => line.includes("console.log(") && line.includes("owner link")).length).toBe(1);
+    expect(RUNBOOK).toContain('docker compose logs host | grep "owner link" | tail -1');
+    expect(RUNBOOK).toContain('grep -v "owner link"');
     expect(read("local/bin/appgov.mjs")).toContain("no apps yet");
     expect(read("local/compose.yaml")).toContain("additional_contexts");
   });
@@ -130,7 +134,7 @@ describe("the runbook and Start here, checked without an install", () => {
   });
 
   test("the guides quote the connect sentence as the page gives it", () => {
-    const command = "`curl -fsS https://appgov-host.<subdomain>.workers.dev/connect | node - K7QM-4XPD`";
+    const command = "`curl -fsSo .appgov-connect.cjs https://appgov-host.<subdomain>.workers.dev/connect && node .appgov-connect.cjs K7QM-4XPD-2R9T`";
     expect(read("cloudflare/README.md")).toContain(WORDS.en.connect_sentence.replace("{command}", command));
     expect(read("cloudflare/README.zh-CN.md")).toContain(WORDS.zh.connect_sentence.replace("{command}", command));
   });

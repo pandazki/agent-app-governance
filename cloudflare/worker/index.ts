@@ -91,8 +91,7 @@ export default {
       revokeToken: (id, now) => auth.revokeToken(id, now),
       loginFailures: (key, now, failed) => auth.loginFailures(key, now, failed),
       addCode: (hash, code, now, limit) => auth.addCode(hash, code, now, limit),
-      takeCode: (hash, now) => auth.takeCode(hash, now),
-      noteCodeToken: (id, tokenId) => auth.noteCodeToken(id, tokenId),
+      tradeCode: (hash, where, now, allowed, tokenHash, token) => auth.tradeCode(hash, where, now, allowed, tokenHash, token),
       codeState: (id, now) => auth.codeState(id, now),
       dropCode: (id) => auth.dropCode(id),
     };
@@ -298,11 +297,8 @@ export class AuthObject extends DurableObject<Env> {
   async addCode(hash: string, code: StoredCode, now: number, limit: number) {
     return this.records.addCode(hash, code, now, limit);
   }
-  async takeCode(hash: string, now: number) {
-    return this.records.takeCode(hash, now);
-  }
-  async noteCodeToken(id: string, tokenId: string) {
-    return this.records.noteCodeToken(id, tokenId);
+  async tradeCode(hash: string | null, where: string, now: number, allowed: number, tokenHash: string, token: Omit<StoredToken, "label">) {
+    return this.records.tradeCode(hash, where, now, allowed, tokenHash, token);
   }
   async codeState(id: string, now: number) {
     return this.records.codeState(id, now);

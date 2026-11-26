@@ -774,7 +774,9 @@ if (command === "connect") {
   try {
     found = starter.status === 200 ? JSON.parse(starter.text) : null;
   } catch {}
-  if (!found) fail(`the Host made the agent token but did not send its CLI and instructions (${starter.err?.code ?? starter.status}); nothing was written. Ask the user to revoke "${data.label}" on the owner page and make a new code.`, 3);
+  if (typeof found?.cli !== "string" || typeof found?.agents !== "string") {
+    fail(`the Host made the agent token but did not send its CLI and instructions (${starter.err?.code ?? starter.status}); nothing was written. Ask the user to revoke "${data.label}" on the owner page and make a new code.`, 3);
+  }
   writePrivate(file, { url: home, token: data.token });
   const written = writeStarter(dir, found);
   console.log(`connected ${dir} to the Host at ${home} as "${data.label}". The agent token is in ${join(STATE_DIR, CENTRE_FILE)}: never print it, copy it or commit it.`);

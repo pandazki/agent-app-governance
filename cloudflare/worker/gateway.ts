@@ -83,10 +83,11 @@ export interface AuthStore {
   loginFailures(key: string, now: number, failed: boolean): Promise<number>;
   /** Keep a code, unless `limit` codes wait already (false then). */
   addCode(hash: string, code: StoredCode, now: number, limit: number): Promise<boolean>;
-  /** Take a code, once: it is gone after this call; one past its time gives null. */
-  takeCode(hash: string, now: number): Promise<StoredCode | null>;
-  /** Note which agent token a used code became. */
-  noteCodeToken(id: string, tokenId: string): Promise<void>;
+  /**
+   * Trade a code for an agent token in one step: refused when `where` has `allowed` wrong codes in these ten minutes;
+   * else the code is taken (once), a wrong one counted, and the token kept under `tokenHash`, named as the connection.
+   */
+  tradeCode(hash: string | null, where: string, now: number, allowed: number, tokenHash: string, token: Omit<StoredToken, "label">): Promise<{ token: StoredToken } | { refused: "too_many_attempts" | "bad_code" }>;
   codeState(id: string, now: number): Promise<CodeState>;
   /** Close a code before it is used. */
   dropCode(id: string): Promise<boolean>;

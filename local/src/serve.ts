@@ -26,5 +26,6 @@ server.listen(port, bind, () => {
   console.log(`[host] pictures of apps: ${pictures.enabled ? `taken through ${process.env.APPGOV_SCREENSHOT_CDP}` : "off (no APPGOV_SCREENSHOT_CDP); the page shows placeholders"}`);
   console.log(`[host] your apps: ${hostUrl}/`);
   console.log(`[host] owner link (open it yourself; it lets that browser approve, deny and undo; delete ${hostStateDir(process.env)}/owner-token to retire it): ${ownerLink(hostUrl, ownerToken)}`);
-  console.log(`[host] next: open the owner link above in your browser. Then open Claude Code or Codex in ${appsFolder ?? "the apps folder (local/apps)"} and ask it for an app; the page shows the steps.`);
+  // Worded without the words "owner link", so that `grep "owner link"` in the guides finds the link's own line only.
+  console.log(`[host] next: open the link above in your browser. Then open Claude Code or Codex in ${appsFolder ?? "the apps folder (local/apps)"} and ask it for an app; the page shows the steps.`);
 });

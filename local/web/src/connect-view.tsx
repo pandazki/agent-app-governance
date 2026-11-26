@@ -31,22 +31,32 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
   const sending = useRef(false);
   const code = phase.kind === "code" ? phase.code : null;
 
-  // While the code waits: ask what became of it, and move on when it was used, or say so when it expired.
+  // While the code waits: ask what became of it, and move on when it was used, or say so when it expired. When the
+  // tab is closed, reloaded or leaves the page first, the code is closed too: no code outlives the panel that shows it.
   useEffect(() => {
     if (!code) return;
     let live = true;
+    let used = false;
     const tick = async () => {
       const result = await act(connect.stateUrl.replace("{id}", encodeURIComponent(code.id)), {}, access);
       if (!live) return;
       if (result.lost) return owner.lose();
       const state = String(result.data.state ?? "");
-      if (state === "used") location.href = connect.done;
-      else if (state === "expired" || state === "gone") setPhase({ kind: "expired", label });
+      if (state === "used") {
+        used = true;
+        location.href = connect.done;
+      } else if (state === "expired" || state === "gone") setPhase({ kind: "expired", label });
+    };
+    const leave = () => {
+      if (used || access.kind !== "session") return;
+      void fetch(connect.cancelUrl.replace("{id}", encodeURIComponent(code.id)), { method: "POST", keepalive: true, headers: { "content-type": "application/json", "x-appgov-csrf": access.csrf }, body: "{}" }).catch(() => {});
     };
     const timer = setInterval(tick, POLL_MS);
+    addEventListener("pagehide", leave);
     return () => {
       live = false;
       clearInterval(timer);
+      removeEventListener("pagehide", leave);
     };
   }, [code?.id]);
 
@@ -104,11 +114,14 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
 
   if (phase.kind === "expired") {
     return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2" style={{ animation: "fade-in 150ms ease-out both" }}>
-        <p className="min-w-0 flex-1 text-[12.5px] text-ink-2">{ui.connect_expired}</p>
-        <Button variant="accent" size="sm" className="text-[12.5px]" onClick={() => make()}>
-          {ui.connect_again}
-        </Button>
+      <div style={{ animation: "fade-in 150ms ease-out both" }}>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-0 flex-1 text-[12.5px] text-ink-2">{ui.connect_expired}</p>
+          <Button variant="accent" size="sm" className="text-[12.5px]" disabled={busy} onClick={() => make()}>
+            {busy ? ui.working : ui.connect_again}
+          </Button>
+        </div>
+        {failure && <Failure text={failure.text} detail={failure.detail} />}
       </div>
     );
   }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EDITION } from "../src/edition";
 import { PRINCIPAL_HEADER } from "../src/protocol";
-import { CODE_ALPHABET, CODE_FAILURES_ALL, CODE_FAILURES_PER_ADDRESS, CODE_MS, CODES_WAITING, connectScript, makeCode, normalizeCode, showCode } from "../worker/connect";
+import { addressKey, CODE_ALPHABET, CODE_FAILURES_PER_ADDRESS, CODE_MS, CODES_WAITING, connectScript, makeCode, normalizeCode, showCode } from "../worker/connect";
 import { handle, sha256, type GatewayDeps } from "../worker/gateway";
 import { csrfToken, PAGE_COOKIE, type PageDeps } from "../worker/page";
 import { MemoryAuth, modelOf, startStack } from "./stack";
@@ -64,26 +64,26 @@ async function door(now = { value: Date.now() }) {
 }
 
 describe("one-time codes", () => {
-  test("a code is 8 letters and digits that cannot be misread, shown in two groups, and read back however it is typed", () => {
+  test("a code is 12 letters and digits that cannot be misread, shown in groups of four, and read back however it is typed", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 400; i++) {
       const code = makeCode();
-      expect(code).toMatch(/^[2-9A-HJ-KMNP-Z]{8}$/);
+      expect(code).toMatch(/^[2-9A-HJ-KMNP-Z]{12}$/);
       seen.add(code);
     }
     expect(seen.size).toBe(400);
     expect(CODE_ALPHABET).not.toMatch(/[01ILO]/);
-    expect(showCode("ABCD2345")).toBe("ABCD-2345");
-    expect(normalizeCode("abcd-2345")).toBe("ABCD2345");
-    expect(normalizeCode(" ABCD 2345 ")).toBe("ABCD2345");
-    for (const bad of ["ABCD-234", "ABCD-23450", "ABCD-O345", "ABCD-1345", 12345678, null]) expect(normalizeCode(bad)).toBeNull();
+    expect(showCode("ABCD2345EFGH")).toBe("ABCD-2345-EFGH");
+    expect(normalizeCode("abcd-2345-efgh")).toBe("ABCD2345EFGH");
+    expect(normalizeCode(" ABCD 2345 EFGH ")).toBe("ABCD2345EFGH");
+    for (const bad of ["ABCD-2345-EFG", "ABCD-2345-EFGHJ", "ABCD-O345-EFGH", "ABCD-1345-EFGH", 123456789012, null]) expect(normalizeCode(bad)).toBeNull();
   });
 
   test("the owner makes a code on the page; it waits ten minutes, and the page can ask what became of it", async () => {
     const d = await door();
     const made = await d.makeCodeFor("MacBook");
-    expect(made.code).toMatch(/^[2-9A-Z]{4}-[2-9A-Z]{4}$/);
-    expect(made.command).toBe(`curl -fsS ${ORIGIN}/connect | node - ${made.code}`);
+    expect(made.code).toMatch(/^[2-9A-Z]{4}-[2-9A-Z]{4}-[2-9A-Z]{4}$/);
+    expect(made.command).toBe(`curl -fsSo .appgov-connect.cjs ${ORIGIN}/connect && node .appgov-connect.cjs ${made.code}`);
     expect(Date.parse(made.expires_at) - d.now.value).toBe(CODE_MS);
     const state = await (await d.owner(`/owner/connect/${made.id}/state`)).json();
     expect(state).toEqual({ state: "waiting", expires_at: d.now.value + CODE_MS });
@@ -106,7 +106,7 @@ describe("one-time codes", () => {
     expect(await (await d.owner(`/owner/connect/${made.id}/state`)).json()).toEqual({ state: "used", label: "MacBook", token_id: got.id });
     // Only the hash of the code and of the token was kept.
     const kept = JSON.stringify([...(d.auth as unknown as { kv: { map: Map<string, unknown> } }).kv.map.entries()]);
-    expect(kept).not.toContain(made.code.replace("-", ""));
+    expect(kept).not.toContain(made.code.replaceAll("-", ""));
     expect(kept).not.toContain(got.token);
   });
 
@@ -117,10 +117,15 @@ describe("one-time codes", () => {
     expect(await (await d.owner(`/owner/connect/${closed.id}/cancel`)).json()).toEqual({ closed: true });
     expect((await d.trade(closed.code)).status).toBe(401);
     expect(await (await d.owner(`/owner/connect/${closed.id}/state`)).json()).toEqual({ state: "gone" });
+    // Closing what is no longer waiting closes nothing: a used code stays used.
+    const used = await d.makeCodeFor("used");
+    expect((await d.trade(used.code)).status).toBe(201);
+    expect(await (await d.owner(`/owner/connect/${used.id}/cancel`)).json()).toEqual({ closed: false });
+    expect(await (await d.owner(`/owner/connect/${used.id}/state`)).json()).toMatchObject({ state: "used", label: "used" });
     d.now.value += CODE_MS;
     expect(await (await d.owner(`/owner/connect/${late.id}/state`)).json()).toEqual({ state: "expired" });
     expect((await d.trade(late.code)).status).toBe(401);
-    expect(await d.auth.listTokens()).toEqual([]);
+    expect((await d.auth.listTokens()).map((t) => t.label)).toEqual(["used"]);
   });
 
   test(`at most ${CODES_WAITING} codes wait at once; one that ends makes room`, async () => {
@@ -195,21 +200,42 @@ describe("guessing codes", () => {
   test(`${CODE_FAILURES_PER_ADDRESS} wrong codes from one address stop that address for ten minutes, even with the right code`, async () => {
     const d = await door();
     const made = await d.makeCodeFor();
-    for (let i = 0; i < CODE_FAILURES_PER_ADDRESS; i++) expect((await d.trade("ZZZZ-ZZZZ", { ip: "192.0.2.9" })).status).toBe(401);
+    for (let i = 0; i < CODE_FAILURES_PER_ADDRESS; i++) expect((await d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: "192.0.2.9" })).status).toBe(401);
     const stopped = await d.trade(made.code, { ip: "192.0.2.9" });
     expect(stopped.status).toBe(429);
     expect(((await stopped.json()) as { reason: string }).reason).toBe("too_many_attempts");
     // Another address is not stopped, and the code was not spent by the refused attempt.
     expect((await d.trade(made.code, { ip: "192.0.2.10" })).status).toBe(201);
     d.now.value += 600_000;
-    expect((await d.trade("ZZZZ-ZZZZ", { ip: "192.0.2.9" })).status).toBe(401);
+    expect((await d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: "192.0.2.9" })).status).toBe(401);
   });
 
-  test(`${CODE_FAILURES_ALL} wrong codes from everyone together stop every trade for ten minutes`, async () => {
+  test("an IPv6 address is counted with its /64, so a new address from the same network does not start again", async () => {
+    expect(addressKey("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(addressKey("2001:db8:1:2::ffff")).toBe("2001:db8:1:2::/64");
+    expect(addressKey("2001:0db8:0001:0002:0:0:0:9")).toBe("2001:db8:1:2::/64");
+    expect(addressKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(addressKey("203.0.113.5")).toBe("203.0.113.5");
+    const d = await door();
+    for (let i = 0; i < CODE_FAILURES_PER_ADDRESS; i++) await d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: `2001:db8:1:2::${(i + 1).toString(16)}` });
+    expect((await d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: "2001:db8:1:2:ffff::7" })).status).toBe(429);
+    expect((await d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: "2001:db8:1:3::1" })).status).toBe(401);
+  });
+
+  test("no count is shared by every address: wrong codes from many addresses do not stop the owner's own trade", async () => {
     const d = await door();
     const made = await d.makeCodeFor();
-    for (let i = 0; i < CODE_FAILURES_ALL; i++) await d.trade("not a code", { ip: `10.0.${Math.floor(i / 10)}.${i % 10}` });
-    expect((await d.trade(made.code, { ip: "192.0.2.77" })).status).toBe(429);
+    for (let i = 0; i < 300; i++) await d.trade("not a code", { ip: `10.0.${Math.floor(i / 10)}.${i % 10}` });
+    expect((await d.trade(made.code, { ip: "192.0.2.77" })).status).toBe(201);
+  });
+
+  test("a burst of wrong codes sent at once is counted exactly: the 21st is refused however they arrive", async () => {
+    const d = await door();
+    const made = await d.makeCodeFor();
+    const burst = await Promise.all(Array.from({ length: CODE_FAILURES_PER_ADDRESS + 5 }, () => d.trade("ZZZZ-ZZZZ-ZZZZ", { ip: "192.0.2.50" })));
+    expect(burst.filter((r) => r.status === 401).length).toBe(CODE_FAILURES_PER_ADDRESS);
+    expect(burst.filter((r) => r.status === 429).length).toBe(5);
+    expect((await d.trade(made.code, { ip: "192.0.2.50" })).status).toBe(429);
   });
 });
 
@@ -298,6 +324,20 @@ describe("an agent with only the sentence, in an empty directory", () => {
       expect(again.code).not.toBe(0);
       expect(again.out).toContain("Ask the user for a new code");
       expect(filesIn(other)).toEqual(["notes.txt"]);
+      // Reconnecting a directory whose token was refused: a CLI already there is put back when the trade fails.
+      const again2 = join(root, "again");
+      mkdirSync(join(again2, ".appgov"), { recursive: true });
+      writeFileSync(join(again2, ".appgov", "appgov.mjs"), "// the CLI it had\n");
+      expect((await run(made.command, again2, { HOME: root })).code).not.toBe(0);
+      expect(readFileSync(join(again2, ".appgov", "appgov.mjs"), "utf8")).toBe("// the CLI it had\n");
+      expect(filesIn(again2)).toEqual([".appgov/appgov.mjs"]);
+      // A download that fails stops the command with curl's error and a failing exit, and leaves nothing.
+      const offline = join(root, "offline");
+      mkdirSync(offline);
+      const unreachable = await run(made.command.replace(stack.url, "http://127.0.0.1:9"), offline, { HOME: root });
+      expect(unreachable.code).not.toBe(0);
+      expect(unreachable.out).toContain("curl:");
+      expect(filesIn(offline)).toEqual([]);
       // A directory that is connected already is not touched.
       const twice = await run(made.command, dir, { HOME: root });
       expect(twice.code).not.toBe(0);
