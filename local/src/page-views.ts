@@ -1453,17 +1453,29 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
   if (version === status.active_version) return { ...base, ...empty, kind: "current" };
   if (!plan || !inLine) return { ...base, ...empty, kind: "not_earlier" };
   const oneWayVersions = new Set(plan.oneWay.map((entry) => str(entry.version)));
+  const markedCount = plan.undone.filter((v) => oneWayVersions.has(v)).length;
   const undone = plan.undone.map((v) => {
     const made = entries.find((entry) => entry?.version === v && entry.kind !== "restore");
-    return { title: made ? itemTitleOfVersion(w, made) : v, when: made ? rich(ctx, "{when}", {}, { when: { iso: made.at, mode: "abs" } }) : null, oneWay: oneWayVersions.has(v) };
+    const oneWay = oneWayVersions.has(v);
+    const title = made ? itemTitleOfVersion(w, made) : v;
+    return {
+      title: oneWay && markedCount > 1 && made ? `${v} · ${title}` : title,
+      when: made ? rich(ctx, "{when}", {}, { when: { iso: made.at, mode: "abs" } }) : null,
+      oneWay,
+    };
   });
   let data: Rich;
   let check: string | null = null;
   const left = dataLeftWords(w, plan.dataLeft);
   // What the submitters of the versions gone back past declared lost: the rules see only SQL and the manifest.
-  const declared = plan.undone.flatMap((v) => {
+  const losses = plan.undone.flatMap((v, i) => {
     const made = entries.find((entry) => entry?.version === v && entry.kind !== "restore" && typeof entry.declared_one_way === "string" && entry.declared_one_way);
-    return made ? [fill(w.back_declared, { version: v, said: str(made.declared_one_way) })] : [];
+    if (!made) return [];
+    const row = undone[i]!;
+    const said = str(made.declared_one_way);
+    // On the plan a single badge identifies its row. After navigation the list is gone, so name the request.
+    const change = row.oneWay && markedCount === 1 ? fill(w.back_marked_change, { badge: w.one_way }) : row.oneWay ? v : row.title;
+    return [{ onPlan: fill(w.back_declared, { change, said }), after: fill(w.back_declared, { change: row.title, said }) }];
   });
   if (!plan.crossing) data = plain(left ?? w.back_data_stays);
   else if (plan.crossing.data_restore === "snapshot" && plan.dataRef) {
@@ -1493,8 +1505,8 @@ export function backModel(name: string, status: AppStatus, entries: readonly His
     marks: manager.unmanaged ? w.marks_back : null,
     accept: Boolean(plan.crossing),
     from: plan.from,
-    declared,
-    afterNote: [left, ...declared].filter(Boolean).join(" ") || null,
+    declared: losses.map((loss) => loss.onPlan),
+    afterNote: [left, ...losses.map((loss) => loss.after)].filter(Boolean).join(ctx.lang === "zh" ? "" : " ") || null,
     facts: facts([
       { label: w.d_version, value: `${str(status.active_version)} → ${version}`, mono: true },
       plan.crossing ? { label: w.d_plan, value: plan.crossing.text } : null,

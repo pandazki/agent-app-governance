@@ -300,10 +300,13 @@ describe("the owner page on the Cloudflare edition's answers", () => {
     expect(back.from).toBe(version);
     expect(back.accept).toBe(true);
     expect(back.undone.find((u) => u.title === "“Clear every mood”")?.oneWay).toBe(true);
-    const said = `For ${version}, the submitter declared this loss: “Every mood stored so far” Restoring the code alone cannot recover it.`;
-    expect(back.declared).toEqual([said]);
-    expect(back.afterNote).toContain(said);
-    expect((await view<BackModel>("/app/journal/back/v3?lang=zh")).declared).toEqual([`提交者声明 ${version} 会造成以下损失：“Every mood stored so far”仅回退代码无法恢复这些数据。`]);
+    const loss = "the submitter declared this loss: “Every mood stored so far” Restoring the code alone cannot recover it.";
+    expect(back.declared).toEqual([`For the change marked “${back.ui.one_way}” above, ${loss}`]);
+    expect(back.afterNote).toContain(`For “Clear every mood”, ${loss}`);
+    const zh = await view<BackModel>("/app/journal/back/v3?lang=zh");
+    const zhLoss = "提交者声明的损失是“Every mood stored so far”。仅回退代码无法恢复这些数据。";
+    expect(zh.declared).toEqual([`上面标有“${zh.ui.one_way}”的改动：${zhLoss}`]);
+    expect(zh.afterNote).toContain(`“Clear every mood”：${zhLoss}`);
     const gone = await write("/owner/apps/journal/undo", { to: "v3", from: version, accept_one_way: true });
     expect(gone.status).toBe(200);
     expect(gone.data.declared_one_way).toEqual([{ version, reason: "Every mood stored so far" }]);
