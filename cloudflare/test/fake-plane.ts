@@ -190,11 +190,18 @@ export class FakePlane {
         headers.set("server-timing", "app;dur=2");
         return new Response(answered.body, { status: answered.status, headers });
       }
-      if (path === "api/items" && method === "GET") return Response.json({ items: store.get("items") ?? [{ id: "first-screen", title: "The one-screen project" }], sample: !store.has("items") }, { headers: timing });
+      // As the template's server answers on PneumaSpace: the items with their kv revision (null for the sample), and a
+      // save that compares and swaps on it (`expected`), so a stale or invented revision is refused as it is there.
+      if (path === "api/items" && method === "GET") {
+        return Response.json({ items: store.get("items") ?? [{ id: "first-screen", title: "The one-screen project" }], revision: store.get("revision") ?? null, sample: !store.has("items") }, { headers: timing });
+      }
       if (path === "api/items" && method === "PUT") {
-        const items = (JSON.parse(body ?? "{}") as { items?: unknown }).items;
-        store.set("items", items);
-        return Response.json({ items, sample: false }, { headers: timing });
+        const sent = JSON.parse(body ?? "{}") as { items?: unknown; revision?: unknown };
+        if ((store.get("revision") ?? null) !== sent.revision) return Response.json({ error: "Your shelf changed in another tab. Reload before saving." }, { status: 409, headers: timing });
+        // One counter per app numbers every key's revisions, so this key's grows, but not by one.
+        const revision = ((store.get("counter") as number | undefined) ?? 0) + 2;
+        store.set("counter", revision).set("items", sent.items).set("revision", revision);
+        return Response.json({ items: sent.items, revision, sample: false }, { headers: timing });
       }
     }
     return Response.json({ error: "Not found" }, { status: 404, headers: { "server-timing": "app;dur=3" } });

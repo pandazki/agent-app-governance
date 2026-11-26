@@ -33,28 +33,29 @@ Declare each in `pneuma-space.json` under `capabilities` before using it: `kv` (
 | Command | Fields | Answer |
 | --- | --- | --- |
 | `kv.get` | `key` | `{key, value, revision, expiresAt}`, or `null` when there is no such key (or it expired) |
-| `kv.put` | `key`, `value` (any JSON), `expected?`, `ttl?` (seconds, 1 to a year) | `{value, revision}` |
+| `kv.put` | `key`, `value` (any JSON), `expected?`, `ttl?` (seconds, 1 to a year; without it the key has no expiry, even if it had one) | `{value, revision}` |
 | `kv.delete` | `key`, `expected?` (a revision) | `{deleted: true}` or `{deleted: false}` |
 | `kv.list` | `prefix?`, `cursor?` | `{items: [{key, value, revision, expiresAt}, ...], nextCursor?}`: the values are included, keys in order, expired ones left out |
-| `kv.increment` | `key`, `amount` (an integer; required) | `{value, revision}`; a missing key counts from 0 |
+| `kv.increment` | `key`, `amount` (an integer; required) | `{value, revision}`; a missing key counts from 0, a value that is not a number answers 409 `value_type`, and the expiry stays |
 | `kv.publish` | `channel`, `value` | `{subscribers}`: how many live subscribers got it |
-| `db.query` | `sql` (one statement), `params` (a list; required, `[]` when empty) | `{rows: [{<column>: <value>}, ...], columns: [...], rowsRead, rowsWritten}` |
+| `db.query` | `sql` (one statement), `params` (a list; required, `[]` when empty) | `{rows: [{<column>: <value>}, ...], columns: [...], rowsRead, rowsWritten}`, blobs as base64; more than 1000 rows or 256 KiB answers 413 `result_limit` |
 | `db.batch` | `statements: [{sql, params}, ...]` (1 to 32, all or nothing) | `{results: [<one db.query answer per statement>]}` |
 | `files.put` | `path`, `body` (base64, at most 64 KiB decoded), `expected?` | `{path, body, revision, bytes}` |
 | `files.get` | `path` | `{path, body, revision, bytes}`, or `null` |
-| `files.list` | `prefix?`, `cursor?` | `{items: [{path, body, revision, bytes}, ...], nextCursor?}` |
+| `files.list` | `prefix?`, `cursor?` | `{items: [{path, body, revision, bytes}, ...], nextCursor?}`: the bodies are included, so a page may hold only two large files |
 | `files.delete` | `path`, `expected?` (a revision) | `{deleted: true}` or `{deleted: false}` |
 | `object.upload` | `key`, `bytes` (at most 100 MiB), `contentType` | `{id, url, headers, expiresAt}`: the browser PUTs the bytes to `url` with `headers` within 300 s |
-| `object.complete` | `id` (from `object.upload`) | `{key, bytes, contentType, etag, uploadedAt}`, once the bytes are there |
+| `object.complete` | `id` (from `object.upload`) | `{key, bytes, contentType, etag, uploadedAt}`, once the bytes are there; before that 409 `upload_missing`, and 409 `upload_metadata` when their size or type differs |
 | `object.download` | `key` | `{id, url, headers, expiresAt}`: the browser GETs the bytes from `url` |
 | `object.list` | `prefix?`, `cursor?` | `{items: [{key, bytes, contentType, etag, uploadedAt}, ...], nextCursor?}` |
 | `object.delete` | `key` | `{deleted: true}` or `{deleted: false}` |
-| `rtc.credentials` | none | `{iceServers: [{urls, username?, credential?}, ...], expiresAt}` |
+| `rtc.credentials` | none | `{iceServers: [{urls, username?, credential?}, ...], expiresAt}`, valid 600 s |
 
-- `expected` compares and swaps: a number writes only while the revision is still that one, and on `kv.put` and `files.put` `null` writes only when nothing is there yet. A mismatch answers 409 with code `revision`: read again before retrying.
-- A list answers at most 100 items or 256 KiB at a time. While `nextCursor` is in the answer, send the same command again with `cursor: nextCursor` (and the same `prefix`) for the rest; the last page has none.
-- A `key` is 1 to 300 characters without control characters. A `path` and an object `key` are relative paths without `.` or `..` parts.
-- A refusal answers an HTTP status with `{"error": {"code", "message"}}`: 400 `input` (a field is wrong), 400 `command` (no such command), 403 `capability` (not declared in the manifest), 404 for an object or upload that is not there, 409 `revision`, 413 `body_limit` or `result_limit`, 429 `storage_quota`. A 500 adds `requestId`.
+- `expected` compares and swaps: a number writes only while the revision is still that one, and on `kv.put` and `files.put` `null` writes only when nothing is there yet. A mismatch answers 409 with code `revision`: read again before retrying. One counter per app numbers the revisions of every key and file, so a key's revision grows, but not by one: compare it, never compute it.
+- Times (`expiresAt`, `uploadedAt`) are milliseconds since the epoch.
+- A list answers at most 100 items or 256 KiB at a time. While `nextCursor` is in the answer, send the same command again with `cursor: nextCursor` (and the same `prefix`) for the rest; the last page has none. A cursor from another listing answers 400 `cursor`.
+- A `key` is 1 to 300 characters without control characters. A `path` and an object `key` are 1 to 300 characters, relative, without `\` and without empty, `.` or `..` parts (else 400 `path`).
+- A refusal answers an HTTP status with `{"error": {"code", "message"}}`: 400 `input` (a field is wrong), 400 `command` (no such command), 400 `sql_statement` (a statement that fails, several statements, or `BEGIN` and the like), 403 `capability` (not declared in the manifest), 404 for an object or upload that is not there, 409 as above, 410 `upload_expired`, 413 `body_limit` (a command over 256 KiB), 413 `file_limit` or `result_limit`, 429 `storage_quota` (the app's storage is full). A 500 adds `requestId`.
 - `db`: one statement per query, parameters for values, small results. Create tables with `CREATE TABLE IF NOT EXISTS`; never drop or rewrite existing columns.
 - `static`: `{"dir": "public"}` names the page shell's directory inside `app/`. A GET for a file there is answered without starting Node, even while the app sleeps; a path ending in `/` serves that directory's `index.html`.
 - `ws` and `cron` have no broker command; the server subscribes to what `kv.publish` sends with a WebSocket to `ws://pneuma-space.internal/subscribe/<channel>`. See PneumaSpace's Cloudflare application contract.
