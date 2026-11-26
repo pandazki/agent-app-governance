@@ -159,7 +159,7 @@ export function BackView({ model, onSearch }: { model: BackModel; onSearch: () =
         </Section>
       )}
       <Section title={ui.data_title}>
-        <div className="mx-auto max-w-[640px]"><BackCard model={model} changed={changed} /></div>
+        <BackCard model={model} changed={changed} />
       </Section>
       <DetailsBlock facts={model.facts} />
     </>

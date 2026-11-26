@@ -1,3 +1,6 @@
+import type { TestCoverage } from "../../host/src/test-coverage";
+import type { PreviewRequestFacts } from "../../host/src/preview-requests";
+
 // ---------------------------------------------------------------------------
 // The owner page's words, in English and Chinese.
 //
@@ -140,8 +143,8 @@ const en = {
   one_way_why: "Why: {why}",
   one_way_rule: "What the rules found, in their words: {why}",
   one_way_declared: "Declared one-way by {who} when submitting it. What is lost, in the submitter's own words (not something the rules found): “{said}”",
-  why_declared: "Declared one-way by {who}, so it waits for you whatever the rules found.",
-  back_declared: "{title} was declared one-way when it was submitted. What is lost, in the submitter's words: “{said}” Going back does not bring that back.",
+  why_declared: "{who} marked this one-way, so it needs your approval regardless of what the rules found. The submitter’s account of the loss (separate from the rule findings) is “{said}”",
+  back_declared: "For {version}, the submitter declared this loss: “{said}” Restoring the code alone cannot recover it.",
   d_declared: "Declared one-way",
   change_title: "A change is waiting for you",
   made_by: "{who} made this change · {when}",
@@ -569,8 +572,8 @@ const zh: Words = {
   one_way_why: "原因：{why}",
   one_way_rule: "规则发现的（规则原文）：{why}",
   one_way_declared: "{who} 提交时声明它是单向改动。会失去什么，是提交者的原话（不是规则发现的）：“{said}”",
-  why_declared: "{who} 声明它是单向改动，所以不管规则发现了什么，它都要等你决定。",
-  back_declared: "{title} 提交时被声明为单向改动。提交者说会失去的：“{said}”回退不会把它带回来。",
+  why_declared: "{who} 将它声明为单向改动，因此无论规则发现了什么，都需要你确认。损失是提交者自己的说明（并非规则发现）：“{said}”",
+  back_declared: "提交者声明 {version} 会造成以下损失：“{said}”仅回退代码无法恢复这些数据。",
   d_declared: "声明为单向",
   change_title: "有一个改动等你确认",
   made_by: "{who} 做了这个改动 · {when}",
@@ -670,7 +673,7 @@ const zh: Words = {
   d_version: "版本",
   d_change: "改动编号",
   d_outcome: "记录为",
-  d_agent: "Agent",
+  d_agent: "AI 助手",
   d_credential: "凭据",
   d_guarantees: "保证",
   d_recorded_only: "无（仅记录）",
@@ -907,6 +910,41 @@ export type WordKey = { [K in keyof Words]: Words[K] extends string ? K : never 
 /** A word with its `{slots}` filled as plain text. The caller escapes the result. */
 export function fill(template: string, vars: Readonly<Record<string, string | number>> = {}): string {
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => (key in vars ? String(vars[key]) : whole));
+}
+
+/** History notes are written in English. On the Chinese page use the counts recorded by the check.
+ * Older records may have only the note. Keep it verbatim when it is the only account of what ran. */
+function checkResult(w: Words, status: string, note: string, translated: string | null): string {
+  if (w.html_lang === "en") return `${status}: ${note}`;
+  const result = status === "passed" ? "通过" : status === "failed" ? "失败" : status;
+  return `${result}：${translated ?? `检查原文：${note}`}`;
+}
+
+export function testCheckWords(w: Words, status: string, coverage: TestCoverage): string {
+  const { tests, test_files, app_tests, app_test_files, skipped, src_test_files, note } = coverage;
+  let summary: string | null = null;
+  if (tests === 0) {
+    summary = "没有运行任何测试。";
+  } else if (typeof tests === "number" && typeof test_files === "number" && typeof app_tests === "number" && typeof app_test_files === "number") {
+    summary = `运行了 ${test_files} 个文件中的 ${tests} 个测试。其中 ${app_test_files} 个文件中的 ${app_tests} 个测试属于应用本身。`;
+    if (tests > app_tests) summary += "其余来自 SDK（sdk/）。";
+  }
+  if (summary !== null) {
+    if (typeof skipped === "number" && skipped > 0) summary += `另有 ${skipped} 个测试被跳过或标为待办。`;
+    if (app_tests === 0 && Array.isArray(src_test_files) && src_test_files.length) summary += `未运行的应用测试文件：${src_test_files.join("、")}。`;
+  }
+  return checkResult(w, status, note, summary);
+}
+
+export function previewCheckWords(w: Words, status: string, requests: PreviewRequestFacts): string {
+  const { file, declared, made, answered, note } = requests;
+  let summary: string | null = null;
+  if (declared === 0) {
+    summary = `应用没有在 ${file} 中声明请求。预览只检查了能否启动，没有测试任何路由。`;
+  } else if (typeof declared === "number" && typeof made === "number" && typeof answered === "number") {
+    summary = `${file} 声明了 ${declared} 个请求，预览中发出了 ${made} 个，其中 ${answered} 个得到了预期的响应。`;
+  }
+  return checkResult(w, status, note, summary);
 }
 
 /** The reason a change did not go live, in words. `checks` tells a failed test run from a preview that did not start. */

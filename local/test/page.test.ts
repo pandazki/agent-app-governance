@@ -435,7 +435,8 @@ describe("the owner page: what it shows", () => {
     expect(model.decision.lines).not.toContain("You can go back to the current version later.");
     // The confirmation is drawn for the owner with its box, which Go live waits for.
     const page = draw(model, "yes");
-    expect(page).toContain("This one can&#x27;t be taken back");
+    expect(page).toContain("Can&#x27;t be undone by going back");
+    expect(page).toContain(model.decision.consequence!);
     expect(page).toContain('type="checkbox"');
     expect(page).toContain("I understand: going back later won&#x27;t bring this data back.");
     // With a data snapshot capability, the consequence is the snapshot's.

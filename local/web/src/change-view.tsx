@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { CheckOption, Drawer, FieldRow, Meter } from "../beautifui/primitives/Recommendation";
-import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
+import TaskRows, { badgeFor, type TaskRow } from "../beautifui/primitives/TaskRows";
 import { Collapsible, FileChips } from "../beautifui/primitives/ToolChips";
 import { Section, Surface } from "../beautifui/site";
 import { act, fill, useOwner, usePage, useUi } from "./lib";
@@ -211,11 +211,22 @@ function DecisionCard({ model }: { model: ChangeModel }) {
   return (
     <div className="w-full overflow-hidden rounded-card bg-surface shadow-card">
       <div className="primitive-card-pad">
-        <p className="text-[14px] font-semibold leading-relaxed text-ink [overflow-wrap:anywhere]" dir="auto">{model.intent}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-ink-2">
-          <span>{model.appTitle}</span>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <h3 className="text-[13px] font-semibold text-ink">{ui.why_title}</h3>
           {d.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
         </div>
+        {model.oneWay && (
+          <div className="space-y-1.5 border-s-2 border-red ps-3 text-[13px] leading-relaxed text-ink [overflow-wrap:anywhere]">
+            <p className="font-medium text-red">{model.oneWay.body}</p>
+            {model.oneWay.why && <p>{model.oneWay.why}</p>}
+            {model.oneWay.said && <p className="font-medium">{model.oneWay.said}</p>}
+          </div>
+        )}
+        {model.why.map((line) => (
+          <p key={line} className="my-1 flex items-start gap-2 text-[13px] font-medium leading-relaxed text-ink">
+            {badgeFor("caution")}{line}
+          </p>
+        ))}
         {d.blocked && can && <p className="mt-2 rounded-control bg-orange-tint px-2.5 py-2 text-[12.5px] leading-relaxed text-orange">{d.blocked}</p>}
       </div>
 
@@ -229,7 +240,6 @@ function DecisionCard({ model }: { model: ChangeModel }) {
             </li>
           ))}
         </ul>
-        {d.consequence && <p className="mt-2 rounded-control border-s-2 border-red bg-red-tint px-2.5 py-2 text-[13px] font-medium leading-relaxed text-red">{d.consequence}</p>}
         {d.check && (
           <div className="mt-2">
             <CheckOption checked={ticked} onChange={setTicked} disabled={busy}>
@@ -307,36 +317,6 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
       </>
     );
   }
-  const checks: TaskRow[] = model.checked.map((row, i) => ({
-    key: `c${i}`,
-    label: row.text,
-    wrap: row.tone === "caution",
-    status: row.tone === "caution" ? "caution" : "done",
-    ...(row.files?.length
-      ? { details: <FileChips files={row.files.slice(0, 24)} more={row.files.length > 24 ? `+${row.files.length - 24}` : undefined} /> }
-      : {}),
-  }));
-  const why: TaskRow[] = [
-    ...(model.oneWay
-      ? [
-          {
-            key: "one-way",
-            label: model.oneWay.title,
-            wrap: true,
-            status: "caution" as const,
-            details: (
-              <>
-                <p className="text-[13px] leading-relaxed text-ink">{model.oneWay.body}</p>
-                {model.oneWay.why && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
-                {model.oneWay.said && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
-              </>
-            ),
-            defaultOpen: true,
-          },
-        ]
-      : []),
-    ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: line, wrap: true, status: "caution" })),
-  ];
   return (
     <>
       <Header
@@ -374,18 +354,24 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
         </Surface>
       </Section>
       <Section title={ui.checked_title}>
-        <Surface>
-          <div className="grid gap-3 lg:grid-cols-2">
-            <TaskRows rows={checks} />
-            <div className="flex flex-col gap-1.5">
-              <p className="px-0.5 text-[13px] font-semibold text-ink">{ui.why_title}</p>
-              <TaskRows rows={why} />
-            </div>
-          </div>
-        </Surface>
+        <ul className="flex flex-wrap items-baseline gap-x-5 gap-y-2 rounded-card bg-surface px-3 py-2.5 text-[13px] shadow-card">
+          {model.checked.map((row) => (
+            <li key={row.text} className="min-w-0 max-w-full">
+              {row.files?.length ? (
+                <Collapsible label={row.text}>
+                  <FileChips files={row.files.slice(0, 24)} more={row.files.length > 24 ? `+${row.files.length - 24}` : undefined} />
+                </Collapsible>
+              ) : (
+                <span className="flex items-center gap-2 py-1 font-medium">
+                  {badgeFor(row.tone === "caution" ? "caution" : "done")}{row.text}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
       </Section>
       <Section title={ui.decide_title} aside={<ContextNote label={ui.decision_title}>{ui.decide_lead}</ContextNote>}>
-        <div className="mx-auto max-w-[640px]"><DecisionCard model={model} /></div>
+        <DecisionCard model={model} />
       </Section>
       <DetailsBlock facts={model.facts} />
     </>
