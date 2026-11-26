@@ -84,6 +84,18 @@ describe("the runbook and Start here, checked without an install", () => {
     expect(lines).toContain("cd agent-app-governance");
   });
 
+  test("before docker compose up, a check that Docker sees the clone's apps folder, by the marker the Host looks for", () => {
+    const runbook = read("AGENTS.md");
+    const row = runbook.split("\n").find((line) => line.startsWith("| Docker sees this clone's folders |"));
+    expect(row).toContain('`docker run --rm -v "$PWD/local/apps:/apps:ro" redis:7-alpine ls -A /apps`');
+    expect(row).toContain("`.appgov-host-folder`");
+    expect(runbook.indexOf(row!)).toBeLessThan(runbook.indexOf("docker compose up -d --build"));
+    // The image is one the stack pulls anyway, and the file is the one git keeps in local/apps.
+    expect(read("local/compose.yaml")).toContain("image: redis:7-alpine");
+    expect(read("local/.gitignore")).toContain("!apps/.appgov-host-folder");
+    for (const guide of ["local/README.md", "local/README.zh-CN.md"]) expect(read(guide)).toContain("colima");
+  });
+
   test("the first Docker check tells Docker not running apart from Docker running under another context, with commands that change nothing", () => {
     const rows = RUNBOOK.split("\n").filter((line) => line.startsWith("| Docker answers |"));
     expect(rows.length).toBe(2);

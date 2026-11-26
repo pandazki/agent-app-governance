@@ -14,6 +14,7 @@
 
 - **一台电脑、一个人，而且你信任这台电脑。** Host 没有登录。能访问它端口的人，都能看到你的应用页面和它的 API。防止 agent 自己批准自己改动的那些措施（`approve` 必须在终端里运行，页面上做决定需要一个私有链接），挡不住同一台电脑上的其他程序。
 - **Docker** 要在运行，Compose 的版本要支持构建时的 `additional_contexts`，Host 的镜像用到了它。在 Linux 上，装 Docker Engine 加 Compose 和 buildx 插件就够了。
+- **仓库要克隆在 Docker 共享给容器的文件夹里。** colima 默认只共享你的主目录。放在别处时，Host 看到的是一个空文件夹，而不是 `local/apps`：它会说明这一点，并拒绝创建会丢失的应用。
 - **`gateway` 容器会挂载 Docker socket**（`/var/run/docker.sock`），也就是说它能控制这台电脑上的 Docker。
 - **127.0.0.1 上要有四个空闲端口：** 8080（应用本身，在 `/apps/<name>/` 下）、8081（PneumaSpace 控制台）、9000（对象存储）和 8090（应用页面，也就是 Host）。其他地址上什么都不监听。要换端口，见[和其他服务并排运行](./docs/reference.zh-CN.md#和其他服务并排运行)。
 - **Node.js 24 或更新版本。** 单跑 CLI 用 Node 18 就够，但 agent 会在你的电脑上跑每个应用的测试，而应用模板要求 Node 24。

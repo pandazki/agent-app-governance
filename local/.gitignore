@@ -1,7 +1,8 @@
 # Generated apps stay out of the repository; the directory itself is kept so that it exists,
-# owned by you, before Docker mounts it (Docker would otherwise create it as root).
+# owned by you, before Docker mounts it (Docker would otherwise create it as root). Its marker tells the Host it
+# sees this folder, not one Docker made (src/apps-folder.ts).
 apps/*
-!apps/.gitkeep
+!apps/.appgov-host-folder
 node_modules/
 .env
 .env.*

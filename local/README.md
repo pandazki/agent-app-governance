@@ -14,6 +14,7 @@ This edition runs on your own computer, in Docker. It starts PneumaSpace, a smal
 
 - **One computer, one person, and you trust the computer.** The Host has no login. Anyone who can reach its port can read your apps page and its API. What keeps your agent from approving its own change (a terminal for `approve`, a private link for the page) does not stop another program on the same computer.
 - **Docker**, running, with a version of Compose that supports `additional_contexts` in a build, which the Host's image uses. On Linux, Docker Engine with the Compose and buildx plugins is enough.
+- **A clone in a folder Docker shares with its containers.** colima shares only your home folder unless told otherwise. Elsewhere the Host sees an empty folder instead of `local/apps`: it says so, and refuses to create apps that would be lost.
 - **The `gateway` container mounts the Docker socket** (`/var/run/docker.sock`), which gives it control of Docker on this computer.
 - **Four free ports on 127.0.0.1:** 8080 (the apps themselves, at `/apps/<name>/`), 8081 (the PneumaSpace console), 9000 (the object store) and 8090 (your apps page: the Host). Nothing listens on other addresses. To use other ports, see [running beside other services](./docs/reference.md#running-beside-other-services).
 - **Node.js 24 or newer.** The CLI alone runs on Node 18, but your agent runs each app's tests on your computer, and the app template asks for Node 24.
