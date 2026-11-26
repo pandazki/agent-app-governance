@@ -421,6 +421,7 @@ function printTiming(what, wall, timing, header) {
   const row = (depth, name, ms) => lines.push(`${"  ".repeat(depth + 1)}${name.padEnd(58 - depth * 2)} ${String(ms).padStart(6)} ms`);
   const centre = timing?.centre ?? Object.fromEntries(String(header ?? "").split(";").filter(Boolean).map((kv) => kv.split("=")).map(([k, v]) => [k, Number(v)]));
   const steps = Array.isArray(timing?.steps) ? timing.steps : [];
+  if (centre.view !== undefined && centre.save === undefined) row(0, { stored: "read the stored view from R2 (no container)", legacy: "read through the app's Durable Object, still on the build before" }[timing?.view] ?? "the container computed the view, the centre stored it", centre.view);
   if (centre.container !== undefined) row(0, "start the Host's container (0 when it runs)", centre.container);
   if (centre.load !== undefined) row(0, "load the record from R2 into the container", centre.load);
   if (centre.op !== undefined) row(0, "the Host's operation, as the centre waited for it", centre.op);
@@ -454,7 +455,8 @@ function printTiming(what, wall, timing, header) {
     row(1, "(the Host's other work: open, classify, decide, write files)", Math.max(0, timing.host_ms - covered));
   }
   if (centre.save !== undefined) row(0, "save the record to R2", centre.save);
-  const known = (centre.container ?? 0) + (centre.load ?? 0) + (centre.op ?? 0) + (centre.save ?? 0);
+  if (centre.view !== undefined && centre.save !== undefined) row(0, "compute the app's view in the container and store it in R2", centre.view);
+  const known = (centre.container ?? 0) + (centre.load ?? 0) + (centre.op ?? 0) + (centre.save ?? 0) + (centre.view ?? 0);
   if (known) row(0, "(the network, the Worker and the Durable Object)", wall - known);
   console.error(lines.join("\n"));
 }

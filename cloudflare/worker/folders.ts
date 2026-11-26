@@ -1,4 +1,4 @@
-import { FOLDER_HEADER, folderKey, summaryKey, TIMING_HEADER } from "../src/protocol";
+import { FOLDER_HEADER, folderKey, summaryKey, TIMING_HEADER, viewKey } from "../src/protocol";
 
 // ---------------------------------------------------------------------------
 // One operation on one app, as its Durable Object runs it.
@@ -16,7 +16,15 @@ import { FOLDER_HEADER, folderKey, summaryKey, TIMING_HEADER } from "../src/prot
 //      create). If another writer got there first, nothing is overwritten, the
 //      container forgets its copy, and the caller is told.
 //   4. Keep a small summary next to it, which `GET /apps` reads without a
-//      container.
+//      container, and the app's stored view (StoredView in src/protocol.ts),
+//      which the Worker answers the reads of one app from (worker/views.ts).
+//      The view names the etag of the folder it was computed from, so a reader
+//      can tell when it describes another folder than the one in R2.
+//
+// Two more operations serve the reads: `view` has the container compute the
+// view of the folder in R2 and stores it (when the stored one is missing,
+// stale or of another shape), and `warm` only starts the container and loads
+// the folder, so a decision the owner is about to make does not wait for that.
 //
 // The Durable Object runs one operation at a time for its app; the condition
 // in 3 still holds if two ever ran. No Cloudflare binding here: the bucket and
@@ -41,7 +49,7 @@ export interface HostPort {
 
 export interface Operation {
   readonly app: string;
-  readonly op: "create" | "read" | "write";
+  readonly op: "create" | "read" | "write" | "view" | "warm";
   readonly method: string;
   /** The Host's route, e.g. /apps/todo/changes. */
   readonly path: string;
@@ -72,7 +80,9 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   if (op.op !== "create" && !stored) return answer({ error: `this Host has no app named ${op.app}`, reason: "no_app" }, 404);
   const etag = stored?.etag ?? "none";
 
-  const ask = () => host.fetch(op.path, { method: op.method, headers: { ...op.headers, [FOLDER_HEADER]: etag, "content-type": "application/json" }, ...(op.body !== undefined ? { body: op.body } : {}) });
+  const own = op.op === "view" ? `/folder/view?app=${op.app}` : op.op === "warm" ? `/folder/check?app=${op.app}` : null;
+  const ask = () =>
+    host.fetch(own ?? op.path, { method: own ? "GET" : op.method, headers: { ...op.headers, [FOLDER_HEADER]: etag, "content-type": "application/json" }, ...(!own && op.body !== undefined ? { body: op.body } : {}) });
   let res = await ask();
   if (res.status === 412 && stored) {
     await res.body?.cancel();
@@ -83,6 +93,11 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   }
   const text = await res.text();
   lap("op");
+  if (op.op === "view" && res.ok) {
+    await bucket.put(viewKey(op.app), text);
+    lap("save");
+  }
+  if (op.op === "view" || op.op === "warm") return withTiming(new Response(op.op === "warm" ? null : text, { status: res.status, headers: { "content-type": "application/json" } }), timing);
   if (op.op === "read" || NOTHING_WRITTEN.has(res.status)) return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 
   const saved = await host.fetch(`/folder/save?app=${op.app}`, { method: "POST" });
@@ -106,6 +121,12 @@ export async function operate(bucket: FolderBucket, host: HostPort, op: Operatio
   if (summary.ok) await bucket.put(summaryKey(op.app), await summary.text());
   else await summary.body?.cancel();
   lap("save");
+  // The view of the folder just saved, timed on its own (`view`). If it cannot be had, the one stored before names the
+  // older folder's etag, and the next reader asks for a new one.
+  const view = await host.fetch(`/folder/view?app=${op.app}`, { method: "GET", headers: { [FOLDER_HEADER]: put.etag } });
+  if (view.ok) await bucket.put(viewKey(op.app), await view.text());
+  else await view.body?.cancel();
+  lap("view");
   return withTiming(new Response(withCentre(text, timing), { status: res.status, headers: { "content-type": "application/json" } }), timing);
 }
 

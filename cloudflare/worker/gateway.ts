@@ -1,5 +1,6 @@
 import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
 import { isPageRequest, servePage, type PageDeps } from "./page";
+import { asOf, readView, serverTiming, type ViewStore } from "./views";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -25,8 +26,9 @@ import { isPageRequest, servePage, type PageDeps } from "./page";
 //
 // Sessions and tokens are kept hashed by the AuthStore (a Durable Object in
 // worker/index.ts). Requests about one app go to that app's Durable Object
-// with the principal attached; `GET /apps` is answered from R2 summaries
-// without starting a container. This file holds no Cloudflare binding, so its
+// with the principal attached; `GET /apps` is answered from R2 summaries, and
+// one app's status and history from its stored view (worker/views.ts), without
+// starting a container. This file holds no Cloudflare binding, so its
 // rules are tested on their own (test/gateway.test.ts).
 // ---------------------------------------------------------------------------
 
@@ -76,6 +78,10 @@ export interface GatewayDeps {
   readonly now?: () => number;
   /** The owner page's files and what it says about the deployment; without it, the page's routes are not served. */
   readonly page?: PageDeps;
+  /** The apps' stored views; without them, every read of an app asks its Durable Object for the view. */
+  readonly views?: ViewStore;
+  /** Keeps work going after the answer is out (a container started ahead of a decision); without it, none is started. */
+  readonly waitUntil?: (work: Promise<unknown>) => void;
 }
 
 export const SESSION_PREFIX = "aps_";
@@ -274,6 +280,16 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   const text = method === "POST" ? await readText(request) : "";
   const reason = ownerOnly(rest, method === "POST" ? parseObject(text) : {});
   if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; an agent token cannot do it`);
+  // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
+  if (op === "read" && (rest.length === 0 || rest[0] === "history")) {
+    const steps: Record<string, number> = {};
+    const viewed = await readView(deps, name, url.origin, principal, steps);
+    // Where the time of a read went, in the Worker: each R2 read, and the container when the stored view was not usable.
+    const header = { "server-timing": serverTiming(steps, viewed.ok ? viewed.source : undefined) };
+    if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status, header);
+    const timing = { centre: { view: viewed.ms }, view: viewed.source };
+    return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing }, 200, header);
+  }
   return forward(deps, name, op, principal, url.origin, url.pathname, method, text);
 }
 

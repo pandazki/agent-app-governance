@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { API_HEADER, API_LEVEL, PRINCIPAL_HEADER } from "../src/protocol";
+import { API_HEADER, API_LEVEL, PRINCIPAL_HEADER, VIEW_SCHEMA } from "../src/protocol";
 import { handle, sha256, SESSION_MS, type GatewayDeps } from "../worker/gateway";
 import { MemoryAuth } from "./stack";
 
@@ -18,6 +18,8 @@ async function gateway(now = { value: Date.now() }) {
     app: () => ({
       fetch: async (req) => {
         forwarded.push({ path: new URL(req.url).pathname, method: req.method, principal: JSON.parse(req.headers.get(PRINCIPAL_HEADER)!), op: req.headers.get("x-appgov-op") });
+        // Status and history are answered from the app's view, which a Durable Object computes when none is stored.
+        if (req.headers.get("x-appgov-op") === "view") return Response.json({ schema: VIEW_SCHEMA, app: "todo", folder_etag: "e1", computed_at: "", status: { ok: true }, history: [], plans: {} });
         return Response.json({ ok: true });
       },
     }),

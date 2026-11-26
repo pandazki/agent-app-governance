@@ -313,11 +313,35 @@ export async function install(options) {
   const login = await fetch(`${url}/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: ownerKey }), signal: AbortSignal.timeout(30_000) });
   if (login.status !== 200) throw new Stop(`the owner key does not sign in at ${url} (${login.status})`);
   const signedIn = (await login.json()).session;
+  await storeViews(url, signedIn);
   await fetch(`${url}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${signedIn}` } }).catch(() => {});
   if (!existsSync(paths.owner)) writePrivate(paths.owner, { url, key: ownerKey });
   log(`installed. The Host answers at ${url}; its owner page is ${url}/ (sign in with the key in the owner credentials file)`);
   log(`owner credentials: ${paths.owner} (keep this file private; the CLI's login reads it)`);
   log(`next: node cloudflare/bin/appgov.mjs --host ${url} login, then token create --write <the directory your agent works in>`);
+}
+
+/**
+ * Every app's stored view, which the owner page and the CLI's status and history read without a container: an app
+ * saved by a build before stored views, or whose view this build reads in another shape, gets one now, from its
+ * container, while the installer waits, instead of when the owner first opens it. Reading changes nothing in the app.
+ */
+async function storeViews(url, session) {
+  const headers = { authorization: `Bearer ${session}` };
+  let apps = [];
+  try {
+    const res = await fetch(`${url}/apps`, { headers, signal: AbortSignal.timeout(30_000) });
+    apps = res.ok ? ((await res.json()).apps ?? []) : [];
+  } catch {}
+  for (const name of apps.map((app) => app?.app_id).filter((name) => typeof name === "string" && /^[a-z][a-z0-9-]{0,29}$/.test(name))) {
+    try {
+      const res = await fetch(`${url}/apps/${name}`, { headers, signal: AbortSignal.timeout(300_000) });
+      const view = (await res.json().catch(() => ({}))).timing?.view;
+      log(res.ok ? `${name}: ${view === "stored" ? "its stored view is current" : "its view was read through its container and stored (unless its Durable Object still runs the build before)"}` : `${name}: not read (${res.status}); its first view will ask its container`);
+    } catch {
+      log(`${name}: not read in time; its first view will ask its container`);
+    }
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
