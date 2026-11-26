@@ -12,7 +12,7 @@ export const UI_KEYS = [
   "cancel", "copy", "copied", "details", "my_apps", "waiting_title", "section_waiting_hint", "all_apps", "empty_title", "empty_body",
   "open", "review", "open_new", "open_app", "hint_title", "history_title", "running_now", "go_back", "show_earlier", "one_way",
   "change_title", "decide_title", "decision_title", "decide_lead", "approve", "deny", "read_only_decide", "confirm_title", "confirm_go", "deny_title", "deny_body", "deny_reason", "deny_go",
-  "working", "failed", "not_released", "why_other", "preview_again_working", "preview_open_hint", "checked_title", "why_title", "back_undoes", "data_title", "back_go", "back_current", "back_not_earlier",
+  "working", "failed", "not_released", "why_other", "preview_again_working", "preview_open_hint", "checked_title", "why_title", "back_undoes", "data_title", "back_go", "back_current", "back_not_earlier", "back_failed_start", "back_failed_platform", "back_failed_kept", "back_failed_unsure",
   "theme_light", "theme_dark", "language",
   "signin_title", "signin_lead", "signin_where", "signin_key", "signin_go", "signin_wrong", "signin_limited", "sign_out", "owner_signed_out", "loading",
   "take_down", "bring_back", "publish_again", "clear", "clear_go", "life_title", "clear_deletes", "clear_keeps", "down_title", "not_running", "check_now",

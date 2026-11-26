@@ -126,7 +126,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 ## 收起和清除应用
 
-应用在不在，来自两个地方：Host 自己的记录（主人有没有通过这个 Host 收起它，也就是历史里有一条 `take_down`，后面没有跟着 `bring_back` 或 `publish_again`），以及 PneumaSpace 对这个应用的说法。每次 `status`、`list` 和页面上的每个应用，以及每次提交、批准和回退之前，Host 都会问 PneumaSpace；在这个版本上，每次读取都是当场去问。`status` 和 `list` 把 PneumaSpace 的回答放在 `runtime` 里（`serving`、`removed`、`gone` 或 `unknown`，带 `checked_at`），把主人的收起放在 `taken_down` 里（谁、什么时候、通过什么），把两者合起来的结论放在 `standing` 里。`status` 还带有 `choices`（主人现在能做什么）和 `clearing`（清除会删掉什么、留下什么）。
+应用在不在，来自两个地方：Host 自己的记录（主人有没有通过这个 Host 收起它，也就是历史里有一条 `take_down`，后面没有跟着 `bring_back` 或 `publish_again`），以及 PneumaSpace 对这个应用的说法。每次 `status`、`list` 和页面上的每个应用，以及每次提交、批准和回退之前，Host 都会问 PneumaSpace；在这个版本上，每次读取都是当场去问。`status` 和 `list` 把 PneumaSpace 的回答放在 `runtime` 里（`serving`、`removed`、`gone` 或 `unknown`，带 `checked_at`；PneumaSpace 让一个在提供服务的应用因闲置而休眠时还带 `asleep: true`，`status` 会说明这很正常），把主人的收起放在 `taken_down` 里（谁、什么时候、通过什么），把两者合起来的结论放在 `standing` 里。`status` 还带有 `choices`（主人现在能做什么）和 `clearing`（清除会删掉什么、留下什么）。
 
 | `standing` | 意思 | 主人能做什么 |
 | --- | --- | --- |

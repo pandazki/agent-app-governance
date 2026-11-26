@@ -788,7 +788,11 @@ describe("the address and the recorded state stay in step", () => {
     await host.submit({ name: "todo", intent: "tweak", agent: "codex" });
     space.refuse = (_name, dir) => dir.endsWith(join("versions", "v1"));
 
-    await expect(host.undo("todo", "back")).rejects.toThrow("the address was not touched and still serves v2");
+    const err = await host.undo("todo", "back").then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(HostError);
+    expect((err as HostError).message).toContain("the address was not touched and still serves v2");
+    // What a client needs to say that the app runs as before.
+    expect(err).toMatchObject({ reason: "publish_failed", fields: { serving_version: "v2" } });
     expect((await host.status("todo")).active_version).toBe("v2");
     expect(readFileSync(app("todo", "src/server.ts"), "utf8")).toBe("export const changed = true;\n");
     expect(host.history("todo").at(-1)).toMatchObject({
@@ -806,7 +810,9 @@ describe("the address and the recorded state stay in step", () => {
     await host.submit({ name: "todo", intent: "add a file", agent: "codex" });
     space.unhealthy = (_name, dir) => dir.endsWith(join("versions", "v1"));
 
-    await expect(host.undo("todo", "back")).rejects.toThrow("the address is back on v2");
+    const err = await host.undo("todo", "back").then(() => null, (e: unknown) => e);
+    expect((err as HostError).message).toContain("the address is back on v2");
+    expect(err).toMatchObject({ reason: "published_unhealthy", fields: { serving_version: "v2" } });
     expect(space.live.get("todo")).toMatchObject({ boots: true });
     expect(space.live.get("todo")!.files).toContain("src/extra.ts");
     expect((await host.status("todo")).active_version).toBe("v2");
@@ -818,6 +824,18 @@ describe("the address and the recorded state stay in step", () => {
       base_version: "v2",
       address_note: "the address is back on v2",
     });
+  });
+
+  test("an undo whose older version does not come up, and the version before neither, names no version the address serves", async () => {
+    await host.create("todo");
+    edit("todo", "src/extra.ts", "export const extra = 1;\n");
+    await host.submit({ name: "todo", intent: "add a file", agent: "codex" });
+    space.unhealthy = () => true;
+
+    const err = await host.undo("todo", "back").then(() => null, (e: unknown) => e);
+    expect((err as HostError).message).toContain("the address could not be put back on v2");
+    expect(err).toMatchObject({ reason: "published_unhealthy" });
+    expect((err as HostError).fields?.serving_version).toBeUndefined();
   });
 });
 

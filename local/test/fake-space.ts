@@ -97,10 +97,13 @@ export class FakeSpace implements SpaceRuntime {
     return `app "${name}" is managed by ${manager.name}${manager.url ? ` (${manager.url})` : ""}; acting here goes around it. Act through ${manager.name}, or name it to act anyway: X-Pneuma-Space-Manager: ${manager.name} (appctl --manager ${manager.name})`;
   }
 
+  /** Apps PneumaSpace reports asleep after being idle. */
+  readonly asleep = new Set<string>();
+
   async app(name: string): Promise<SpaceApp | null> {
     if (this.unreachable) throw new Error("PneumaSpace admin answered 502 to GET /api/apps");
     const app = this.live.get(name);
-    return app ? { name, status: app.status, expiresAt: app.expiresAt, manager: app.manager ? { ...app.manager } : null } : null;
+    return app ? { name, status: app.status, expiresAt: app.expiresAt, manager: app.manager ? { ...app.manager } : null, ...(this.asleep.has(name) ? { asleep: true as const } : {}) } : null;
   }
 
   async publish(name: string, dir: string, options: PublishOptions = {}): Promise<PublishResult> {

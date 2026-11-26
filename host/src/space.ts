@@ -90,6 +90,11 @@ export interface SpaceApp {
   readonly expiresAt: number | null;
   /** Null when no manager is set: any write is accepted without naming one. */
   readonly manager: { readonly name: string; readonly url: string | null } | null;
+  /**
+   * True when PneumaSpace says the app's instance is asleep (stopped after being idle) and the app is not quarantined,
+   * so the next request starts it. Absent when it is awake or waking, when it is quarantined, or when the runtime does not say.
+   */
+  readonly asleep?: true;
 }
 
 /** What a publish printed, and the id of the app it published when appctl printed one (it does for an ephemeral app). */
@@ -274,7 +279,7 @@ export class Space implements SpaceRuntime {
   async app(name: string): Promise<SpaceApp | null> {
     const res = await this.admin("GET", "/api/apps");
     if (!res.ok) throw new Error(`PneumaSpace admin answered ${res.status} to GET /api/apps`);
-    const apps = (await res.json()) as { name?: string; status?: string; expiresAt?: number | null; manager?: { name: string; url?: string | null } | null }[];
+    const apps = (await res.json()) as { name?: string; status?: string; expiresAt?: number | null; manager?: { name: string; url?: string | null } | null; instance?: string; quarantine?: unknown }[];
     const found = apps.find((app) => app.name === name);
     if (!found) return null;
     // A PneumaSpace from before ADRs 0038 and 0039 sends neither field: a durable app nobody manages.
@@ -283,6 +288,8 @@ export class Space implements SpaceRuntime {
       status: String(found.status ?? ""),
       expiresAt: typeof found.expiresAt === "number" ? found.expiresAt : null,
       manager: found.manager ? { name: found.manager.name, url: found.manager.url ?? null } : null,
+      // A quarantined app answers 503 until it is released, so the next request would not start it.
+      ...(found.instance === "asleep" && !found.quarantine ? { asleep: true as const } : {}),
     };
   }
 

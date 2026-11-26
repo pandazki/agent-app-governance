@@ -29,7 +29,7 @@ cd local
 docker compose up -d --build
 ```
 
-The first build downloads base images and builds PneumaSpace and the Host from source, so it takes longer than later starts. Then six containers run: `gateway`, `runner`, `rustfs` and `redis` are PneumaSpace, `screenshot` takes the pictures on your apps page, and `host` is the Host. Run it from `local/`: the page then knows where the apps folder is on your computer.
+The first build downloads base images and builds PneumaSpace and the Host from source, so it takes longer than later starts. Then six containers run: `gateway`, `runner`, `rustfs` and `redis` are PneumaSpace, `screenshot` takes the pictures on your apps page, and `host` is the Host. Run it from `local/`: the page then knows where the apps folder is on your computer. What your apps store lives in these containers' Docker named volumes, not in this folder, so copying or backing up the folder does not take the data with it ([where things live](#where-things-live)).
 
 ## Open your apps page
 

@@ -64,6 +64,45 @@ describe("what the test check covered, read from the runner's report", () => {
     expect(testCoverage({ ok: true, output: spec(1), report: junit(["/elsewhere/src/a.test.ts"]) }, ROOT).app_tests).toBe("unknown");
   });
 
+  // What Node 24 and 26 write for a test with subtests: a <testsuite> around them, as for a describe block. The
+  // summary counts that test and its subtests as tests, and a describe block under "suites".
+  const summary = (tests: number, suites: number) => `ℹ tests ${tests}\nℹ suites ${suites}\nℹ pass ${tests}\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0`;
+  const testcase = (file: string) => `<testcase name="t" time="0.0003" classname="test" file="${file}"/>`;
+  const group = (...inside: string[]) => `<testsuite name="g" time="0.001" disabled="0" errors="0" tests="${inside.length}" failures="0" skipped="0">${inside.join("")}</testsuite>`;
+  const report = (...nodes: string[]) => `<?xml version="1.0" encoding="utf-8"?>\n<testsuites>${nodes.join("")}</testsuites>\n`;
+  const SDK = `${ROOT}/sdk/serve.test.ts`;
+  const APP = `${ROOT}/src/app.test.ts`;
+
+  test("a test with subtests is counted as the summary counts it, as one of the app's own (the trial's v5)", () => {
+    // Two SDK tests; in the app, a test holding one subtest, and a plain test: 5 tests, 3 of them the app's.
+    const coverage = testCoverage({ ok: true, output: summary(5, 0), report: report(testcase(SDK), testcase(SDK), group(testcase(APP)), testcase(APP)) }, ROOT);
+    expect(coverage).toMatchObject({ tests: 5, test_files: 2, app_tests: 3, app_test_files: 1 });
+    expect(coverage.note).toBe("5 tests ran in 2 files. The app's own: 3 tests in 1 file; the rest are the SDK's (sdk/).");
+    // Subtests nested twice: each level is a test.
+    expect(testCoverage({ ok: true, output: summary(4, 0), report: report(testcase(SDK), group(group(testcase(APP)))) }, ROOT)).toMatchObject({ tests: 4, app_tests: 3 });
+  });
+
+  test("describe blocks are not tests; beside tests with subtests they are told apart by the summary's count of them", () => {
+    // A describe block around two tests: 3 tests, 1 suite.
+    expect(testCoverage({ ok: true, output: summary(3, 1), report: report(testcase(SDK), group(testcase(APP), testcase(APP))) }, ROOT)).toMatchObject({ tests: 3, app_tests: 2 });
+    // A describe block holding a test with one subtest, beside another plain test: 4 tests (the parent, its subtest, two plain), 1 suite.
+    const both = testCoverage({ ok: true, output: summary(4, 1), report: report(testcase(SDK), group(group(testcase(APP)), testcase(APP))) }, ROOT);
+    expect(both).toMatchObject({ tests: 4, app_tests: 3, app_test_files: 1 });
+  });
+
+  test("when it matters which group is a test and the report cannot say, the app's share is unknown, and why", () => {
+    // One group in the SDK's tests and one in the app's, one describe block and one test with subtests: whose is which is not in the report.
+    const coverage = testCoverage({ ok: true, output: summary(5, 1), report: report(group(testcase(SDK)), testcase(SDK), group(testcase(APP)), testcase(APP)) }, ROOT);
+    expect(coverage).toMatchObject({ tests: 5, app_tests: "unknown", test_files: "unknown" });
+    expect(coverage.note).toBe(
+      "5 tests ran; how many of them are the app's own is unknown: the runner's per-file report writes tests with subtests and describe blocks alike, and here it matters which is which.",
+    );
+    // More groups left over than the summary has describe blocks: the two do not describe the same run.
+    expect(testCoverage({ ok: true, output: summary(2, 0), report: report(group(testcase(APP)), group(testcase(APP))) }, ROOT).note).toContain("does not match its summary");
+    // A group holding the tests of two files is not a shape Node writes.
+    expect(testCoverage({ ok: true, output: summary(3, 0), report: report(group(testcase(SDK), testcase(APP))) }, ROOT).app_tests).toBe("unknown");
+  });
+
   test("a TAP summary and a coloured spec summary are read too; no tests is zero of the app's own", () => {
     expect(testCoverage({ ok: true, output: "1..2\n# tests 2\n# pass 2\n# skipped 0\n# todo 0" }, ROOT).tests).toBe(2);
     expect(testCoverage({ ok: true, output: "\u001b[34mℹ tests 5\u001b[39m\n\u001b[34mℹ skipped 0\u001b[39m\n\u001b[34mℹ todo 0\u001b[39m" }, ROOT).tests).toBe(5);
@@ -158,6 +197,21 @@ describe("against Node's real test runner", () => {
     } else {
       expect(coverage).toMatchObject({ test_files: "unknown", app_tests: "unknown" });
     }
+  }, 60_000);
+
+  test("tests with subtests and describe blocks are counted as the runner's summary counts them", async () => {
+    writeFileSync(
+      join(root, "src", "c.test.mjs"),
+      "import test, { describe, it } from 'node:test';\n" +
+        "test('parent', async (t) => { await t.test('child', () => {}); });\n" +
+        "describe('group', () => { it('inside', () => {}); test('nested parent', async (t) => { await t.test('nested child', () => {}); }); });\n",
+    );
+    const run = await runCheckCommand(root, "node --test sdk/a.test.mjs src/b.test.mjs src/c.test.mjs", 60_000);
+    expect(run.ok).toBe(true);
+    const coverage = testCoverage(run, root);
+    // sdk: 2; b: 1 that ran; c: parent, child, inside, nested parent, nested child.
+    expect(coverage).toMatchObject({ tests: 8, skipped: 2 });
+    if (run.report!.includes(" file=")) expect(coverage).toMatchObject({ test_files: 3, app_tests: 6, app_test_files: 2 });
   }, 60_000);
 
   test("a test command that picks its own reporter still passes; the app's share is then unknown, and the note says why", async () => {
