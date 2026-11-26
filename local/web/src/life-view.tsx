@@ -4,7 +4,7 @@ import LoadingState from "../beautifui/primitives/LoadingState";
 import { Drawer } from "../beautifui/primitives/Recommendation";
 import { act, useNow, useOwner, usePage, useUi } from "./lib";
 import type { Checked, LifeCard, LifeVerb } from "./model";
-import { ContextNote } from "./context-note";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { RetryIcon } from "../beautifui/primitives/TaskRows";
 import { Failure, refusalText } from "./change-view";
 import { RichText, TextField } from "./parts";

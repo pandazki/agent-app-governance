@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
-import { ContextNote } from "./context-note";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import type { SignInModel } from "./model";
 import { Header, TextField } from "./parts";
 

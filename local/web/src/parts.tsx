@@ -4,6 +4,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button, buttonVariants } from "../beautifui/atoms/Button";
 import { Monogram } from "../beautifui/atoms/EntityChip";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { TaskPill } from "../beautifui/primitives/TaskRows";
 import { SentPill } from "../beautifui/primitives/Recommendation";
@@ -12,6 +13,22 @@ import { absoluteTime, act, hue, isMac, relativeTime, sayNext, useNow, useOwner,
 import type { Checked, Fact, Hint, Rich, Shot, Tone } from "./model";
 
 // --- words and moments ----------------------------------------------------------
+
+/** Keep host labels and path components intact, including hyphenated app names.
+ * A single exceptionally long component can be scrolled within the text. */
+export function Address({ text }: { text: string }) {
+  return (
+    <span className="address-text">
+      {text.split(/(?<=[/.?&#])(?=[^/])/u).map((part, i) => (
+        <span key={i}>{i > 0 && <wbr />}<span className="whitespace-nowrap">{part}</span></span>
+      ))}
+    </span>
+  );
+}
+
+function TextWithAddresses({ text }: { text: string }) {
+  return text.split(/(https?:\/\/[^\s)）]+)/iu).map((part, i) => i % 2 ? <Address key={i} text={part} /> : part);
+}
 
 export function RichText({ rich }: { rich: Rich }) {
   const { lang } = usePage();
@@ -151,6 +168,7 @@ export function OwnerPill() {
     location.href = page.links.home;
   };
   const [open, setOpen] = useState(false);
+  const pinned = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -159,6 +177,7 @@ export function OwnerPill() {
         if (event.key !== "Escape") return;
         if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
       } else if (ref.current?.contains(event.target as Node)) return;
+      pinned.current = false;
       setOpen(false);
     };
     document.addEventListener("mousedown", close);
@@ -172,19 +191,38 @@ export function OwnerPill() {
   const label = state === "checking" ? ui.owner_checking : yes ? ui.owner_yes : session ? ui.owner_signed_out : ui.owner_no;
   const tone = state === "lost" ? "text-orange" : "text-ink-2";
   const panelId = useId();
+  const help = state === "off" ? ui.owner_off : state === "lost" ? ui.owner_lost : ui.owner_help;
+  const how = !yes && state !== "off" && !session;
   return (
-    <div ref={ref} className="relative">
-      <button type="button" aria-label={label} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((v) => !v)} className={`context-trigger rounded-full bg-field ${tone}`}>
+    <div ref={ref} className="relative"
+      onPointerEnter={(event) => { if (event.pointerType !== "touch") setOpen(true); }}
+      onPointerLeave={() => { if (!pinned.current && !ref.current?.querySelector(":focus-visible")) setOpen(false); }}
+      onFocus={(event) => { if (event.target.matches(":focus-visible")) setOpen(true); }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) { pinned.current = false; setOpen(false); }
+      }}>
+      <button type="button" aria-label={label} aria-expanded={open} aria-controls={panelId} aria-describedby={`${panelId}-help`} onClick={() => {
+        pinned.current = !pinned.current;
+        setOpen(pinned.current);
+      }} className={`context-trigger rounded-full bg-field ${tone}`}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
           <circle cx="12" cy="8" r="3.5" /><path d="M4.5 20c0-4.3 3.2-7 7.5-7s7.5 2.7 7.5 7" />
         </svg>
       </button>
-      {open && (
-        <div id={panelId} role="dialog" aria-label={ui.owner_help_title} className="absolute right-0 top-10 z-40 w-[min(20rem,calc(100vw-2.5rem))] overflow-hidden rounded-card bg-surface shadow-overlay" style={{ animation: "pop-in 160ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "top left" }}>
+      <div hidden={!open} className="absolute right-0 top-full z-40 pt-1">
+        <div id={panelId} role="dialog" aria-label={ui.owner_help_title} className="w-[min(20rem,calc(100vw-2.5rem))] overflow-hidden rounded-card bg-surface shadow-overlay">
           <div className="primitive-card-pad">
             <p className="text-[13px] font-semibold text-ink">{label}</p>
-            <p className="mt-2 text-[12.5px] font-medium text-ink">{ui.owner_help_title}</p>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{state === "off" ? ui.owner_off : state === "lost" ? ui.owner_lost : ui.owner_help}</p>
+            <div id={`${panelId}-help`}>
+              <p className="mt-2 text-[12.5px] font-medium text-ink">{ui.owner_help_title}</p>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{help}</p>
+              {how && (
+                <>
+                  <p className="mt-2 text-[12px] text-ink-3">{ui.owner_how}</p>
+                  <code className="mt-1 block rounded-chip bg-field px-1.5 py-1 font-mono text-[11px] text-ink-2 shadow-hairline">[host] owner link …/#owner=…</code>
+                </>
+              )}
+            </div>
             {session && yes && (
               <div className="mt-3 flex justify-end">
                 <Button variant="secondary" size="sm" className="text-[12.5px]" disabled={leaving} onClick={signOut}>
@@ -192,15 +230,9 @@ export function OwnerPill() {
                 </Button>
               </div>
             )}
-            {!yes && state !== "off" && !session && (
-              <>
-                <p className="mt-2 text-[12px] text-ink-3">{ui.owner_how}</p>
-                <code className="mt-1 block rounded-chip bg-field px-1.5 py-1 font-mono text-[11px] text-ink-2 shadow-hairline">[host] owner link …/#owner=…</code>
-              </>
-            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -210,16 +242,16 @@ export function SearchButton({ onOpen }: { onOpen: () => void }) {
   const [mac, setMac] = useState(true);
   useEffect(() => setMac(isMac()), []);
   return (
-    <button
+    <ContextNote label={ui.search_open} control={(id) => <button
       type="button"
       onClick={onOpen}
-      aria-label={ui.search_open}
+      aria-labelledby={id}
       className="inline-flex h-9 items-center gap-2 rounded-full bg-field px-3 text-[12px] font-medium text-ink-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.96] max-sm:w-9 max-sm:justify-center max-sm:px-0"
     >
       <SearchIcon />
       <span className="max-sm:hidden">{ui.search}</span>
       <kbd className="rounded-[4px] bg-surface px-1 font-mono text-[10.5px] text-ink-3 shadow-hairline max-sm:hidden">{mac ? "⌘K" : "Ctrl K"}</kbd>
-    </button>
+    </button>} />
   );
 }
 
@@ -278,13 +310,13 @@ export function Header({
             {pills}
           </div>
           {meta && <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{meta}</p>}
-          {!bare && owner.state !== "yes" && <p className="mt-1 text-[12px] text-ink-2">{owner.state === "checking" ? ui.owner_checking : owner.state === "lost" ? ui.owner_lost : ui.owner_no}</p>}
+          {!bare && owner.state !== "yes" && <p className={owner.state === "lost" ? "mt-1 text-[13px] font-medium text-orange" : "mt-1 text-[12px] text-ink-2"}>{owner.state === "checking" ? ui.owner_checking : owner.state === "lost" ? ui.owner_lost : ui.owner_no}</p>}
         </div>
         {action}
       </div>
       {page.done && (
         <div className="mt-4">
-          <SentPill>{page.done}</SentPill>
+          <SentPill><span className="min-w-0"><TextWithAddresses text={page.done} /></span></SentPill>
           {said && <p className="mt-2 max-w-[640px] text-[12.5px] leading-relaxed text-ink-2">{said}</p>}
         </div>
       )}
@@ -307,10 +339,10 @@ export function Details({ facts, label, checked }: { facts: readonly Fact[]; lab
             <dd className={`min-w-0 text-ink-2 [overflow-wrap:anywhere] ${fact.mono ? "font-mono text-[11.5px] leading-[1.6]" : "text-[12px] leading-relaxed"}`}>
               {fact.href ? (
                 <a href={fact.href} target="_blank" rel="noopener noreferrer" className="underline decoration-line-strong underline-offset-2 transition-colors hover:text-ink hover:decoration-current">
-                  {fact.value}
+                  <TextWithAddresses text={fact.value} />
                 </a>
               ) : (
-                fact.value
+                <TextWithAddresses text={fact.value} />
               )}
             </dd>
           </div>

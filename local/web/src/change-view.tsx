@@ -9,7 +9,7 @@ import { Section, Surface } from "../beautifui/site";
 import { act, fill, useOwner, usePage, useUi } from "./lib";
 import type { ChangeModel, Notice, Side } from "./model";
 import { TONE_VAR } from "./home";
-import { ContextNote } from "./context-note";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { ArrowOut, ButtonLink, DetailsBlock, EmptyState, Header, Picture, RichText, StatePill } from "./parts";
 
 /** What a failed write says: the plain line, and the Host's own words under Details. */

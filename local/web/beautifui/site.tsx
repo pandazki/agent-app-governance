@@ -5,6 +5,7 @@
 // the sidebar left out. Adapted: the toggle stores its choice under "appgov-theme" and follows the system until
 // the reader picks one; the site's default is dark.
 
+import { ContextNote } from "./primitives/ContextNote";
 import { useEffect, useState, type ReactNode } from "react";
 
 /** `<main>` of the site: a 960px column on the striped page, set off by a hairline. */
@@ -78,9 +79,9 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
         className="absolute inset-y-0.5 left-0.5 w-8 rounded-full bg-surface shadow-btn transition-transform duration-200"
         style={{ transform: `translateX(${theme === "dark" ? 32 : 0}px)`, transitionTimingFunction: "cubic-bezier(0.23, 1, 0.32, 1)", opacity: shown ? 1 : 0 }}
       />
-      <button
+      <ContextNote label={labels.light} control={(id) => <button
         type="button"
-        aria-label={labels.light}
+        aria-labelledby={id}
         aria-pressed={theme === "light"}
         onClick={() => pick("light")}
         className={`relative z-10 flex size-8 items-center justify-center rounded-full
@@ -90,10 +91,10 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
           <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
           <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
         </svg>
-      </button>
-      <button
+      </button>} />
+      <ContextNote label={labels.dark} control={(id) => <button
         type="button"
-        aria-label={labels.dark}
+        aria-labelledby={id}
         aria-pressed={theme === "dark"}
         onClick={() => pick("dark")}
         className={`relative z-10 flex size-8 items-center justify-center rounded-full
@@ -102,7 +103,7 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
         </svg>
-      </button>
+      </button>} />
     </div>
   );
 }

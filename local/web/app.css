@@ -93,3 +93,13 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-delay: 0s !important; }
 }
+
+.address-text {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: bottom;
+  overflow-wrap: normal;
+  word-break: normal;
+}

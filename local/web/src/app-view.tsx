@@ -6,8 +6,8 @@ import { Section, Surface } from "../beautifui/site";
 import { fill, useUi } from "./lib";
 import type { AppModel, HistoryRow, RowBadge, Tone } from "./model";
 import { noticeRow } from "./change-view";
-import { ArrowOut, ButtonLink, Details, Header, HintCard, Picture, RichText, StatePill } from "./parts";
-import { ContextNote } from "./context-note";
+import { Address, ArrowOut, ButtonLink, Details, Header, HintCard, Picture, RichText, StatePill } from "./parts";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { RuntimeCheck, CheckResult, LifeBlock } from "./life-view";
 
 const BADGE_STATUS: Record<RowBadge, TaskStatus> = { done: "done", failed: "failed", waiting: "waiting", plain: "plain", undo: "undo" };
@@ -102,10 +102,10 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
             <div className="flex min-h-12 items-center gap-1 px-3 py-1.5">
               {model.address ? (
                 <a href={model.address} target="_blank" rel="noopener noreferrer" className="address-link">
-                  <span className="[overflow-wrap:anywhere]">{model.addressText}</span>
+                  <Address text={model.addressText} />
                   <ArrowOut size={13} /><span className="sr-only">{ui.open_new}</span>
                 </a>
-              ) : <span className="min-w-0 font-mono text-[12px] text-ink-2 [overflow-wrap:anywhere]">{model.addressText}</span>}
+              ) : <span className="min-w-0 font-mono text-[12px] text-ink-2"><Address text={model.addressText} /></span>}
               <div className="ml-auto flex shrink-0 items-center">
                 {model.address && model.opensElsewhere && <ContextNote label={`${ui.details} · ${ui.open_new}`}>{model.opensElsewhere}{model.checked && <span className="mt-1 block"><RichText rich={model.checked.text} /></span>}</ContextNote>}
                 {model.checked && <RuntimeCheck checked={model.checked} />}

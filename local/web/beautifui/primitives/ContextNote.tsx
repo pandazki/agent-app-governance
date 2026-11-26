@@ -8,7 +8,16 @@ export const InfoIcon = (
   </svg>
 );
 
-export function ContextNote({ label, children, icon = InfoIcon, href }: { label: string; children: ReactNode; icon?: ReactNode; href?: string }) {
+type NoteProps = {
+  label: string;
+  children?: ReactNode;
+  icon?: ReactNode;
+  href?: string;
+  /** An action keeps its usual click. Its icon gets a visible equivalent of its accessible label. */
+  control?: (labelId: string) => ReactNode;
+};
+
+export function ContextNote({ label, children, icon = InfoIcon, href, control }: NoteProps) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
   const note = useRef<HTMLSpanElement>(null);
@@ -63,14 +72,15 @@ export function ContextNote({ label, children, icon = InfoIcon, href }: { label:
     <span ref={anchor} className="inline-flex shrink-0 items-center"
       onPointerEnter={(e) => { if (e.pointerType !== "touch") show(); }}
       onPointerLeave={() => { if (!pinned.current && !anchor.current?.querySelector(":focus-visible")) timer.current = setTimeout(close, 160); }}
+      onPointerUp={(e) => { if (control && e.pointerType === "touch") show(); }}
       onFocus={(e) => { if (e.target.matches(":focus-visible")) show(); }} onBlur={close}>
-      {href ? <a {...props} href={href}>{icon}</a> : (
+      {control ? control(id) : href ? <a {...props} href={href}>{icon}</a> : (
         <button {...props} type="button" aria-expanded={open} aria-controls={id} onClick={() => {
           if (pinned.current) close();
           else { pinned.current = true; show(); }
         }}>{icon}</button>
       )}
-      <span id={id} ref={note} popover="manual" role="tooltip" className="context-note" hidden={!open}>{children}</span>
+      <span id={id} ref={note} popover="manual" role="tooltip" className="context-note" hidden={!open}>{children ?? label}</span>
     </span>
   );
 }

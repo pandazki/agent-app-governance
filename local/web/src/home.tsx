@@ -1,4 +1,4 @@
-import { ContextNote } from "./context-note";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { buttonVariants } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
 import { ValuePill } from "../beautifui/atoms/ValuePill";
