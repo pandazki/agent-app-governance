@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readSpaceManifest, sourceDiff } from "../../host/src/artifact";
@@ -13,12 +13,14 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function assess(change: (draft: string) => void) {
+/** `base` makes the active version from the template; the draft starts as that version and gets `change`. */
+function assess(change: (draft: string) => void, base: (active: string) => void = () => {}) {
   const active = mkdtempSync(join(tmpdir(), "cf-policy-a-"));
   const draft = mkdtempSync(join(tmpdir(), "cf-policy-d-"));
   dirs.push(active, draft);
   cpSync(TEMPLATE, active, { recursive: true });
-  cpSync(TEMPLATE, draft, { recursive: true });
+  base(active);
+  cpSync(active, draft, { recursive: true });
   change(draft);
   return classifyRisks(policy, { diff: sourceDiff(active, draft), activeRoot: active, draftRoot: draft, before: readSpaceManifest(active), after: readSpaceManifest(draft) });
 }
@@ -78,6 +80,29 @@ describe("the Cloudflare edition's risk preset", () => {
     const result = assess((d) => manifest(d, (m) => delete m.capabilities.static));
     expect(result.risks).not.toContain("destructive_definition");
     expect(result.oneWay).toEqual([]);
+  });
+
+  test("a job declared with its file, dropped, or given another schedule carries only risks the standing rule approves", () => {
+    const withJob = (dir: string, schedule: string) => {
+      manifest(dir, (m) => (m.capabilities.cron = { triggers: { digest: { schedule } } }));
+      mkdirSync(join(dir, "app", "jobs"), { recursive: true });
+      writeFileSync(join(dir, "app", "jobs", "digest.mjs"), "export default async function () {}\n");
+    };
+    const added = assess((d) => withJob(d, "0 6 * * *"));
+    expect([...added.risks].sort()).toEqual(["definition_additive", "source_code_change"]);
+    expect(added.reasons).toContain("declares capability cron");
+    const dropped = assess(
+      (d) => {
+        manifest(d, (m) => delete m.capabilities.cron);
+        rmSync(join(d, "app", "jobs"), { recursive: true });
+      },
+      (a) => withJob(a, "0 6 * * *"),
+    );
+    expect([...dropped.risks].sort()).toEqual(["release_change", "source_code_change"]);
+    expect(dropped.oneWay).toEqual([]);
+    const rescheduled = assess((d) => withJob(d, "30 7 * * 1"), (a) => withJob(a, "0 6 * * *"));
+    expect(rescheduled.risks).toEqual(["source_code_change"]);
+    for (const { risks } of [added, dropped, rescheduled]) expect(risks.every((risk) => policy.auto_approve.includes(risk))).toBe(true);
   });
 
   test("new SQL that drops a table is destructive and one-way", () => {
