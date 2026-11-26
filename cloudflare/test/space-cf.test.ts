@@ -127,6 +127,12 @@ describe("the Cloudflare plane as the Host's runtime", () => {
     expect(quota.ok).toBe(false);
     expect(!quota.ok && quota.refused).toContain("ephemeral apps are all in use");
     plane.ephemeralQuota = 3;
+    // The same refusal with ephemeral apps to spare is the tenant's storage.
+    plane.storageFull = true;
+    const storage = await previews(600).boot("todo-pv0003", appDir());
+    expect(!storage.ok && storage.refused).toContain("PneumaSpace refused to publish the preview: the workspace's storage is full, not its ephemeral apps (0 of 3 in use).");
+    expect(!storage.ok && storage.refused).toContain("A preview discarded in the last few minutes still holds its share");
+    plane.storageFull = false;
     plane.maxTtl = 300;
     const ttl = await previews(600).boot("todo-pv0002", appDir());
     expect(!ttl.ok && ttl.refused).toContain("300");

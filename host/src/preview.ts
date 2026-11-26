@@ -55,6 +55,14 @@ function refusal(output: string, ttlSeconds: number): string | undefined {
   try {
     quota = JSON.parse(/^quota (\{.*\})$/m.exec(output)?.[1] ?? "null") ?? undefined;
   } catch {}
+  if (quota?.resource === "ephemeral" && typeof quota.used === "number" && typeof quota.limit === "number" && quota.used < quota.limit) {
+    // PneumaSpace refuses a new app with the same code when the tenant's storage is full, and ephemeral apps are left.
+    return (
+      `PneumaSpace refused to publish the preview: the workspace's storage is full, not its ephemeral apps (${quota.used} of ${quota.limit} in use). ` +
+      `Each app and each preview holds a share of it. ${fine} A preview discarded in the last few minutes still holds its share until PneumaSpace has purged it, so trying again in a few minutes may work; ` +
+      "otherwise the PneumaSpace owner frees storage by purging an app"
+    );
+  }
   if (quota?.resource === "ephemeral") {
     return (
       `PneumaSpace refused to publish the preview: the tenant's ephemeral apps are all in use (${String(quota.used)} of ${String(quota.limit)}), ` +

@@ -32,6 +32,8 @@ export class FakePlane {
   readonly apps: FakeApp[] = [];
   readonly calls: FakeCall[] = [];
   ephemeralQuota = 3;
+  /** Whether the tenant's storage is full: PneumaSpace then refuses a new app with the code it uses for ephemeral apps. */
+  storageFull = false;
   maxTtl = 3600;
   /**
    * How many apps may be awake at once, as the tenant's `awake` quota. When set, the plane behaves as the real one does
@@ -114,7 +116,7 @@ export class FakePlane {
       if (ephemeral) {
         const ttl = ephemeral.ttlSeconds;
         if (typeof ttl !== "number" || ttl < 1 || ttl > this.maxTtl) return this.error(400, "ttl", `ttlSeconds must be a whole number from 1 to ${this.maxTtl}.`);
-        if (this.live().filter((app) => app.expiresAt !== null && app.status !== "purging").length >= this.ephemeralQuota) {
+        if (this.storageFull || this.live().filter((app) => app.expiresAt !== null && app.status !== "purging").length >= this.ephemeralQuota) {
           return this.error(409, "ephemeral_quota", "The space has reached its ephemeral application or allocated storage limit.");
         }
       }
