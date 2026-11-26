@@ -24,7 +24,7 @@ export interface Room {
 /** An awake app goes to sleep after 5 minutes without requests on PneumaSpace's default policy; the wait is shorter. */
 export const DEFAULT_ROOM: Room = { waitMs: 60_000, pollMs: 5_000 };
 
-/** Publishes in all, the first included: each refused one is a failed start on PneumaSpace. */
+/** Publishes in all, the first included: before pandazki/pneuma-space#71, PneumaSpace counted each refused one as a failed start of the app. */
 const ATTEMPTS = 3;
 
 /** The line a runtime puts into the output of a publish refused because every awake slot was held. */

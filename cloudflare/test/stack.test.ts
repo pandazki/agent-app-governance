@@ -555,6 +555,23 @@ describe("the Cloudflare edition end to end, offline", () => {
       await cli(copy(), ["discard"]);
     });
 
+    test("a create with every slot held waits, then says who holds them; no app and no preview is left", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("full-one", true);
+      const two = stack.plane.outsider("full-two", true);
+      awake.push(one, two);
+      const result = await cli(apps(), ["create", "roomless"]);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("preview_refused");
+      expect(result.out).toContain("full-one (not managed by this Host) and full-two (not managed by this Host)");
+      expect(result.out).toContain("trying again later will work");
+      expect(stillOnPlane()).toEqual([]);
+      expect(stack.plane.find("roomless")).toBeUndefined();
+      expect(existsSync(join(apps(), "roomless"))).toBe(false);
+      expect(actionsOn("full-one")).toEqual([]);
+      expect(actionsOn("full-two")).toEqual([]);
+    });
+
     test("a slot that comes free while the Host waits is taken, and the change goes through", async () => {
       stack.plane.awakeQuota = 2;
       const one = stack.plane.outsider("busy-one", true);
