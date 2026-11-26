@@ -421,7 +421,7 @@ function printTiming(what, wall, timing, header) {
   const row = (depth, name, ms) => lines.push(`${"  ".repeat(depth + 1)}${name.padEnd(58 - depth * 2)} ${String(ms).padStart(6)} ms`);
   const centre = timing?.centre ?? Object.fromEntries(String(header ?? "").split(";").filter(Boolean).map((kv) => kv.split("=")).map(([k, v]) => [k, Number(v)]));
   const steps = Array.isArray(timing?.steps) ? timing.steps : [];
-  if (centre.view !== undefined && centre.save === undefined) row(0, timing?.view === "stored" ? "read the stored view from R2 (no container)" : "the container computed the view, the centre stored it", centre.view);
+  if (centre.view !== undefined && centre.save === undefined) row(0, { stored: "read the stored view from R2 (no container)", legacy: "read through the app's Durable Object, still on the build before" }[timing?.view] ?? "the container computed the view, the centre stored it", centre.view);
   if (centre.container !== undefined) row(0, "start the Host's container (0 when it runs)", centre.container);
   if (centre.load !== undefined) row(0, "load the record from R2 into the container", centre.load);
   if (centre.op !== undefined) row(0, "the Host's operation, as the centre waited for it", centre.op);

@@ -253,7 +253,10 @@ describe("reads from the stored view", () => {
       expect([back.status, back.model.kind]).toEqual([200, "plan"]);
       // (The container it then starts ahead of going back is refused the same way, in the background.)
       expect(opsSince(from).filter((op) => op !== "warm")).toEqual(["view", "read", "read", "read"]);
-      expect((await cli(copy(), ["status"])).code).toBe(0);
+      const status = await cli(copy(), ["status", "--json"]);
+      expect([status.code, JSON.parse(status.out).timing.view]).toEqual([0, "legacy"]);
+      const read = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
+      expect(read.headers.get("server-timing")).toMatch(/container;dur=\d+, source;desc="legacy"$/);
       expect(stack.bucket.objects.has(viewKey("notes"))).toBe(false);
     } finally {
       buildBefore = false;

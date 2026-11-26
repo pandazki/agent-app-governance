@@ -33,7 +33,7 @@ export interface ViewStore {
 }
 
 export type ViewAnswer =
-  | { readonly ok: true; readonly view: StoredView; readonly source: "stored" | "container"; readonly ms: number }
+  | { readonly ok: true; readonly view: StoredView; readonly source: "stored" | "container" | "legacy"; readonly ms: number }
   | { readonly ok: false; readonly status: number; readonly missing: boolean; readonly error: string };
 
 /** Whether `value` is a view of `app` of this Worker's shape, and, given an etag, of the folder that has it. */
@@ -101,7 +101,7 @@ async function legacy(deps: GatewayDeps, app: string, origin: string, principal:
   }
   const { timing: _timing, ...answer } = status.value;
   const view: StoredView = { schema: VIEW_SCHEMA, app, folder_etag: "", computed_at: new Date().toISOString(), status: answer, history: Array.isArray(history.value.history) ? history.value.history : [], plans: {} };
-  return { ok: true, view, source: "container", ms: Date.now() - began };
+  return { ok: true, view, source: "legacy", ms: Date.now() - began };
 }
 
 /**
