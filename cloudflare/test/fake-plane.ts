@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 
 // A stand-in for PneumaSpace's Cloudflare plane (/api/v1), as much of it as CfSpace uses, with the rules that
 // matter to the Host: names are unique, a managed app takes named operations only with the manager's header,
-// ephemeral must match on upload and release, the tenant's ephemeral quota, and app answers that carry a
-// Server-Timing span while the plane's own refusals do not. Every call is kept in `calls`.
+// ephemeral must match on upload and release, the tenant's ephemeral quota, the tenant's awake slots (when
+// `awakeQuota` is set), and app answers that carry a Server-Timing span while the plane's own refusals do not. Every
+// call is kept in `calls`.
 
 export interface FakeApp {
   id: string;
@@ -32,6 +33,13 @@ export class FakePlane {
   readonly calls: FakeCall[] = [];
   ephemeralQuota = 3;
   maxTtl = 3600;
+  /**
+   * How many apps may be awake at once, as the tenant's `awake` quota. When set, the plane behaves as the real one does
+   * for a Node app: a release puts the app's running instance away and then starts the new one, which needs a slot, and
+   * a request to an app that sleeps wakes it, which needs one too; with every slot held both are refused with 503
+   * `compute_quota`, and a refused release leaves the app as it was. Unset, nothing counts.
+   */
+  awakeQuota: number | null = null;
   /** When set, every app answers with this status and no app span (as a plane that refuses would). */
   refuseApps = false;
   /**
@@ -78,7 +86,17 @@ export class FakePlane {
 
   private detail(app: FakeApp) {
     const current = app.releases.find((r) => r.number === app.current);
-    return { ...this.listed(app), current: current ? { number: current.number, digest: current.digest } : null, releases: app.releases.map(({ number, digest }) => ({ number, digest })) };
+    return {
+      ...this.listed(app),
+      runtime: { state: app.awake ? "awake" : "asleep", running: app.awake },
+      current: current ? { number: current.number, digest: current.digest } : null,
+      releases: app.releases.map(({ number, digest }) => ({ number, digest })),
+    };
+  }
+
+  /** Every slot held by another app than `app`: waking `app` is refused. */
+  private full(app: FakeApp): boolean {
+    return this.awakeQuota !== null && this.live().filter((other) => other.awake && other !== app).length >= this.awakeQuota;
   }
 
   private needsManager(app: FakeApp, manager: string | null): Response | null {
@@ -87,7 +105,7 @@ export class FakePlane {
   }
 
   private api(method: string, parts: string[], body: Record<string, unknown>, manager: string | null): Response {
-    if (method === "GET" && parts[0] === "me") return Response.json({ tenants: [{ id: "t1", quota: { ephemeral: this.ephemeralQuota } }] });
+    if (method === "GET" && parts[0] === "me") return Response.json({ tenants: [{ id: "t1", quota: { ephemeral: this.ephemeralQuota, awake: this.awakeQuota ?? 10 } }] });
     if (parts[0] === "tenants" && parts[2] === "apps") {
       if (method === "GET") return Response.json({ items: this.live().map((app) => this.listed(app)) });
       const name = String(body.name);
@@ -132,6 +150,12 @@ export class FakePlane {
       if (!upload?.body || upload.app !== app.id) return this.error(409, "upload", "Upload not complete.");
       if (Boolean(body.ephemeral) !== upload.ephemeral) return this.error(409, "kind", "ephemeral must match the upload.");
       const pkg = JSON.parse(new TextDecoder().decode(upload.body)) as { files: { path: string; body: string }[] };
+      if (this.awakeQuota !== null) {
+        // The running instance is put away first; the new one then needs a slot of its own.
+        app.awake = false;
+        if (this.full(app)) return this.error(503, "compute_quota", "The space has reached its running application limit.");
+        app.awake = true;
+      }
       const number = app.releases.length + 1;
       app.releases.push({ number, digest: upload.digest, files: Object.fromEntries(pkg.files.map((f) => [f.path, Buffer.from(f.body, "base64").toString("utf8")])) });
       app.current = number;
@@ -177,6 +201,7 @@ export class FakePlane {
     const app = this.live().find((a) => a.name === name && a.status === "registered");
     if (this.refuseApps || !app) return this.error(app ? 503 : 404, "app", "Application is not active.");
     const release = app.releases.find((r) => r.number === app.current)!;
+    if (!app.awake && this.full(app)) return this.error(503, "compute_quota", "The space has reached its running application limit.");
     app.awake = true;
     if (path === "" && release.files["public/index.html"] !== undefined) return new Response(release.files["public/index.html"], { headers: { "content-type": "text/html", "server-timing": "static;dur=1" } });
     if (path !== "" && path !== "appgov-probe") {
@@ -211,6 +236,13 @@ export class FakePlane {
   vanish(name: string): void {
     const app = this.live().find((a) => a.name === name);
     if (app) app.status = "purged";
+  }
+
+  /** An app someone else made, outside any Host, as a person publishes with PneumaSpace's own CLI; `awake` as if just opened. */
+  outsider(name: string, awake = false): FakeApp {
+    const app: FakeApp = { id: `a${++this.seq}`, name, status: "registered", expiresAt: null, manager: null, releases: [{ number: 1, digest: "outside", files: { "public/index.html": "<h1>outside</h1>" } }], current: 1, awake };
+    this.apps.push(app);
+    return app;
   }
 
   /** The app named `name` as the plane holds it now, in any status but purged. */

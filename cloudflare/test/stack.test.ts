@@ -65,7 +65,8 @@ const apps = () => join(root, "apps");
 const copy = () => join(apps(), "todo");
 
 beforeAll(async () => {
-  stack = await startStack();
+  // Waiting for an awake slot is bounded; short here, so a test of a wait that ends without one does not take a minute.
+  stack = await startStack({ room: { waitMs: 1500, pollMs: 100 } });
   root = mkdtempSync(join(tmpdir(), "appgov-cf-stack-"));
   ownerHome = join(root, "owner-home");
   agentHome = join(root, "agent-home");
@@ -475,5 +476,73 @@ describe("the Cloudflare edition end to end, offline", () => {
     status = (await cli(second, ["status"])).out;
     expect(status).toContain(`changed here, not submitted: app/public/app.js (edited here on ${next}, the version this copy holds, so fetch refuses while they are here`);
     expect((await cli(second, ["discard"])).code).toBe(0);
+  });
+
+  describe("the workspace's awake slots", () => {
+    const wake = (name: string) => fetch(`${stack.plane.origin}/apps/${name}/`, { headers: { authorization: `Bearer ${FAKE_TOKEN}` } }).then((r) => r.text());
+    const stillOnPlane = () => stack.plane.apps.filter((a) => a.expiresAt !== null && a.status !== "purged").map((a) => a.name);
+    const actionsOn = (name: string) => stack.plane.calls.filter((c) => c.path === `/apps/${stack.plane.find(name)!.id}/actions`).map((c) => (c.body as { type: string }).type);
+    const change = (word: string) => {
+      const style = join(copy(), "app", "public", "style.css");
+      writeFileSync(style, `${readFileSync(style, "utf8")}\n/* ${word} */\n`);
+    };
+    afterAll(() => {
+      stack.plane.awakeQuota = null;
+    });
+
+    test("with every slot held, one by the app's own live instance, that instance sleeps to make room and the change goes through", async () => {
+      stack.plane.awakeQuota = 2;
+      const outside = stack.plane.outsider("made-elsewhere", true);
+      await wake("todo");
+      expect(stack.plane.find("todo")!.awake).toBe(true);
+      change("own slot");
+      const result = await cli(copy(), ["submit", "A change while both slots are held"]);
+      expect(result.out).toMatch(/published v\d+/);
+      expect(result.code).toBe(0);
+      // Only the app's own instance was put to sleep; the app made elsewhere was not touched.
+      expect(actionsOn("todo")).toContain("sleep");
+      expect(actionsOn("made-elsewhere")).toEqual([]);
+      expect(outside.awake).toBe(true);
+      expect(stillOnPlane()).toEqual([]);
+      outside.awake = false;
+    });
+
+    test("with every slot held by apps this Host may not put to sleep, the submit waits, then says who holds them; no preview is left", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("held-one", true);
+      const two = stack.plane.outsider("held-two", true);
+      const before = stack.plane.serving("todo");
+      change("no slot");
+      const began = Date.now();
+      const result = await cli(copy(), ["submit", "A change with no slot to be had"]);
+      expect(Date.now() - began).toBeGreaterThanOrEqual(1500);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("preview_refused");
+      expect(result.out).toContain("PneumaSpace refused to start the preview: all 2 awake slots of the workspace are held");
+      expect(result.out).toContain("held-one (not managed by this Host)");
+      expect(result.out).toContain("held-two (not managed by this Host)");
+      expect(result.out).toContain("Nothing was found wrong with the change itself, and nothing was released.");
+      expect(result.out).toContain("submit again");
+      // The preview that could not start was discarded before the answer, and nothing else was touched.
+      expect(stillOnPlane()).toEqual([]);
+      expect(actionsOn("held-one")).toEqual([]);
+      expect(actionsOn("held-two")).toEqual([]);
+      expect(stack.plane.serving("todo")).toEqual(before);
+      one.awake = false;
+      two.awake = false;
+      await cli(copy(), ["discard"]);
+    });
+
+    test("a slot that comes free while the Host waits is taken, and the change goes through", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("busy-one", true);
+      const two = stack.plane.outsider("busy-two", true);
+      setTimeout(() => (two.awake = false), 400);
+      change("slot frees");
+      const result = await cli(copy(), ["submit", "A change that waits for a slot"]);
+      expect(result.out).toMatch(/published v\d+/);
+      expect(stillOnPlane()).toEqual([]);
+      one.awake = false;
+    });
   });
 });
