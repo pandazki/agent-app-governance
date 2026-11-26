@@ -33,6 +33,9 @@ beforeAll(async () => {
           { name: "todo-pvab12", status: "purging", expiresAt: 1_800_000_000_000, manager: { name: "appgov", url: null } },
           // A PneumaSpace from before ADRs 0038 and 0039 sends neither field.
           { name: "old", status: "registered" },
+          // Asleep after being idle; the second also quarantined, so the next request would get 503, not start it.
+          { name: "idle", status: "registered", expiresAt: null, manager: null, instance: "asleep", quarantine: null },
+          { name: "stuck", status: "registered", expiresAt: null, manager: null, instance: "asleep", quarantine: { reason: "crashed 3 times" } },
         ]),
       );
       return;
@@ -93,5 +96,11 @@ describe("the PneumaSpace client", () => {
     expect(await space().app("todo")).toEqual({ name: "todo", status: "registered", expiresAt: null, manager: { name: "appgov", url: "http://127.0.0.1:8090/" } });
     expect(await space().app("old")).toEqual({ name: "old", status: "registered", expiresAt: null, manager: null });
     expect(await space().app("nothing")).toBeNull();
+  });
+
+  test("an app PneumaSpace has asleep reads as asleep, unless it is quarantined; an awake one says nothing", async () => {
+    expect(await space().app("idle")).toEqual({ name: "idle", status: "registered", expiresAt: null, manager: null, asleep: true });
+    expect((await space().app("stuck"))?.asleep).toBeUndefined();
+    expect((await space().app("todo"))?.asleep).toBeUndefined();
   });
 });

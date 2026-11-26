@@ -74,6 +74,8 @@ docker compose up -d --build
 
 Run it from `local/`, so the page knows where the apps folder is.
 
+The stack keeps the apps' stored data in Docker named volumes, not in this folder: copying the folder does not copy the data, and `docker compose down -v` deletes it. If the person asked you to keep everything in one folder, tell them this rather than changing where the data goes.
+
 ### Check it worked, without the person
 
 From `local/`:

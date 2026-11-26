@@ -542,6 +542,8 @@ function standingLines(s) {
   return [];
 }
 const serves = (s) => !s.standing || s.standing === "running" || s.standing === "unconfirmed" || (s.standing === "down" && s.runtime?.state === "serving");
+/** Said only while PneumaSpace has the app asleep: an agent that sees it so should not keep it awake. */
+const ASLEEP_IS_NORMAL = "asleep is normal: the next request wakes it, with its data; do not keep it awake";
 
 /** Every app in a few lines each: version and address, then only what deserves a look. */
 function printApps({ governance, apps }) {
@@ -687,6 +689,7 @@ switch (command) {
     out(await call("GET", base), (s) => {
       console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} ${serves(s) ? `at ${s.address}` : "(not serving)"}`);
       for (const line of standingLines(s)) console.log(line);
+      if (s.standing === "running" && s.runtime?.asleep) console.log(ASLEEP_IS_NORMAL);
       // The Host cannot vouch for what the address serves: say so whatever the versions are, and say nothing that assumes one.
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
       else if (s.serving_version && s.serving_version !== s.active_version) {

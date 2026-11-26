@@ -551,7 +551,13 @@ class ChangeRefused extends Error {
 
 /** An undo whose older version could not be published or did not answer. Thrown before any data is touched. */
 class UndoNotPublished extends Error {
-  constructor(readonly reason: string, readonly why: string, readonly addressNote: string) {
+  constructor(
+    readonly reason: string,
+    readonly why: string,
+    readonly addressNote: string,
+    /** The version the address serves after the attempt, when the Host can say: untouched, or put back and answering. */
+    readonly servesNow: string | null,
+  ) {
     super(`${reason}: ${why}`);
   }
 }
@@ -597,7 +603,13 @@ const DECLARE =
 
 /** Names what still serves only when the Host can say it: not while nobody has seen the address answer (see `cannotVouch`). */
 function untouched(record: ChangeRecord, serving: string | null): string {
-  return serving && cannotVouch(record, serving)?.undoUnfinished !== false ? `${NOT_TOUCHED} and still serves ${serving}` : NOT_TOUCHED;
+  const still = stillServes(record, serving);
+  return still ? `${NOT_TOUCHED} and still serves ${still}` : NOT_TOUCHED;
+}
+
+/** What an untouched address serves, when the Host can say it (see `untouched`). */
+function stillServes(record: ChangeRecord, serving: string | null): string | null {
+  return serving && cannotVouch(record, serving)?.undoUnfinished !== false ? serving : null;
 }
 
 /**
@@ -1022,18 +1034,25 @@ export class AppHost {
    * `attempted` names what went out, for the case where it cannot be taken off the address.
    */
   private async settleAddress(name: string, record: ChangeRecord, servingVersion: string | null, attempted = "the rejected build"): Promise<string> {
+    return (await this.putAddressBack(name, record, servingVersion, attempted)).note;
+  }
+
+  /** `settleAddress`, also saying whether the address now serves `servingVersion` and answered there. */
+  private async putAddressBack(name: string, record: ChangeRecord, servingVersion: string | null, attempted: string): Promise<{ readonly note: string; readonly back: boolean }> {
     if (!servingVersion) {
-      if (await this.opts.space.takeDown(name, this.manager.name)) return `${name} was removed from PneumaSpace again`;
-      return (
-        `${name} could not be removed from PneumaSpace and is still there, so the name stays taken. ` +
-        `Remove it with \`appctl remove ${name} --manager ${this.manager.name}\`, then \`appctl purge ${name} --manager ${this.manager.name}\` (or in the PneumaSpace console), before creating ${name} again`
-      );
+      if (await this.opts.space.takeDown(name, this.manager.name)) return { note: `${name} was removed from PneumaSpace again`, back: false };
+      return {
+        note:
+          `${name} could not be removed from PneumaSpace and is still there, so the name stays taken. ` +
+          `Remove it with \`appctl remove ${name} --manager ${this.manager.name}\`, then \`appctl purge ${name} --manager ${this.manager.name}\` (or in the PneumaSpace console), before creating ${name} again`,
+        back: false,
+      };
     }
     const restored = await this.opts.space.publish(name, record.versionDir(servingVersion), { manager: this.manager });
     const probe = restored.code === 0 ? await this.opts.space.probe(name) : NOT_PROBED;
-    if (restored.code === 0 && probe.ok) return `the address is back on ${servingVersion}`;
+    if (restored.code === 0 && probe.ok) return { note: `the address is back on ${servingVersion}`, back: true };
     const why = restored.code === 0 ? `GET / -> ${probe.status} ${probe.detail}` : restored.output.slice(-300);
-    return `the address could not be put back on ${servingVersion} and may still serve ${attempted} (${why.trim()})`;
+    return { note: `the address could not be put back on ${servingVersion} and may still serve ${attempted} (${why.trim()})`, back: false };
   }
 
   /**
@@ -2163,9 +2182,11 @@ export class AppHost {
               const result = await this.opts.space.publish(name, record.versionDir(target), { manager: this.manager });
               const answered = result.code === 0 ? await this.opts.space.probe(name) : NOT_PROBED;
               if (result.code !== 0 || !answered.ok) {
-                const addressNote = result.code === 0 ? await this.settleAddress(name, record, serving, olderCode) : untouched(record, serving);
+                const settled = result.code === 0 ? await this.putAddressBack(name, record, serving, olderCode) : null;
+                const addressNote = settled ? settled.note : untouched(record, serving);
+                const servesNow = settled ? (settled.back ? serving : null) : stillServes(record, serving);
                 const why = result.code !== 0 ? result.output.slice(-400) : `GET / -> ${answered.status} ${answered.detail}`;
-                throw new UndoNotPublished(result.code !== 0 ? "publish_failed" : "published_unhealthy", why.trim(), addressNote);
+                throw new UndoNotPublished(result.code !== 0 ? "publish_failed" : "published_unhealthy", why.trim(), addressNote, servesNow);
               }
               probe = answered;
               released = true;
@@ -2228,7 +2249,14 @@ export class AppHost {
         if (err instanceof UndoNotPublished) {
           // The older code did not go out, so no data was touched.
           failed(err.reason, err.addressNote);
-          throw new HostError(502, `could not republish ${target} (${err.why}); ${err.addressNote}${withData ? "; stored data was not touched" : ""}`, err.reason);
+          // `serving_version` lets a client say plainly that the app runs as before; absent when the Host cannot vouch for it.
+          throw new HostError(
+            502,
+            `could not republish ${target} (${err.why}); ${err.addressNote}${withData ? "; stored data was not touched" : ""}`,
+            err.reason,
+            undefined,
+            err.servesNow ? { serving_version: err.servesNow } : undefined,
+          );
         }
         if (dataAttempted && !dataRestored) {
           // The data capability threw after the older code went out, and that release was put back. What
