@@ -434,9 +434,11 @@ async function storeViews(url, session) {
   } catch {}
   for (const name of apps.map((app) => app?.app_id).filter((name) => typeof name === "string" && /^[a-z][a-z0-9-]{0,29}$/.test(name))) {
     try {
+      const began = Date.now();
       const res = await fetch(`${url}/apps/${name}`, { headers, signal: AbortSignal.timeout(300_000) });
       const view = (await res.json().catch(() => ({}))).timing?.view;
-      log(res.ok ? `${name}: ${view === "stored" ? "its stored view is current" : "its view was read through its container and stored (unless its Durable Object still runs the build before)"}` : `${name}: not read (${res.status}); its first view will ask its container`);
+      const took = `${((Date.now() - began) / 1000).toFixed(1)} s`;
+      log(res.ok ? `${name}: ${view === "stored" ? `its stored view is current (${took})` : `its view was read through its container and stored, in ${took} (unless its Durable Object still runs the build before)`}` : `${name}: not read (${res.status}); its first view will ask its container`);
     } catch {
       log(`${name}: not read in time; its first view will ask its container`);
     }
