@@ -27,16 +27,18 @@ const PATH = '/usr/local/bin:/usr/bin:/bin';
 const log = (line) => console.log(`[supervisor] ${line}`);
 
 // --- 1. the Host ------------------------------------------------------------------------------------------
-const host = spawn('setpriv', ['--reuid=host', '--regid=host', '--init-groups', '--', 'bun', 'run', join(EDITION, 'src/serve.ts')], {
-  cwd: EDITION,
-  stdio: 'inherit',
-  env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('APPGOV_'))), PATH, HOME: '/home/host', TMPDIR: '/tmp', LANG: 'C.UTF-8' },
-});
-host.on('exit', (code, signal) => {
-  log(`the Host exited (${signal ?? code}); the container ends with it`);
-  process.exit(code ?? 1);
-});
-for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => host.kill(sig));
+function startHost() {
+  const host = spawn('setpriv', ['--reuid=host', '--regid=host', '--init-groups', '--', 'bun', 'run', join(EDITION, 'src/serve.ts')], {
+    cwd: EDITION,
+    stdio: 'inherit',
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('APPGOV_'))), PATH, HOME: '/home/host', TMPDIR: '/tmp', LANG: 'C.UTF-8' },
+  });
+  host.on('exit', (code, signal) => {
+    log(`the Host exited (${signal ?? code}); the container ends with it`);
+    process.exit(code ?? 1);
+  });
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => host.kill(sig));
+}
 
 // --- 2. the tests -----------------------------------------------------------------------------------------
 function junitOptions(file) {
@@ -159,6 +161,14 @@ async function runTests({ source, command, report, timeout_ms }) {
 
 mkdirSync(INSTALLS, { recursive: true, mode: 0o700 });
 chmodSync('/var/cache/appgov', 0o700);
+if (process.argv[2] === '--seed') {
+  // At image build (see the Dockerfile): the install a test run of `<dir>` makes, kept in the image, so that the
+  // first tests of an app with the same package files in a new container reuse it instead of installing.
+  const seeded = await runTests({ source: process.argv[3], command: 'npm ci --ignore-scripts' });
+  if (seeded.code !== 0) console.error(seeded.output);
+  process.exit(seeded.code);
+}
+startHost();
 mkdirSync('/run/appgov', { recursive: true, mode: 0o755 });
 rmSync(SOCKET, { force: true });
 const server = createServer((req, res) => {
