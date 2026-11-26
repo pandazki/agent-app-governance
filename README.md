@@ -26,7 +26,7 @@ Every change goes through one service, the Host, before it is live. Whichever ag
 
 ![An app's history: each version with what was asked, who made it and what held](./docs/images/history-en.png)
 
-**Every version is recorded.** The record says what was asked, which agent made the change, and which checks held. It is kept in the app's own folder, so it travels with the app.
+**Every version is recorded.** The record says what was asked, which agent made the change, and which checks held. An attempt that did not go live is listed too. The record is kept in the app's own folder, so it travels with the app.
 
 ![Going back past a one-way change: what is undone and what happens to the data](./docs/images/go-back-en.png)
 
