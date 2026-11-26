@@ -106,7 +106,7 @@ export class Previews {
   async boot(app: string, root: string, check?: { readonly file: string; readonly requests: readonly PreviewRequest[] }, own: readonly string[] = []): Promise<Booted> {
     const { space, manager } = this.opts;
     const published = await timed("publish the preview", () =>
-      publishMakingRoom(space, this.opts.room ?? DEFAULT_ROOM, manager.name, own, () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager })),
+      publishMakingRoom(space, this.opts.room ?? DEFAULT_ROOM, manager.name, app, own, () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager })),
     );
     let output = `[preview ${app}] ${published.output}`;
     if (published.code !== 0) {

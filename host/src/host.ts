@@ -1322,7 +1322,7 @@ export class AppHost {
 
     // Nothing is put to sleep for a release, which puts the app's own instance away itself; it only waits for a slot.
     const published = await timed("publish the release", () =>
-      publishMakingRoom(this.opts.space, this.opts.room ?? DEFAULT_ROOM, this.manager.name, [], () => this.opts.space.publish(name, releaseRoot, { manager: this.manager })),
+      publishMakingRoom(this.opts.space, this.opts.room ?? DEFAULT_ROOM, this.manager.name, name, [], () => this.opts.space.publish(name, releaseRoot, { manager: this.manager })),
     );
     const probe = published.code === 0 ? await timed("wait until the release answers", () => this.opts.space.probe(name)) : NOT_PROBED;
     if (published.code !== 0 || !probe.ok) {

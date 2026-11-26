@@ -449,7 +449,9 @@ export class CfSpace implements SpaceRuntime {
       .filter((d): d is Detail => d !== null && (d.runtime?.running === true || d.runtime?.state === "awake" || d.runtime?.state === "waking"))
       .map((d) => ({ name: d.name, manager: d.manager?.name ?? null }));
     const limit = me.tenants.find((t) => t.id === this.tenantId)?.quota?.awake;
-    return { limit: typeof limit === "number" ? limit : apps.length, apps };
+    // Without the quota, which slots are free is not known; the caller then treats the answer as unknown.
+    if (typeof limit !== "number") throw new Error("PneumaSpace did not say how many apps may be awake");
+    return { limit, apps };
   }
 
   // No `purge`: the plane gives tokens no purge authority, on purpose. Clearing an app leaves it removed here, with its
