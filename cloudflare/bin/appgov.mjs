@@ -1033,19 +1033,27 @@ switch (command) {
     if (flags.owner) await confirmAsOwner("submit", "Submitting as the owner");
     const entries = localEntries(DIR);
     const uploaded = signature(entries);
-    const result = await call(
-      "POST",
-      `${base}/changes`,
-      {
-        intent: args.join(" "),
-        ...agentFields(agent),
-        ...(flags.oneWay !== undefined ? { one_way: flags.oneWay } : {}),
-        ...(baseVersion ? { base_version: baseVersion } : {}),
-        tree: { files: entries.map(([path, body]) => ({ path, body: body.toString("base64") })) },
-        held: heldBy(DIR, entries),
-      },
-      { owner: Boolean(flags.owner) },
-    );
+    // A file whose bytes are that path's in the version this copy is on goes by its SHA-1; the centre takes it from that version.
+    const onBase = baseVersion ? join(DIR, FRAMEWORK_DIR, "versions", baseVersion) : null;
+    const asSent = (byReference) =>
+      entries.map(([path, body]) =>
+        byReference && onBase && existsSync(join(onBase, path)) && readFileSync(join(onBase, path)).equals(body)
+          ? { path, same: createHash("sha1").update(body).digest("hex") }
+          : { path, body: body.toString("base64") },
+      );
+    const payload = (files) => ({
+      intent: args.join(" "),
+      ...agentFields(agent),
+      ...(flags.oneWay !== undefined ? { one_way: flags.oneWay } : {}),
+      ...(baseVersion ? { base_version: baseVersion } : {}),
+      tree: { files },
+      held: heldBy(DIR, entries),
+    });
+    const files = asSent(true);
+    let { status, data: result } = await send("POST", `${base}/changes`, payload(files), { owner: Boolean(flags.owner) });
+    // A file the centre did not take from its version (the record here is not the centre's, or an older centre): send every file whole.
+    if (status === 400 && result.reason === "bad_tree" && files.some((file) => file.same)) ({ status, data: result } = await send("POST", `${base}/changes`, payload(asSent(false)), { owner: Boolean(flags.owner) }));
+    if (status < 200 || status >= 300) fail(refusalText(result, `POST ${base}/changes answered ${status}`), refusalCode(result.reason));
     await sync(DIR, result, uploaded, entries);
     let code = result.status === "published" ? 0 : result.status === "needs_approval" ? 2 : 1;
     out(result, (data) => (code = printChange(data)));

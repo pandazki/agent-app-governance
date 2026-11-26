@@ -172,18 +172,31 @@ export function copySignature(root: string): string | null {
   return existsSync(root) ? signFiles(root, sourceFiles(root)) : null;
 }
 
-export function replaceWorkingTree(appRoot: string, files: unknown): string[] {
+/**
+ * Replace the source files in `appRoot` with the submitted tree. A file is sent as `{ path, body }` (base64), or as
+ * `{ path, same }`: the same bytes as that path in `base`, the version the working copy is on (which the caller has
+ * checked is the app's version), with `same` their SHA-1. The file is taken from that version, and refused when it
+ * is not there or its SHA-1 differs.
+ */
+export function replaceWorkingTree(appRoot: string, files: unknown, base?: string): string[] {
   if (!Array.isArray(files)) throw new Error("tree.files must be a list of { path, body }");
   const staging = mkdtempSync(join(tmpdir(), "appgov-tree-"));
   try {
     let bytes = 0;
     const seen = new Set<string>();
-    for (const file of files as { path?: unknown; body?: unknown }[]) {
+    for (const file of files as { path?: unknown; body?: unknown; same?: unknown }[]) {
       const path = cleanPath(file?.path);
       if (seen.has(path)) throw new Error(`the tree names ${path} twice`);
       seen.add(path);
-      if (typeof file.body !== "string") throw new Error(`${path}: body must be base64 text`);
-      const body = Buffer.from(file.body, "base64");
+      let body: Buffer;
+      if (file.same !== undefined) {
+        if (!base) throw new Error(`${path} is sent as a file of the version the working copy is on, and the request does not say which version that is`);
+        const there = join(appRoot, FRAMEWORK_DIR, "versions", base, path);
+        if (!existsSync(there)) throw new Error(`${path} is sent as the file ${base} holds, and ${base} holds no such file`);
+        body = readFileSync(there);
+        if (createHash("sha1").update(body).digest("hex") !== file.same) throw new Error(`${path} is sent as the file ${base} holds, and ${base} holds other bytes`);
+      } else if (typeof file.body === "string") body = Buffer.from(file.body, "base64");
+      else throw new Error(`${path}: body must be base64 text`);
       bytes += body.length;
       if (bytes > TREE_LIMIT_BYTES) throw new Error(`the tree is larger than ${TREE_LIMIT_BYTES} bytes`);
       const to = join(staging, path);

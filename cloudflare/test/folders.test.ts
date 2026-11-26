@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TREE } from "../../host/src/artifact";
-import { copySignature, dirSignature, exportWorkingCopy, packFolder, unpackFolder } from "../src/folder";
+import { createHash } from "node:crypto";
+import { copySignature, dirSignature, exportWorkingCopy, packFolder, replaceWorkingTree, unpackFolder } from "../src/folder";
 import { FOLDER_HEADER, folderKey, summaryKey } from "../src/protocol";
 import { operate, type HostPort } from "../worker/folders";
 import { MemoryBucket } from "./stack";
@@ -176,5 +177,34 @@ describe("the working copy an answer carries", () => {
     expect(copy.omitted?.source).toBe(false);
     expect(paths(copy)).toContain("app/server.mjs");
     expect(paths(copy)).toContain(".pneuma-framework/versions/v3/app/server.mjs");
+  });
+});
+
+describe("a submitted tree", () => {
+  const sha1 = (text: string) => createHash("sha1").update(text).digest("hex");
+  /** An app on v1, whose source and v1 hold app/server.mjs. */
+  function app() {
+    const root = temp();
+    for (const dir of [root, join(root, ".pneuma-framework", "versions", "v1")]) {
+      mkdirSync(join(dir, "app"), { recursive: true });
+      writeFileSync(join(dir, "app", "server.mjs"), "one");
+    }
+    return root;
+  }
+  const body = (text: string) => Buffer.from(text).toString("base64");
+
+  test("a file sent as the version's own is taken from that version", () => {
+    const root = app();
+    expect(replaceWorkingTree(root, [{ path: "app/server.mjs", same: sha1("one") }, { path: "app/new.mjs", body: body("new") }], "v1")).toEqual(["app/new.mjs", "app/server.mjs"]);
+    expect(readFileSync(join(root, "app", "server.mjs"), "utf8")).toBe("one");
+    expect(readFileSync(join(root, "app", "new.mjs"), "utf8")).toBe("new");
+  });
+
+  test("one the version does not hold as sent is refused, and nothing is replaced", () => {
+    const root = app();
+    expect(() => replaceWorkingTree(root, [{ path: "app/server.mjs", same: sha1("two") }], "v1")).toThrow("app/server.mjs is sent as the file v1 holds, and v1 holds other bytes");
+    expect(() => replaceWorkingTree(root, [{ path: "app/other.mjs", same: sha1("one") }], "v1")).toThrow("v1 holds no such file");
+    expect(() => replaceWorkingTree(root, [{ path: "app/server.mjs", same: sha1("one") }])).toThrow("the request does not say which version that is");
+    expect(readFileSync(join(root, "app", "server.mjs"), "utf8")).toBe("one");
   });
 });

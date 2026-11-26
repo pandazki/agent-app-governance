@@ -357,7 +357,7 @@ export function createContainerServer(opts: ContainerServerOptions) {
         const tree = input.tree as { files?: unknown } | undefined;
         if (tree !== undefined) {
           try {
-            replaceWorkingTree(appRoot(name), tree?.files);
+            replaceWorkingTree(appRoot(name), tree?.files, typeof input.base_version === "string" ? input.base_version : undefined);
           } catch (err) {
             throw new HostError(400, `the submitted working tree was not taken: ${err instanceof Error ? err.message : String(err)}`, "bad_tree");
           }

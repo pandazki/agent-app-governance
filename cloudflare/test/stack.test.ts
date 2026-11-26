@@ -541,6 +541,16 @@ describe("the Cloudflare edition end to end, offline", () => {
     }
     expect(stack.operations.slice(mark)).toEqual(["write", "read"]);
     expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(await fresh(), ".pneuma-framework")));
+
+    // A file the record here says the version holds, and the centre's does not: the submit sends every file whole, and goes through.
+    const synced = JSON.parse(readFileSync(join(copy(), ".appgov", "synced.json"), "utf8")) as { active_version: string };
+    for (const dir of [copy(), join(copy(), ".pneuma-framework", "versions", synced.active_version)]) writeFileSync(join(dir, "app", "public", "only-here.txt"), "only here\n");
+    mark = stack.operations.length;
+    expect((await cli(copy(), ["submit", "A fourth change"])).out).toMatch(/published v\d+/);
+    expect(stack.operations.slice(mark)).toEqual(["write", "write"]);
+    const centre2 = await fresh();
+    expect(readFileSync(join(centre2, "app", "public", "only-here.txt"), "utf8")).toBe("only here\n");
+    expect(tree(join(copy(), ".pneuma-framework"))).toEqual(tree(join(centre2, ".pneuma-framework")));
   });
 
   describe("the workspace's awake slots", () => {
