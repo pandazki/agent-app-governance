@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { folderKey } from "../src/protocol";
+import { FAKE_TOKEN } from "./fake-plane";
 import { startStack, type Stack } from "./stack";
 
 // The CLI against the whole edition on this machine (test/stack.ts): the done list of the Cloudflare edition,
@@ -174,6 +175,24 @@ describe("the Cloudflare edition end to end, offline", () => {
       await cli(copy(), ["discard"]);
     }
     expect((await cli(copy(), ["status"])).out).not.toContain("note.txt");
+  });
+
+  test("a preview that echoes the Host's token gets it back removed: neither the refusal nor the history holds it", async () => {
+    // As if PneumaSpace forwarded the Authorization header and the app's route echoed it, past the cut and at its end.
+    stack.plane.answer = (_app, request) =>
+      request.method === "PUT" ? new Response(`{"seen":"Bearer ${FAKE_TOKEN}"}${"x".repeat(70_000)}Bearer ${FAKE_TOKEN}`, { status: 500 }) : undefined;
+    writeFileSync(join(copy(), "app", "public", "note.txt"), "a change\n");
+    try {
+      const result = await cli(copy(), ["submit", "Save the shelf"]);
+      expect(result.out).toContain("preview_requests_failed");
+      expect(result.out).toContain(`got: status 500; the reply: {"seen":"Bearer [the Host's credential, removed]"}xxx`);
+      expect(result.out).not.toContain(FAKE_TOKEN);
+      expect(result.out).not.toContain(FAKE_TOKEN.slice(0, 8));
+      expect((await cli(copy(), ["history"])).out).not.toContain(FAKE_TOKEN.slice(0, 8));
+    } finally {
+      stack.plane.answer = null;
+      await cli(copy(), ["discard"]);
+    }
   });
 
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {

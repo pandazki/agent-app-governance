@@ -151,14 +151,14 @@ export function previewUrl(base: string, app: string, path: string): URL | undef
   return url.origin === root.origin && (url.pathname === root.pathname.slice(0, -1) || url.pathname.startsWith(root.pathname)) ? url : undefined;
 }
 
-/** Read at most `max` bytes of a reply's body as text, then stop reading. */
-export async function boundedText(res: Response, max = PREVIEW_REQUEST_LIMITS.replyBytes): Promise<string> {
-  if (!res.body) return "";
+/** Read at most `max` bytes of a reply's body as text, then stop reading; `cut` when there was more. */
+async function readBounded(res: Response, max: number): Promise<{ text: string; cut: boolean }> {
+  if (!res.body) return { text: "", cut: false };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
-    while (size < max) {
+    while (size <= max) {
       const { done, value } = await reader.read();
       if (done) break;
       chunks.push(value);
@@ -167,7 +167,45 @@ export async function boundedText(res: Response, max = PREVIEW_REQUEST_LIMITS.re
   } finally {
     await reader.cancel().catch(() => {});
   }
-  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, max));
+  return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, max)), cut: size > max };
+}
+
+/** Read at most `max` bytes of a reply's body as text, then stop reading. */
+export async function boundedText(res: Response, max = PREVIEW_REQUEST_LIMITS.replyBytes): Promise<string> {
+  return (await readBounded(res, max)).text;
+}
+
+/** What a reply shows where the credential the Host sent with the request came back. */
+export const CREDENTIAL_MARKER = "[the Host's credential, removed]";
+
+/**
+ * A preview runs the agent's code, and its reply is shown to the agent (an excerpt in a refusal) and is what
+ * `expect.contains` is checked against. PneumaSpace removes platform credentials before an app sees a request; in case
+ * one ever came back anyway, each credential the Host sent is replaced before anything reads the reply. When the reply
+ * was cut, so is a start of a credential at its end, or `contains` could try it piece by piece. Only a credential as it
+ * was sent is caught: an app that rewrites it gets past this, which is why the platform's removal is what holds.
+ */
+export function scrubCredentials(text: string, credentials: readonly string[], cut = false): string {
+  let out = text;
+  for (const secret of credentials) {
+    if (!secret) continue;
+    out = out.split(secret).join(CREDENTIAL_MARKER);
+    if (cut) {
+      for (let k = Math.min(secret.length - 1, out.length); k > 0; k--) {
+        if (out.endsWith(secret.slice(0, k))) {
+          out = out.slice(0, -k) + CREDENTIAL_MARKER;
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** A preview's reply as the Host reads it: at most `replyBytes`, with the credentials it sent replaced (see above). */
+export async function replyText(res: Response, credentials: readonly string[]): Promise<string> {
+  const { text, cut } = await readBounded(res, PREVIEW_REQUEST_LIMITS.replyBytes);
+  return scrubCredentials(text, credentials, cut);
 }
 
 const excerpt = (text: string) => {

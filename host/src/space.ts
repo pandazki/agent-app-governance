@@ -1,4 +1,4 @@
-import { boundedText, previewUrl, PREVIEW_REQUEST_LIMITS, type SendToPreview } from "./preview-requests";
+import { previewUrl, replyText, scrubCredentials, PREVIEW_REQUEST_LIMITS, type SendToPreview } from "./preview-requests";
 import { spawn } from "node:child_process";
 
 // ---------------------------------------------------------------------------
@@ -353,9 +353,9 @@ export class Space implements SpaceRuntime {
         redirect: "manual",
         signal: AbortSignal.timeout(PREVIEW_REQUEST_LIMITS.eachMs),
       });
-      return { status: res.status, body: await boundedText(res) };
+      return { status: res.status, body: await replyText(res, [cookie, cookie.slice(cookie.indexOf("=") + 1)]) };
     } catch (err) {
-      return { status: 0, body: "", error: err instanceof Error ? err.message : String(err) };
+      return { status: 0, body: "", error: scrubCredentials(err instanceof Error ? err.message : String(err), [cookie, cookie.slice(cookie.indexOf("=") + 1)]) };
     }
   };
 

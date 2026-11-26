@@ -11,7 +11,7 @@ import {
   type SpaceRuntime,
   type SpaceState,
 } from "../../host/src/space";
-import { boundedText, previewUrl, PREVIEW_REQUEST_LIMITS, type SendToPreview } from "../../host/src/preview-requests";
+import { previewUrl, PREVIEW_REQUEST_LIMITS, replyText, scrubCredentials, type SendToPreview } from "../../host/src/preview-requests";
 import { measured, timed } from "../../host/src/steps";
 
 // ---------------------------------------------------------------------------
@@ -332,10 +332,10 @@ export class CfSpace implements SpaceRuntime {
         signal: AbortSignal.timeout(PREVIEW_REQUEST_LIMITS.eachMs),
       });
       const byApp = /(^|,)\s*(static|app)\b/.test(res.headers.get("server-timing") ?? "");
-      const body = await boundedText(res);
+      const body = await replyText(res, [this.opts.token]);
       return byApp ? { status: res.status, body } : { status: 0, body: "", error: `PneumaSpace answered ${res.status} for the app, not the app itself: ${body.slice(0, 300)}` };
     } catch (err) {
-      return { status: 0, body: "", error: err instanceof Error ? err.message : String(err) };
+      return { status: 0, body: "", error: scrubCredentials(err instanceof Error ? err.message : String(err), [this.opts.token]) };
     }
   };
 

@@ -8,7 +8,7 @@ import type { DataSnapshotCapability } from "@pneuma-framework/host-kit/change-r
 import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { agentLane } from "../src/agents";
 import { listFiles } from "@pneuma-framework/host-kit/workspace";
-import { pathProblem, PREVIEW_REQUEST_LIMITS, previewUrl, readPreviewRequests } from "../../host/src/preview-requests";
+import { CREDENTIAL_MARKER, pathProblem, PREVIEW_REQUEST_LIMITS, previewUrl, readPreviewRequests, scrubCredentials } from "../../host/src/preview-requests";
 import { FRAMEWORK_DIR, installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../../host/src/artifact";
 import { dataSnapshotFromEnv, hostUrlFromEnv, managerFromEnv, previewTtlFromEnv } from "../src/config";
 import { print } from "../src/drive";
@@ -3070,6 +3070,17 @@ describe("the requests an app declares, made against its preview", () => {
     expect((result as { detail: string }).detail).toContain('src/preview.json: request 1: "path" must start with a single "/": it is a path inside the app, not an address');
     expect((result as { detail: string }).detail).toContain("Nothing was published or released.");
     expect(space.log.filter((line) => line.startsWith("publish")).length).toBe(publishes);
+  });
+});
+
+describe("the Host's credential never comes back in a reply", () => {
+  test("each credential is replaced, and so is the start of one where the reply was cut", () => {
+    const secret = "pneuma_space_session=s3cr3t-value";
+    expect(scrubCredentials(`a ${secret} b ${secret}`, [secret])).toBe(`a ${CREDENTIAL_MARKER} b ${CREDENTIAL_MARKER}`);
+    expect(scrubCredentials("ends with pneuma_space_ses", [secret], true)).toBe(`ends with ${CREDENTIAL_MARKER}`);
+    // Not cut: an end that only looks like the start of one is the reply's own text.
+    expect(scrubCredentials("ends with pneuma_space_ses", [secret])).toBe("ends with pneuma_space_ses");
+    expect(scrubCredentials("nothing here", ["", secret], true)).toBe("nothing here");
   });
 });
 
