@@ -442,7 +442,7 @@ function printChange(result, appName) {
     if (result.changed_paths.length) console.log(`changed: ${result.changed_paths.join(", ")}`);
     if (result.guarantees.length === 0) console.log(NOTHING_CHECKED);
     else console.log(`risks: ${result.risks.join(", ")}; approved by: ${result.approved_by.join(", ")}`);
-    if (result.one_way) console.log(`ONE-WAY: ${String(result.one_way).replace(/\.+$/, "")}. Going back past this version needs the owner's confirmation.`);
+    if (result.one_way) console.log(`ONE-WAY: ${result.one_way}${/[.!?。！？]"?$/.test(result.one_way) ? "" : "."} Going back past this version needs the owner's confirmation.`);
     if (result.note) console.log(result.note);
     if (result.test_warning) console.log(result.test_warning);
     if (result.preview_requests) console.log(result.preview_requests.note);
