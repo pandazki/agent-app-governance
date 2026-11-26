@@ -56,7 +56,8 @@ export function usable(value: unknown, app: string, etag: string | null): value 
 /**
  * The app's view: stored when it is usable, from the container (which then stores it) when it is not. `timing` gets
  * how long each step took, in ms: `r2-view` (reading the stored view), `r2-head` (the folder's etag), `container`
- * (asking the app's Durable Object, when the stored view was not usable).
+ * (asking the app's Durable Object, when the stored view was not usable), `legacy` (the reads of an object still on the
+ * build before).
  */
 export async function readView(deps: GatewayDeps, app: string, origin: string, principal: Principal, timing: Record<string, number> = {}): Promise<ViewAnswer> {
   const began = Date.now();
@@ -77,7 +78,7 @@ export async function readView(deps: GatewayDeps, app: string, origin: string, p
     const res = await timed("container", forward(deps, app, "view", principal, origin, `/apps/${app}/view`, "GET", ""));
     const value = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (res.ok && usable(value, app, null)) return { ok: true, view: value, source: "container", ms: Date.now() - began };
-    if (res.status === 400 && value.reason === "bad_op") return legacy(deps, app, origin, principal, began);
+    if (res.status === 400 && value.reason === "bad_op") return await timed("legacy", legacy(deps, app, origin, principal, began));
     return { ok: false, status: res.ok ? 502 : res.status, missing: res.status === 404 && value.reason === "no_app", error: String(value.error ?? `the app's Durable Object answered ${res.status}`) };
   } catch (err) {
     return { ok: false, status: 502, missing: false, error: err instanceof Error ? err.message : String(err) };

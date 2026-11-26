@@ -256,7 +256,7 @@ describe("reads from the stored view", () => {
       const status = await cli(copy(), ["status", "--json"]);
       expect([status.code, JSON.parse(status.out).timing.view]).toEqual([0, "legacy"]);
       const read = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
-      expect(read.headers.get("server-timing")).toMatch(/container;dur=\d+, source;desc="legacy"$/);
+      expect(read.headers.get("server-timing")).toMatch(/container;dur=\d+, legacy;dur=\d+, source;desc="legacy"$/);
       expect(stack.bucket.objects.has(viewKey("notes"))).toBe(false);
     } finally {
       buildBefore = false;
