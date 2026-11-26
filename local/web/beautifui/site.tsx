@@ -5,6 +5,7 @@
 // the sidebar left out. Adapted: the toggle stores its choice under "appgov-theme" and follows the system until
 // the reader picks one; the site's default is dark.
 
+import { ContextNote } from "./primitives/ContextNote";
 import { useEffect, useState, type ReactNode } from "react";
 
 /** `<main>` of the site: a 960px column on the striped page, set off by a hairline. */
@@ -12,37 +13,14 @@ export function PageColumn({ children }: { children: ReactNode }) {
   return <main className="relative mx-auto min-h-screen max-w-[960px] bg-page shadow-[0_0_0_1px_var(--line)]">{children}</main>;
 }
 
-/** One section of the site: a dashed rule below, a mono number, a title and a quiet line. */
-export function Section({
-  id,
-  number,
-  title,
-  note,
-  aside,
-  children,
-  index = 0,
-}: {
-  id?: string;
-  number: string;
-  title: ReactNode;
-  note?: ReactNode;
-  aside?: ReactNode;
-  children: ReactNode;
-  index?: number;
-}) {
+/** A section title, its count or context, and an optional action for the whole section. */
+export function Section({ title, note, aside, children }: { title: ReactNode; note?: ReactNode; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section
-      id={id}
-      className="group flex w-full scroll-mt-8 flex-col border-b border-dashed border-line px-5 py-8 sm:px-8 sm:py-10"
-      style={{ animation: `fade-up 600ms cubic-bezier(0.23,1,0.32,1) ${index * 60}ms both` }}
-    >
-      <div className="mb-3 flex items-start gap-2 sm:items-baseline">
-        <span className="mt-0.5 font-mono text-[11px] text-ink-3 tabular-nums sm:mt-0">{number}</span>
-        <div className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-2">
-          <h2 className="whitespace-nowrap text-[13px] font-semibold text-ink">{title}</h2>
-          {note && <p className="mt-0.5 text-[12.5px] text-ink-3 text-pretty sm:mt-0 sm:truncate">{note}</p>}
-        </div>
-        {aside && <div className="-my-1 shrink-0">{aside}</div>}
+    <section className="border-b border-dashed border-line px-5 py-5 sm:px-8 sm:py-6">
+      <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h2 className="text-[15px] font-semibold leading-snug text-ink">{title}</h2>
+        {note && <span className="text-[12px] text-ink-3">{note}</span>}
+        {aside && <div className="-my-1 ml-auto flex items-center">{aside}</div>}
       </div>
       {children}
     </section>
@@ -101,9 +79,9 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
         className="absolute inset-y-0.5 left-0.5 w-8 rounded-full bg-surface shadow-btn transition-transform duration-200"
         style={{ transform: `translateX(${theme === "dark" ? 32 : 0}px)`, transitionTimingFunction: "cubic-bezier(0.23, 1, 0.32, 1)", opacity: shown ? 1 : 0 }}
       />
-      <button
+      <ContextNote label={labels.light} control={(id) => <button
         type="button"
-        aria-label={labels.light}
+        aria-labelledby={id}
         aria-pressed={theme === "light"}
         onClick={() => pick("light")}
         className={`relative z-10 flex size-8 items-center justify-center rounded-full
@@ -113,10 +91,10 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
           <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
           <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
         </svg>
-      </button>
-      <button
+      </button>} />
+      <ContextNote label={labels.dark} control={(id) => <button
         type="button"
-        aria-label={labels.dark}
+        aria-labelledby={id}
         aria-pressed={theme === "dark"}
         onClick={() => pick("dark")}
         className={`relative z-10 flex size-8 items-center justify-center rounded-full
@@ -125,7 +103,7 @@ export function ThemeToggle({ labels }: { labels: { light: string; dark: string 
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
         </svg>
-      </button>
+      </button>} />
     </div>
   );
 }

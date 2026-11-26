@@ -1,9 +1,8 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
-import { Section, Surface } from "../beautifui/site";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import type { SignInModel } from "./model";
-import { Failure } from "./change-view";
 import { Header, TextField } from "./parts";
 
 /**
@@ -44,13 +43,10 @@ export function SignInView({ model }: { model: SignInModel }) {
   return (
     <>
       <Header crumbs={[]} title={ui.signin_title} meta={ui.signin_lead} bare />
-      <Section number="01" title={ui.signin_key} index={1}>
-        <Surface>
-          <form onSubmit={submit} className="mx-auto w-full max-w-[440px] overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}>
+      <div className="px-5 py-6 sm:px-8">
+          <form onSubmit={submit} className="mx-auto w-full max-w-[440px] overflow-hidden rounded-card bg-surface shadow-card">
             <div className="primitive-card-pad">
-              <TextField type="password" name="key" value={key} onChange={setKey} autoComplete="current-password" autoFocus label={ui.signin_key} disabled={busy} />
-              <p className="mt-2 text-[12px] leading-relaxed text-ink-3">{ui.signin_where}</p>
-              {failure && <Failure text={failure} detail="" />}
+              <TextField type="password" name="key" value={key} onChange={setKey} autoComplete="current-password" autoFocus label={ui.signin_key} error={failure} help={<ContextNote label={ui.details}>{ui.signin_where}</ContextNote>} disabled={busy} />
             </div>
             <div className="primitive-card-footer flex items-center justify-between gap-3 border-t border-line">
               {busy ? (
@@ -65,8 +61,7 @@ export function SignInView({ model }: { model: SignInModel }) {
               </Button>
             </div>
           </form>
-        </Surface>
-      </Section>
+      </div>
     </>
   );
 }

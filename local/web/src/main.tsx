@@ -85,7 +85,7 @@ function Page({ model }: { model: PageModel }) {
         <SearchPalette
           open={searching}
           onClose={() => setSearching(false)}
-          labels={{ placeholder: model.ui.search_placeholder, ariaLabel: model.ui.search_label, emptyTitle: model.ui.search_empty, emptyHint: model.ui.search_keys }}
+          labels={{ placeholder: model.ui.search_placeholder, ariaLabel: model.ui.search_label, clearLabel: model.ui.clear, emptyTitle: model.ui.search_empty, emptyHint: model.ui.search_keys }}
           items={model.search.map((entry) => ({ key: entry.name, title: entry.title, sub: entry.words ? `${entry.stateLabel} · ${entry.words}` : entry.stateLabel, href: entry.href, mark: entry.monogram, color: hue(entry.name) }))}
           match={(item, terms) => {
             const entry = model.search.find((e) => e.name === item.key);

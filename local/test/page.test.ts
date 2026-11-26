@@ -707,7 +707,9 @@ describe("whether the app is there, on the page", () => {
     expect(appHtml).not.toContain("Open the app");
     expect(appHtml).not.toContain("To change this app, tell your agent");
     // The typed name is asked in the page's one-line field, the sign-in screen's own.
-    expect(appHtml).toMatch(/<input type="text" autoComplete="off" spellCheck="false" aria-label="Type the app&#x27;s name, notes, to clear it" placeholder="notes" maxLength="64" class="h-9 w-full rounded-control bg-field /);
+    const label = /<label for="([^"]+)"[^>]*>Type the app&#x27;s name, notes, to clear it<\/label>/.exec(appHtml);
+    expect(label).not.toBeNull();
+    expect(appHtml).toContain(`<input id="${label![1]}" type="text" autoComplete="off" spellCheck="false" placeholder="notes" maxLength="64" class="owner-input"`);
     expect(appHtml).not.toContain("<textarea");
   });
 
@@ -758,7 +760,8 @@ describe("the first minute, on the page", () => {
     const html = draw(home);
     expect(html).toContain("/Users/me/agent-app-governance/local/apps");
     expect(html).toContain('aria-current="step"');
-    expect(html).not.toContain("sandbox_workspace_write");
+    // The note is in the info control's tooltip, hidden until it is asked for.
+    expect(html).toMatch(/aria-label="More about this"[^>]*>[\s\S]*?<span id="[^"]+" popover="manual" role="tooltip" class="context-note" hidden="">Start Claude Code with claude, or Codex with codex -c sandbox_workspace_write/);
     expect(html).not.toContain("Want a new app, or a change?");
     // Without the folder's own path, the folder inside the installation, said as such; in Chinese too.
     const zh = homeModel(overview, { ...ctx, lang: "zh" });
@@ -784,7 +787,7 @@ describe("the first minute, on the page", () => {
     expect(none.start?.steps.map((step) => [step.state, step.connect, step.copy === null])).toEqual([["now", true, true], ["later", false, false]]);
     const before = draw(none, "yes");
     expect(before).toContain("Connect my AI assistant");
-    expect(before).toContain('placeholder="Name it, for example after this computer"');
+    expect(before).toContain('placeholder="for example, work laptop"');
     expect(before).toContain("Get a code");
     // The sentence for a first app waits until step one is done.
     expect(before).not.toContain("reading-list");

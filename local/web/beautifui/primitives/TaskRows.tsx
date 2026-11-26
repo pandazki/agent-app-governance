@@ -6,7 +6,7 @@
 //   - a row's label may wrap to two lines (a person's own words are not cut), so a row is at least, not exactly, 44px;
 //     a row marked `wrap` (a notice the owner has to read whole) is not cut at all;
 //   - the pill and the expanded detail are the caller's (a ReactNode), and a row without detail does not expand.
-// Badge, SpinnerRing, the staggered entry, the chevron and the expanding detail are the library's.
+// Badge, SpinnerRing, the chevron and the expanding detail are the library's.
 
 import { useState, type ReactNode } from "react";
 
@@ -37,9 +37,9 @@ function SpinnerRing({ active, children }: { active?: boolean; children?: ReactN
 type BadgeTone = "red" | "green" | "orange" | "neutral";
 
 const BADGE: Record<BadgeTone, string> = {
-  red: "bg-red text-white",
-  green: "bg-green text-white",
-  orange: "bg-orange text-white",
+  red: "bg-red text-white dark:text-page",
+  green: "bg-green-tint text-green",
+  orange: "bg-orange text-white dark:text-page",
   neutral: "bg-field text-ink-3 shadow-hairline",
 };
 
@@ -47,7 +47,6 @@ export function Badge({ tone, children }: { tone: BadgeTone; children: ReactNode
   return (
     <span
       className={`flex size-5.5 shrink-0 items-center justify-center rounded-full ${BADGE[tone]}`}
-      style={{ animation: "pop-in 300ms cubic-bezier(0.23,1,0.32,1) both" }}
     >
       {children}
     </span>
@@ -114,8 +113,8 @@ export function badgeFor(status: TaskStatus, step?: number) {
 export function TaskPill({ tone, children }: { tone: "green" | "red" | "orange" | "neutral" | "accent"; children: ReactNode }) {
   const cls =
     tone === "green" ? "bg-green-tint text-green"
-    : tone === "red" ? "bg-red-tint text-red"
-    : tone === "orange" ? "bg-orange-tint text-orange"
+    : tone === "red" ? "bg-red text-white dark:text-page"
+    : tone === "orange" ? "bg-orange text-white dark:text-page"
     : tone === "accent" ? "bg-accent-tint text-accent-ink"
     : "bg-field text-ink-2 shadow-hairline";
   return <span className={`inline-flex h-5.5 shrink-0 items-center whitespace-nowrap rounded-full px-2 text-[11.5px] font-medium ${cls}`}>{children}</span>;
@@ -140,14 +139,17 @@ export default function TaskRows({
         list ? "gap-0 self-start overflow-hidden rounded-card bg-surface shadow-card" : "gap-2"
       }${className ? ` ${className}` : ""}`}
     >
-      {rows.map((row, i) => {
+      {rows.map((row) => {
         const open = Boolean(row.details) && (manualOpen[row.key] ?? row.defaultOpen ?? false);
         const head = (
           <>
             <span className="flex size-6 shrink-0 items-center justify-center">{badgeFor(row.status, row.step)}</span>
-            <span className={`${row.wrap ? "" : "line-clamp-2 "}min-w-0 flex-1 text-[13px] font-medium text-ink [overflow-wrap:anywhere]`}>{row.label}</span>
+            <span className="min-w-0 flex-1">
+              <span className={`${row.wrap ? "block" : "line-clamp-2"} text-[13px] font-medium text-ink [overflow-wrap:anywhere]`}>{row.label}</span>
+              {row.pill && <span className="mt-1 block sm:hidden">{row.pill}</span>}
+            </span>
             {row.amount !== undefined && <span className="hidden shrink-0 text-[12.5px] text-ink-2 tabular-nums sm:inline">{row.amount}</span>}
-            {row.pill}
+            {row.pill && <span className="hidden sm:inline-flex">{row.pill}</span>}
           </>
         );
         return (
@@ -158,7 +160,6 @@ export default function TaskRows({
             }`}
             style={{
               borderRadius: list ? 0 : open ? 14 : 22,
-              animation: `fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${Math.min(i, 8) * 80}ms both`,
             }}
           >
             {row.details ? (

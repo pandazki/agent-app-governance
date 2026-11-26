@@ -1,17 +1,34 @@
 // The owner page's own parts, composed from Beautiful UI's primitives (web/beautifui). Everything that came from
 // the record or an app is rendered as text by React; no markup from data is ever inserted.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button, buttonVariants } from "../beautifui/atoms/Button";
 import { Monogram } from "../beautifui/atoms/EntityChip";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { TaskPill } from "../beautifui/primitives/TaskRows";
 import { SentPill } from "../beautifui/primitives/Recommendation";
 import { SegmentLinks, ThemeToggle } from "../beautifui/site";
 import { absoluteTime, act, hue, isMac, relativeTime, sayNext, useNow, useOwner, usePage, useUi } from "./lib";
-import type { Fact, Hint, Rich, Shot, Tone } from "./model";
+import type { Checked, Fact, Hint, Rich, Shot, Tone } from "./model";
 
 // --- words and moments ----------------------------------------------------------
+
+/** Keep host labels and path components intact, including hyphenated app names.
+ * A single exceptionally long component can be scrolled within the text. */
+export function Address({ text }: { text: string }) {
+  return (
+    <span className="address-text">
+      {text.split(/(?<=[/.?&#])(?=[^/])/u).map((part, i) => (
+        <span key={i}>{i > 0 && <wbr />}<span className="whitespace-nowrap">{part}</span></span>
+      ))}
+    </span>
+  );
+}
+
+function TextWithAddresses({ text }: { text: string }) {
+  return text.split(/(https?:\/\/[^\s)）]+)/iu).map((part, i) => i % 2 ? <Address key={i} text={part} /> : part);
+}
 
 export function RichText({ rich }: { rich: Rich }) {
   const { lang } = usePage();
@@ -89,7 +106,7 @@ export function Picture({ shot, name, className = "" }: { shot: Shot; name: stri
   return (
     <div className={`relative aspect-[16/10] w-full overflow-hidden bg-inset ${className}`}>
       {show ? (
-        <img src={shot.src!} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="absolute inset-0 size-full object-cover object-top" style={{ animation: "fade-in 300ms ease-out both" }} />
+        <img src={shot.src!} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="absolute inset-0 size-full object-cover object-top" />
       ) : (
         <div
           className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center"
@@ -151,11 +168,17 @@ export function OwnerPill() {
     location.href = page.links.home;
   };
   const [open, setOpen] = useState(false);
+  const pinned = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !ref.current?.contains(event.target as Node)) setOpen(false);
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        if (ref.current?.contains(document.activeElement)) ref.current.querySelector("button")?.focus();
+      } else if (ref.current?.contains(event.target as Node)) return;
+      pinned.current = false;
+      setOpen(false);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", close);
@@ -166,19 +189,40 @@ export function OwnerPill() {
   }, [open]);
   const yes = state === "yes";
   const label = state === "checking" ? ui.owner_checking : yes ? ui.owner_yes : session ? ui.owner_signed_out : ui.owner_no;
-  const tone = yes ? "bg-green-tint text-green" : state === "lost" ? "bg-orange-tint text-orange" : "bg-field text-ink-2 shadow-hairline";
-  const dot = yes ? "bg-green" : state === "lost" ? "bg-orange" : "bg-ink-3";
+  const tone = state === "lost" ? "text-orange" : "text-ink-2";
+  const panelId = useId();
+  const help = state === "off" ? ui.owner_off : state === "lost" ? ui.owner_lost : ui.owner_help;
+  const how = !yes && state !== "off" && !session;
   return (
-    <div ref={ref} className="relative">
-      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium transition-[filter] duration-150 hover:brightness-[0.97] dark:hover:brightness-110 ${tone}`}>
-        <span className={`size-1.5 rounded-full ${dot}`} style={state === "checking" ? { animation: "fade-in 700ms ease-in-out infinite alternate" } : undefined} />
-        {label}
+    <div ref={ref} className="relative"
+      onPointerEnter={(event) => { if (event.pointerType !== "touch") setOpen(true); }}
+      onPointerLeave={() => { if (!pinned.current && !ref.current?.querySelector(":focus-visible")) setOpen(false); }}
+      onFocus={(event) => { if (event.target.matches(":focus-visible")) setOpen(true); }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) { pinned.current = false; setOpen(false); }
+      }}>
+      <button type="button" aria-label={label} aria-expanded={open} aria-controls={panelId} aria-describedby={`${panelId}-help`} onClick={() => {
+        pinned.current = !pinned.current;
+        setOpen(pinned.current);
+      }} className={`context-trigger rounded-full bg-field ${tone}`}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+          <circle cx="12" cy="8" r="3.5" /><path d="M4.5 20c0-4.3 3.2-7 7.5-7s7.5 2.7 7.5 7" />
+        </svg>
       </button>
-      {open && (
-        <div role="dialog" aria-label={ui.owner_help_title} className="absolute left-0 top-8 z-40 w-[min(20rem,calc(100vw-2.5rem))] overflow-hidden rounded-card bg-surface shadow-overlay" style={{ animation: "pop-in 160ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "top left" }}>
+      <div hidden={!open} className="absolute right-0 top-full z-40 pt-1">
+        <div id={panelId} role="dialog" aria-label={ui.owner_help_title} className="w-[min(20rem,calc(100vw-2.5rem))] overflow-hidden rounded-card bg-surface shadow-overlay">
           <div className="primitive-card-pad">
-            <p className="text-[13px] font-medium text-ink">{ui.owner_help_title}</p>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{state === "off" ? ui.owner_off : state === "lost" ? ui.owner_lost : ui.owner_help}</p>
+            <p className="text-[13px] font-semibold text-ink">{label}</p>
+            <div id={`${panelId}-help`}>
+              <p className="mt-2 text-[12.5px] font-medium text-ink">{ui.owner_help_title}</p>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-2">{help}</p>
+              {how && (
+                <>
+                  <p className="mt-2 text-[12px] text-ink-3">{ui.owner_how}</p>
+                  <code className="mt-1 block rounded-chip bg-field px-1.5 py-1 font-mono text-[11px] text-ink-2 shadow-hairline">[host] owner link …/#owner=…</code>
+                </>
+              )}
+            </div>
             {session && yes && (
               <div className="mt-3 flex justify-end">
                 <Button variant="secondary" size="sm" className="text-[12.5px]" disabled={leaving} onClick={signOut}>
@@ -186,15 +230,9 @@ export function OwnerPill() {
                 </Button>
               </div>
             )}
-            {!yes && state !== "off" && !session && (
-              <>
-                <p className="mt-2 text-[12px] text-ink-3">{ui.owner_how}</p>
-                <code className="mt-1 block rounded-chip bg-field px-1.5 py-1 font-mono text-[11px] text-ink-2 shadow-hairline">[host] owner link …/#owner=…</code>
-              </>
-            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -204,16 +242,16 @@ export function SearchButton({ onOpen }: { onOpen: () => void }) {
   const [mac, setMac] = useState(true);
   useEffect(() => setMac(isMac()), []);
   return (
-    <button
+    <ContextNote label={ui.search_open} control={(id) => <button
       type="button"
       onClick={onOpen}
-      aria-label={ui.search_open}
+      aria-labelledby={id}
       className="inline-flex h-9 items-center gap-2 rounded-full bg-field px-3 text-[12px] font-medium text-ink-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.96] max-sm:w-9 max-sm:justify-center max-sm:px-0"
     >
       <SearchIcon />
       <span className="max-sm:hidden">{ui.search}</span>
       <kbd className="rounded-[4px] bg-surface px-1 font-mono text-[10.5px] text-ink-3 shadow-hairline max-sm:hidden">{mac ? "⌘K" : "Ctrl K"}</kbd>
-    </button>
+    </button>} />
   );
 }
 
@@ -236,6 +274,7 @@ export function Header({
   bare?: boolean;
 }) {
   const page = usePage();
+  const owner = useOwner();
   const ui = page.ui;
   // What the write that led here left to say, once, under its "Done" (going back: what stays in stored data).
   const [said] = useState(() => (page.done ? sayNext.peek() : null));
@@ -246,11 +285,11 @@ export function Header({
     } catch {}
   };
   return (
-    // Above the sections, whose entry animation makes each its own layer: the owner card opens over them.
-    <header className="relative z-20 border-b border-dashed border-line px-5 pt-8 pb-7 sm:px-8 sm:pt-12 sm:pb-8" style={{ animation: "fade-in 400ms ease-out both" }}>
-      <div className="flex items-center justify-between gap-3">
-        <Crumbs items={crumbs} />
-        <div className="flex shrink-0 items-center gap-2">
+    // Keep the owner menu above the page sections.
+    <header className="relative z-20 border-b border-dashed border-line px-5 pt-5 pb-5 sm:px-8 sm:pt-6 sm:pb-6">
+      <div className="flex items-center gap-2">
+        {crumbs.some((item) => item.href) && <Crumbs items={crumbs} />}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {!bare && onSearch && <SearchButton onOpen={onSearch} />}
           <SegmentLinks
             label={ui.language}
@@ -261,24 +300,23 @@ export function Header({
             ]}
           />
           <ThemeToggle labels={{ light: ui.theme_light, dark: ui.theme_dark }} />
+          {!bare && <OwnerPill />}
         </div>
       </div>
-      <div className="mt-8 flex flex-col gap-4 sm:mt-10 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mt-5 flex flex-wrap items-end justify-between gap-3 sm:mt-6">
         <div className="min-w-0">
-          <h1 className="text-[21px] leading-snug font-semibold tracking-[-0.02em] text-ink text-balance [overflow-wrap:anywhere]">{title}</h1>
-          {meta && <p className="mt-1 text-[12.5px] text-ink-3">{meta}</p>}
-          {!bare && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {pills}
-              <OwnerPill />
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <h1 className="text-[23px] leading-snug font-semibold tracking-[-0.02em] text-ink [overflow-wrap:anywhere]">{title}</h1>
+            {pills}
+          </div>
+          {meta && <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{meta}</p>}
+          {!bare && owner.state !== "yes" && <p className={owner.state === "lost" ? "mt-1 text-[13px] font-medium text-orange" : "mt-1 text-[12px] text-ink-2"}>{owner.state === "checking" ? ui.owner_checking : owner.state === "lost" ? ui.owner_lost : ui.owner_no}</p>}
         </div>
-        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+        {action}
       </div>
       {page.done && (
         <div className="mt-4">
-          <SentPill>{page.done}</SentPill>
+          <SentPill><span className="min-w-0"><TextWithAddresses text={page.done} /></span></SentPill>
           {said && <p className="mt-2 max-w-[640px] text-[12.5px] leading-relaxed text-ink-2">{said}</p>}
         </div>
       )}
@@ -286,26 +324,14 @@ export function Header({
   );
 }
 
-/** Under a link to the app or a preview, where they open behind a sign-in of their own: one quiet line saying so. */
-export function OpensElsewhere({ text }: { text: string }) {
-  return (
-    <p className="mt-3 flex items-start gap-1.5 px-0.5 text-[12px] leading-relaxed text-ink-3">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="mt-[0.2em] shrink-0">
-        <rect x="5" y="11" width="14" height="10" rx="2" />
-        <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-      </svg>
-      <span>{text}</span>
-    </p>
-  );
-}
-
 // --- "Details" ------------------------------------------------------------------
 
-export function Details({ facts, label }: { facts: readonly Fact[]; label?: string }) {
+export function Details({ facts, label, checked }: { facts: readonly Fact[]; label?: string; checked?: Checked | null }) {
   const ui = useUi();
-  if (!facts.length) return null;
+  if (!facts.length && !checked) return null;
   return (
     <Collapsible label={label ?? ui.details}>
+      {checked && <p className="text-[12px] text-ink-2"><RichText rich={checked.text} /></p>}
       <dl className="flex flex-col gap-1.5 py-0.5">
         {facts.map((fact, i) => (
           <div key={i} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[9.5rem_minmax(0,1fr)]">
@@ -313,10 +339,10 @@ export function Details({ facts, label }: { facts: readonly Fact[]; label?: stri
             <dd className={`min-w-0 text-ink-2 [overflow-wrap:anywhere] ${fact.mono ? "font-mono text-[11.5px] leading-[1.6]" : "text-[12px] leading-relaxed"}`}>
               {fact.href ? (
                 <a href={fact.href} target="_blank" rel="noopener noreferrer" className="underline decoration-line-strong underline-offset-2 transition-colors hover:text-ink hover:decoration-current">
-                  {fact.value}
+                  <TextWithAddresses text={fact.value} />
                 </a>
               ) : (
-                fact.value
+                <TextWithAddresses text={fact.value} />
               )}
             </dd>
           </div>
@@ -330,7 +356,7 @@ export function Details({ facts, label }: { facts: readonly Fact[]; label?: stri
 export function DetailsBlock({ facts }: { facts: readonly Fact[] }) {
   if (!facts.length) return null;
   return (
-    <div className="px-5 py-6 sm:px-8 sm:py-8">
+    <div className="px-5 py-4 sm:px-8">
       <Details facts={facts} />
     </div>
   );
@@ -360,7 +386,7 @@ export function Copy({ text }: { text: string }) {
   return (
     <button type="button" onClick={copy} className={`${buttonVariants({ variant: "secondary", size: "xs" })} min-w-16`} aria-live="polite">
       {done ? (
-        <span className="inline-flex items-center gap-1 text-green" style={{ animation: "fade-in 150ms ease-out both" }}>
+        <span className="inline-flex items-center gap-1 text-green">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
           {ui.copied}
         </span>
@@ -386,6 +412,8 @@ export function TextField({
   autoFocus = false,
   disabled = false,
   maxLength,
+  help,
+  error,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -397,22 +425,23 @@ export function TextField({
   autoFocus?: boolean;
   disabled?: boolean;
   maxLength?: number;
+  help?: ReactNode;
+  error?: string | null;
 }) {
+  const id = useId();
   return (
-    <input
-      type={type}
-      {...(name ? { name } : {})}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      autoComplete={autoComplete}
-      autoFocus={autoFocus}
-      spellCheck={false}
-      aria-label={label}
-      placeholder={placeholder ?? label}
-      disabled={disabled}
-      {...(maxLength ? { maxLength } : {})}
-      className="h-9 w-full rounded-control bg-field px-3 font-mono text-[12.5px] text-ink shadow-inset-field outline-none placeholder:font-sans placeholder:text-ink-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60"
-    />
+    <div>
+      <div className="mb-1 flex items-center gap-1">
+        <label htmlFor={id} className="text-[13px] font-medium text-ink">{label}</label>
+        {help}
+      </div>
+      <input id={id} type={type} name={name} value={value} onChange={(event) => onChange(event.target.value)}
+        autoComplete={autoComplete} autoFocus={autoFocus} spellCheck={false} placeholder={placeholder}
+        disabled={disabled} maxLength={maxLength} aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        className="owner-input" />
+      {error && <p id={`${id}-error`} role="alert" className="mt-2 text-[13px] font-medium leading-relaxed text-red">{error}</p>}
+    </div>
   );
 }
 
@@ -431,20 +460,15 @@ export function HintCard({ hint, title }: { hint: Hint; title?: string }) {
   );
 }
 
-/** SearchList's empty state, for a view with nothing in it. */
+/** Empty panels keep their explanation at reading height. An affirmative result can supply its own icon. */
 export function EmptyState({ title, body, icon }: { title: string; body?: string; icon?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-1 px-4 py-10 text-center" style={{ animation: "fade-in 250ms ease-out both" }}>
-      <span className="mb-1.5 flex size-8 items-center justify-center rounded-control bg-inset text-ink-3 shadow-hairline">
-        {icon ?? (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M3 9h18" />
-          </svg>
-        )}
-      </span>
-      <span className="text-[13px] font-medium text-ink">{title}</span>
-      {body && <span className="max-w-80 text-[12px] text-ink-3 text-pretty">{body}</span>}
+    <div className="px-4 py-4 text-center">
+      <p className="text-[14px] font-medium leading-relaxed text-ink">
+        {icon && <span aria-hidden className="mr-1.5 inline-flex align-middle">{icon}</span>}
+        {title}
+      </p>
+      {body && <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-ink-2">{body}</p>}
     </div>
   );
 }

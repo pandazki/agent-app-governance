@@ -2,10 +2,12 @@ import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { Drawer } from "../beautifui/primitives/Recommendation";
-import { act, useOwner, usePage, useUi } from "./lib";
+import { act, useNow, useOwner, usePage, useUi } from "./lib";
 import type { Checked, LifeCard, LifeVerb } from "./model";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
+import { RetryIcon } from "../beautifui/primitives/TaskRows";
 import { Failure, refusalText } from "./change-view";
-import { ButtonLink, RichText, TextField } from "./parts";
+import { RichText, TextField } from "./parts";
 
 function Bullets({ lines, tone = "text-ink-2" }: { lines: readonly string[]; tone?: string }) {
   return (
@@ -67,7 +69,6 @@ export function LifeBlock({ life }: { life: LifeCard }) {
       </div>
       {life.actions.map((action) => (
         <Drawer key={action.verb} open={mode === action.verb}>
-          <p className="pb-1 text-[11px] font-medium text-ink-3">{action.label}</p>
           {action.lines.length > 0 && <Bullets lines={action.lines} />}
           {action.deletes && (
             <>
@@ -83,7 +84,6 @@ export function LifeBlock({ life }: { life: LifeCard }) {
           )}
           {action.typeName && (
             <div className="mt-2">
-              <p className="pb-1 text-[12px] text-ink-3">{action.typeLabel}</p>
               <TextField value={typed} onChange={setTyped} label={action.typeLabel ?? action.typeName} placeholder={action.typeName} disabled={busy} maxLength={64} />
             </div>
           )}
@@ -114,7 +114,7 @@ export function LifeBlock({ life }: { life: LifeCard }) {
                   <Button variant="ghost" size="sm" className="px-2.5 text-[12.5px]" disabled={busy} onClick={() => open(null)}>
                     {ui.cancel}
                   </Button>
-                  <Button variant={chosen.verb === "clear" ? "primary" : "accent"} size="sm" className="text-[12.5px]" disabled={busy || !ready} onClick={go}>
+                  <Button variant={chosen.verb === "clear" ? "danger" : "accent"} size="sm" className="text-[12.5px]" disabled={busy || !ready} onClick={go}>
                     {chosen.verb === "clear" ? ui.clear_go : chosen.label}
                   </Button>
                 </>
@@ -127,20 +127,23 @@ export function LifeBlock({ life }: { life: LifeCard }) {
   );
 }
 
-/** When PneumaSpace last confirmed what the view says about it, and "Check now", where the view is built from stored facts. */
-export function CheckedLine({ checked }: { checked: Checked }) {
+/** The link always checks, including on touch. The explicit check shows its timestamp with the result. */
+export function RuntimeCheck({ checked }: { checked: Checked }) {
   const ui = useUi();
   return (
-    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11.5px] text-ink-3">
-      <span>
-        <RichText rich={checked.text} />
-      </span>
-      {checked.href && (
-        <ButtonLink href={checked.href} variant="quiet" size="xs">
-          {ui.check_now}
-        </ButtonLink>
-      )}
-      {checked.failed && <span className="w-full text-center text-orange">{checked.failed}</span>}
-    </div>
+    <ContextNote label={checked.href ? ui.check_now : ui.details} href={checked.href ?? undefined} icon={RetryIcon}>
+      {checked.href && <strong className="block">{ui.check_now}</strong>}
+      <RichText rich={checked.text} />
+    </ContextNote>
   );
+}
+
+export function CheckResult({ checked }: { checked: Checked }) {
+  const now = useNow();
+  const stamp = checked.text.parts.find((part) => typeof part !== "string");
+  const stale = stamp && now - Date.parse(stamp.at) >= 5 * 60_000;
+  if (checked.failed) return <p role="alert" className="runtime-failure">{checked.failed} <RichText rich={checked.text} /></p>;
+  const requested = typeof location !== "undefined" && new URLSearchParams(location.search).get("check") === "1";
+  if (!stale && !requested) return null;
+  return <p role="status" className="text-[12px] text-ink-2"><RichText rich={checked.text} /></p>;
 }

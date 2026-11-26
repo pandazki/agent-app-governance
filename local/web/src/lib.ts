@@ -170,7 +170,7 @@ export function fill(template: string, vars: Readonly<Record<string, string | nu
 }
 
 /** A stable colour per app for its monogram, from the library's own status hues. */
-const HUES = ["#e08a3c", "#25a878", "#16a6c7", "#7c6cf0", "#e0598b", "#8a8f98"];
+const HUES = ["#9e541a", "#23744f", "#087381", "#6954b5", "#ad386c", "#5d6671"];
 export function hue(name: string): string {
   let h = 0;
   for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;

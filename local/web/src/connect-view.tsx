@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
+import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { Drawer } from "../beautifui/primitives/Recommendation";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { act, fill, useOwner, usePage, useUi } from "./lib";
-import type { ConnectModel, Connection, HomeModel } from "./model";
+import type { ConnectModel, Connection } from "./model";
 import { Failure } from "./change-view";
-import { Details, RichText, TextField } from "./parts";
-import { CopyLine, useMore } from "./start-view";
+import { RichText, TextField } from "./parts";
+import { CopyLine } from "./start-view";
 
 type Code = { id: string; code: string; expires_at: string; command: string };
 type Phase = { kind: "name" } | { kind: "code"; code: Code } | { kind: "expired"; label: string };
@@ -27,7 +28,6 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
   const [phase, setPhase] = useState<Phase>({ kind: "name" });
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{ text: string; detail: string } | null>(null);
-  const more = useMore(ui.connect_more, ui.more_info);
   const sending = useRef(false);
   const code = phase.kind === "code" ? phase.code : null;
 
@@ -84,13 +84,13 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
     onClose?.();
   };
 
-  if (owner.state !== "yes") return <p className="text-[12px] leading-relaxed text-ink-3">{ui.read_only_decide}</p>;
+  if (owner.state !== "yes") return <p className="text-[12.5px] leading-relaxed text-ink-2">{ui.read_only_decide}</p>;
 
   if (phase.kind === "code") {
     const [before = "", after = ""] = connect.sentence.split("{command}");
     const until = new Date(phase.code.expires_at).toLocaleTimeString(document.documentElement.lang || undefined, { hour: "2-digit", minute: "2-digit" });
     return (
-      <div style={{ animation: "fade-in 150ms ease-out both" }}>
+      <div>
         <CopyLine label={ui.connect_paste} text={fill(connect.sentence, { command: phase.code.command })} mono={false}>
           {before.trim()}
           {/* The command on a line of its own, so it is read whole at any width. */}
@@ -99,24 +99,23 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
         </CopyLine>
         <div className="mt-2 flex items-center gap-2">
           <span aria-hidden className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-          <span role="status" className="min-w-0 flex-1 text-[12px] leading-relaxed text-ink-3">
+          <span role="status" className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-2">
             {fill(ui.connect_waiting, { time: until })}
           </span>
-          {more.button}
+          <ContextNote label={ui.more_info}>{ui.connect_more}</ContextNote>
           <Button variant="ghost" size="xs" onClick={close}>
             {ui.connect_close}
           </Button>
         </div>
-        {more.panel}
       </div>
     );
   }
 
   if (phase.kind === "expired") {
     return (
-      <div style={{ animation: "fade-in 150ms ease-out both" }}>
+      <div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <p className="min-w-0 flex-1 text-[12.5px] text-ink-2">{ui.connect_expired}</p>
+          <p className="min-w-0 flex-1 text-[13px] text-ink-2">{ui.connect_expired}</p>
           <Button variant="accent" size="sm" className="text-[12.5px]" disabled={busy} onClick={() => make()}>
             {busy ? ui.working : ui.connect_again}
           </Button>
@@ -128,15 +127,15 @@ export function ConnectPanel({ connect, onClose }: { connect: ConnectModel; onCl
 
   return (
     <form onSubmit={make}>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-0 flex-[1_1_14rem]">
           <TextField value={label} onChange={setLabel} label={ui.connect_label} placeholder={ui.connect_placeholder} disabled={busy} maxLength={40} />
         </div>
-        <Button type="submit" variant="accent" size="sm" className="text-[12.5px]" disabled={busy || !label.trim()}>
+        <Button type="submit" variant="accent" size="sm" className="mb-1 text-[12.5px]" disabled={busy || !label.trim()}>
           {busy ? ui.working : ui.connect_go}
         </Button>
         {onClose && (
-          <Button type="button" variant="ghost" size="sm" className="px-2.5 text-[12.5px]" disabled={busy} onClick={close}>
+          <Button type="button" variant="ghost" size="sm" className="mb-1 px-2.5 text-[12.5px]" disabled={busy} onClick={close}>
             {ui.cancel}
           </Button>
         )}
@@ -172,7 +171,7 @@ function ConnectionRow({ connection }: { connection: Connection }) {
       <div className="flex items-center gap-3 px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium text-ink">{connection.label}</p>
-          <p className="truncate text-[12px] text-ink-3">
+          <p className="text-[12px] text-ink-3">
             <RichText rich={connection.meta} />
           </p>
         </div>
@@ -183,7 +182,7 @@ function ConnectionRow({ connection }: { connection: Connection }) {
         )}
       </div>
       <Drawer open={asking}>
-        <p className="text-[12.5px] leading-relaxed text-ink-2">{fill(ui.revoke_body, { label: connection.label })}</p>
+        <p className="text-[13px] leading-relaxed text-ink-2">{fill(ui.revoke_body, { label: connection.label })}</p>
         {failure && <Failure text={failure.text} detail={failure.detail} />}
         <div className="mt-2 flex items-center justify-end gap-2">
           {busy ? (
@@ -193,7 +192,7 @@ function ConnectionRow({ connection }: { connection: Connection }) {
               <Button variant="ghost" size="sm" className="px-2.5 text-[12.5px]" onClick={() => setAsking(false)}>
                 {ui.cancel}
               </Button>
-              <Button variant="primary" size="sm" className="text-[12.5px]" onClick={revoke}>
+              <Button variant="accent" size="sm" className="text-[12.5px]" onClick={revoke}>
                 {ui.revoke_go}
               </Button>
             </>
@@ -233,18 +232,12 @@ export function Connections({ connections, connect }: { connections: readonly Co
   );
 }
 
-/** The end of the home view: the assistants connected (the Cloudflare edition), then the Details disclosure. */
-export function HomeEnd({ model }: { model: HomeModel }) {
+/** The assistants connected to this Host, at the end of the home view (the Cloudflare edition). */
+export function ConnectionsBlock({ connections, connect }: { connections: readonly Connection[]; connect: ConnectModel }) {
   const ui = useUi();
-  if (!model.connections && !model.facts.length) return null;
   return (
-    <div className="flex flex-col gap-1.5 px-5 py-6 sm:px-8 sm:py-8">
-      {model.connections && model.connect && (
-        <Collapsible label={model.connections.length ? `${ui.connections_title} · ${model.connections.length}` : ui.connections_title}>
-          <Connections connections={model.connections} connect={model.connect} />
-        </Collapsible>
-      )}
-      <Details facts={model.facts} />
-    </div>
+    <Collapsible label={connections.length ? `${ui.connections_title} · ${connections.length}` : ui.connections_title}>
+      <Connections connections={connections} connect={connect} />
+    </Collapsible>
   );
 }
