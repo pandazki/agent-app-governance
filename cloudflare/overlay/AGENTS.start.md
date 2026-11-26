@@ -9,6 +9,6 @@ This directory is where you work with apps that an appgov centre keeps and publi
 
 To change an app, work inside its directory and follow its own `AGENTS.md`. A change goes live only through that app's `submit`; never publish an app another way. When a change waits for the owner, only the owner decides. Never approve or deny a change yourself, never run a command with `--owner`, `login` or `token`, and never read the owner's files under `~/.appgov/`: those are the user's, in their own terminal.
 
-`.appgov/centre.json` holds the centre's address and an agent token, which is a credential. Never print it or show its contents, copy it into another file, or commit it; the CLI reads it for you. If the centre refuses the token, ask the user for a new one.
+`.appgov/centre.json` holds the centre's address and an agent token, which is a credential. Never print it or show its contents, copy it into another file, or commit it; the CLI reads it for you. If the centre refuses the token, ask the user to connect this directory again: they get a new code on the owner page, under "Connect my AI assistant". Delete `.appgov/centre.json` first, then run the command they give you.
 
 If the CLI says it is at another API level than the centre, run `node .appgov/appgov.mjs update` to get the centre's own CLI. Do not download a CLI from anywhere else.

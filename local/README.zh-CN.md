@@ -28,9 +28,44 @@ cd local
 docker compose up -d --build
 ```
 
-第一次构建要下载基础镜像，还要从源码构建 PneumaSpace 和 Host，所以比以后每次启动都慢。完成后有六个容器在运行：`gateway`、`runner`、`rustfs` 和 `redis` 属于 PneumaSpace，`screenshot` 给应用页面拍截图，`host` 就是 Host。
+第一次构建要下载基础镜像，还要从源码构建 PneumaSpace 和 Host，所以比以后每次启动都慢。完成后有六个容器在运行：`gateway`、`runner`、`rustfs` 和 `redis` 属于 PneumaSpace，`screenshot` 给应用页面拍截图，`host` 就是 Host。请在 `local/` 里运行它，这样页面才知道应用文件夹在你电脑上的位置。
 
-## 创建应用
+## 打开你的应用页面
+
+打开 http://127.0.0.1:8090/ 。它列出你的应用、每个应用的历史，以及等你决定的改动。还没有应用的时候，它会改为显示做出第一个应用的两步：在这台电脑上的哪个应用文件夹里打开你的 agent，以及对它说的一句话。
+
+这个版本没有什么需要“连接”的。它没有账号，也没有令牌：在应用文件夹里启动的 agent 能在那里找到它需要的东西，也就是 Host 放在 `apps/` 里的 `AGENTS.md` 和 CLI；而 Host 对这台电脑上的任何人都有应答（见“开始之前”）。
+
+谁都能查看应用页面。要在页面上做决定（让改动上线、拒绝改动、退回某个版本），需要从你的主人链接打开它。Host 会把这个链接打印在日志里：
+
+```sh
+docker compose logs host | grep "owner link"
+```
+
+那一行以 `http://127.0.0.1:8090/#owner=` 加一串令牌结尾。请你自己在浏览器里打开这个链接，不要交给 agent。Host 重启后链接不变；要换一个新链接，见[更换主人链接](./docs/reference.zh-CN.md#更换主人链接)。
+
+## 让 agent 做一个应用
+
+在应用文件夹 `local/apps/` 里打开 Claude Code 或 Codex：
+
+```sh
+cd apps
+claude
+```
+
+或者
+
+```sh
+cd apps
+codex -c sandbox_workspace_write.network_access=true
+```
+
+然后说出你想要的，比如：“帮我做一个叫 reading-list 的新应用：记下我想读的书，可以添加书，读完了可以打勾。”agent 会用 `node .appgov/appgov.mjs create reading-list` 创建应用，把起步应用发布为 `apps/reading-list/` 里的 `v1`，再在那里把你要的应用作为一次改动做出来并提交。两者都会出现在页面上。
+
+- **Codex：** 它默认的沙箱会拦住到 127.0.0.1 的连接，于是应用的测试开不了端口，`submit` 也连不上 Host。上面那个设置会放行这两件事。不加这个设置的话，Codex 请求运行命令时要批准，否则文件改了，却什么也没发布。
+- **Claude Code** 运行 `npm` 和 `node` 之前会先问你，两个都允许即可。
+
+## 或者在终端里创建应用
 
 ```sh
 node bin/appgov.mjs create todo
@@ -48,24 +83,13 @@ The app directory is /path/to/agent-app-governance/local/apps/todo. Open it with
 
 `create todo` 得到的是模板自带的起步应用，名字叫 `todo`：只有一个页面，写着 "Hello, guest"（中文浏览器下是"你好，访客"），带一个登录按钮。它还不是待办清单，要让 agent 去做。
 
-## 打开两个页面
-
-- 应用本身：http://127.0.0.1:8080/apps/todo/
-- 你的应用页面：http://127.0.0.1:8090/ ，列出你的应用、每个应用的历史，以及等你决定的改动。
-
-谁都能查看应用页面。要在页面上做决定（让改动上线、拒绝改动、退回某个版本），需要从你的主人链接打开它。Host 会把这个链接打印在日志里：
-
-```sh
-docker compose logs host | grep "owner link"
-```
-
-那一行以 `http://127.0.0.1:8090/#owner=` 加一串令牌结尾。请你自己在浏览器里打开这个链接，不要交给 agent。Host 重启后链接不变；要换一个新链接，见[更换主人链接](./docs/reference.zh-CN.md#更换主人链接)。
+应用本身的地址是 http://127.0.0.1:8080/apps/todo/ ，应用页面上也会列出它。
 
 PneumaSpace 控制台在 http://127.0.0.1:8081/ ，是平台自己的管理页面，没有登录。在那里改动应用会绕过 Host，应用的历史就和线上跑的东西对不上了。
 
 ## 把应用交给 agent
 
-用你平常用的 agent 打开应用目录，用自己的话提出改动：
+要改一个应用，用你平常用的 agent 打开它的目录（或者留在 `apps/` 里、说出应用名），用自己的话提出改动：
 
 ```sh
 cd apps/todo
@@ -81,8 +105,7 @@ codex -c sandbox_workspace_write.network_access=true
 
 应用里的 `AGENTS.md`（Claude Code 通过 `CLAUDE.md` 读到它）开头就是给 agent 的规则：先看 `status` 和 `history`，再改文件、加测试、跑 `npm test`，最后用 `node .appgov/appgov.mjs submit "<你提出的要求>"` 提交。这些都不用你去交代。
 
-- **Codex：** 它默认的沙箱会拦住到 127.0.0.1 的连接，于是应用的测试开不了端口，`submit` 也连不上 Host。上面那个设置会放行这两件事。不加这个设置的话，Codex 请求运行命令时要批准，否则文件改了，却什么也没发布。
-- **Claude Code** 运行 `npm` 和 `node` 之前会先问你，两个都允许即可。
+Codex 的沙箱和 Claude Code 的询问，同[上面](#让-agent-做一个应用)说的一样。
 
 历史会记下是哪个 agent 提交的，依据是 Claude Code 和 Codex 在各自 shell 里设置的环境变量；分辨不出来就记为 `unknown`。想自己指定，设置 `APPGOV_AGENT`。你随时可以换 agent：下一个 agent 需要的东西都在目录里。
 

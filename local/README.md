@@ -28,9 +28,44 @@ cd local
 docker compose up -d --build
 ```
 
-The first build downloads base images and builds PneumaSpace and the Host from source, so it takes longer than later starts. Then six containers run: `gateway`, `runner`, `rustfs` and `redis` are PneumaSpace, `screenshot` takes the pictures on your apps page, and `host` is the Host.
+The first build downloads base images and builds PneumaSpace and the Host from source, so it takes longer than later starts. Then six containers run: `gateway`, `runner`, `rustfs` and `redis` are PneumaSpace, `screenshot` takes the pictures on your apps page, and `host` is the Host. Run it from `local/`: the page then knows where the apps folder is on your computer.
 
-## Create an app
+## Open your apps page
+
+Open http://127.0.0.1:8090/. It shows your apps, the history of each one, and the changes that wait for you. While there are no apps, it shows the two steps to your first one instead: the apps folder on this computer to open your agent in, and a sentence to say to it.
+
+There is nothing to connect on this edition. It has no accounts and no tokens: an agent started in the apps folder finds there what it needs, an `AGENTS.md` and the CLI that the Host keeps in `apps/`, and the Host answers anyone on this computer (see "Before you start").
+
+Anyone can view the apps page. To decide on it (let a change go live, say no, go back to a version), open it from your owner link, which the Host prints in its log:
+
+```sh
+docker compose logs host | grep "owner link"
+```
+
+The line ends with `http://127.0.0.1:8090/#owner=` followed by a token. Open that link in your browser yourself, and do not give it to your agent. It stays the same when the Host restarts; to replace it, see [replacing the owner link](./docs/reference.md#replacing-the-owner-link).
+
+## Ask your agent for an app
+
+Open Claude Code or Codex in the apps folder, `local/apps/`:
+
+```sh
+cd apps
+claude
+```
+
+or
+
+```sh
+cd apps
+codex -c sandbox_workspace_write.network_access=true
+```
+
+Then say what you want, for example: "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it." The agent creates the app with `node .appgov/appgov.mjs create reading-list`, which publishes the starter app as `v1` in `apps/reading-list/`, and then makes your app there as a change, which it submits. Both show up on the page.
+
+- **Codex:** its default sandbox blocks connections to 127.0.0.1, so the app's tests cannot open a port and `submit` cannot reach the Host. The setting above allows them. Without it, approve the command when Codex asks, or the files change and nothing is published.
+- **Claude Code** asks before it runs `npm` and `node`. Allow both.
+
+## Or create an app in a terminal
 
 ```sh
 node bin/appgov.mjs create todo
@@ -48,24 +83,13 @@ The app directory is /path/to/agent-app-governance/local/apps/todo. Open it with
 
 `create todo` gives you the template's starter app under the name `todo`: one page that says "Hello, guest" and has a sign-in button. It is not a to-do list yet; ask your agent for one.
 
-## Open the two pages
-
-- The app: http://127.0.0.1:8080/apps/todo/
-- Your apps page: http://127.0.0.1:8090/. It shows your apps, the history of each one, and the changes that wait for you.
-
-Anyone can view the apps page. To decide on it (let a change go live, say no, go back to a version), open it from your owner link, which the Host prints in its log:
-
-```sh
-docker compose logs host | grep "owner link"
-```
-
-The line ends with `http://127.0.0.1:8090/#owner=` followed by a token. Open that link in your browser yourself, and do not give it to your agent. It stays the same when the Host restarts; to replace it, see [replacing the owner link](./docs/reference.md#replacing-the-owner-link).
+The app answers at http://127.0.0.1:8080/apps/todo/, and the apps page lists it.
 
 The PneumaSpace console at http://127.0.0.1:8081/ is the platform's own admin page, without a login. Changing an app there goes around the Host, and the app's history then no longer matches what is live.
 
-## Hand the app to your agent
+## Hand an app to your agent
 
-Open the app's folder with the agent you use, and ask for a change in your own words:
+To change an app, open its folder with the agent you use (or stay in `apps/` and name the app), and ask for a change in your own words:
 
 ```sh
 cd apps/todo
@@ -81,8 +105,7 @@ codex -c sandbox_workspace_write.network_access=true
 
 The app's `AGENTS.md`, which Claude Code reads through `CLAUDE.md`, opens with the rules for the agent: look at `status` and `history`, edit the files, add a test, run `npm test`, and submit with `node .appgov/appgov.mjs submit "<what you asked for>"`. You do not need to tell the agent any of this.
 
-- **Codex:** its default sandbox blocks connections to 127.0.0.1, so the app's tests cannot open a port and `submit` cannot reach the Host. The setting above allows them. Without it, approve the command when Codex asks, or the files change and nothing is published.
-- **Claude Code** asks before it runs `npm` and `node`. Allow both.
+The same notes on Codex's sandbox and Claude Code's questions apply as [above](#ask-your-agent-for-an-app).
 
 The history records which agent submitted, from variables Claude Code and Codex set in their shells, and `unknown` when it cannot tell. To name it yourself, set `APPGOV_AGENT`. You can switch agents at any time: what the next agent needs is in the folder.
 

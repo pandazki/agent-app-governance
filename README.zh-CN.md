@@ -2,6 +2,26 @@
 
 [English](./README.md)
 
+## 从这里开始
+
+你会得到一个页面：上面是你的 coding agent（Claude Code 或 Codex）为你做的小应用，每次改动都有记录，有风险的改动由你说了算，也随时能回到早先的版本。
+
+先选一个版本：
+
+- **本地版**：跑在你自己的电脑上，用 Docker。需要 Docker、Node.js 24 和 git。不用花钱。大约五分钟。
+- **Cloudflare 版**：跑在你自己的 Cloudflare 账号上，装好之后你的电脑上什么都不用跑。需要一个开通 Workers Paid 套餐的 Cloudflare 账号（每月收费），账号里要有一个域名（域名每年收费）；安装时还需要 Docker、Node.js 24 和 Bun。它会顺带在那里装好 PneumaSpace，中间有几步只有你能在 Cloudflare 上做，到时会问你。
+
+最省事的开始方式：在想放它的文件夹里打开 Claude Code 或 Codex，粘贴一句话。
+
+- 本地版：`Install the local edition of https://github.com/pandazki/agent-app-governance on this computer, following AGENTS.md in that repository.`
+- Cloudflare 版：`Install the Cloudflare edition of https://github.com/pandazki/agent-app-governance on my Cloudflare account, following AGENTS.md in that repository.`
+
+你的 agent 会先检查需要的东西，遇到只有你能做的事会停下来问你。想自己动手，就看[本地版指南](./local/README.zh-CN.md)或 [Cloudflare 版指南](./cloudflare/README.zh-CN.md)。
+
+装好之后，你会有一个在浏览器里打开的页面（本地版是 http://127.0.0.1:8090/，Cloudflare 版是你的 Host 自己的地址），页面会告诉你下一步做什么。然后直接告诉你的 agent 你想要什么，比如：“帮我做一个叫 reading-list 的新应用：记下我想读的书，可以添加书，读完了可以打勾。”
+
+## 这是什么
+
 Claude Code、Codex 这样的 coding agent，几分钟就能做出一个带存储数据的小应用。难的是之后怎么跟这个应用过日子：
 
 - 没人记下改了什么、是谁要求的、上线前有没有检查过。

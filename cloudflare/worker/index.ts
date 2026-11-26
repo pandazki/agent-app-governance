@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { planeListing, RUNTIME_KEY } from "./runtime-check";
 import { operate, withTiming, type FolderBucket, type HostPort } from "./folders";
-import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredToken } from "./gateway";
+import { handle, json, OP_HEADER, ORIGIN_HEADER, type AuthStore, type StoredCode, type StoredToken } from "./gateway";
+import { AuthRecords } from "./auth-records";
 import { APP_HEADER, CHANNEL_HEADER, folderKey, plansKey, SECRET_HEADER, viewKey } from "../src/protocol";
 import { appSummaries } from "./apps-index";
 import type { PageDeps } from "./page";
@@ -89,6 +90,11 @@ export default {
       listTokens: () => auth.listTokens(),
       revokeToken: (id, now) => auth.revokeToken(id, now),
       loginFailures: (key, now, failed) => auth.loginFailures(key, now, failed),
+      addCode: (hash, code, now, limit) => auth.addCode(hash, code, now, limit),
+      takeCode: (hash, now) => auth.takeCode(hash, now),
+      noteCodeToken: (id, tokenId) => auth.noteCodeToken(id, tokenId),
+      codeState: (id, now) => auth.codeState(id, now),
+      dropCode: (id) => auth.dropCode(id),
     };
     return handle(request, {
       starter: { cli: starterCli, agents: starterAgents },
@@ -257,59 +263,51 @@ export class AppHostObject extends DurableObject<Env> {
   }
 }
 
-/** The owner's sessions and the agent tokens, by SHA-256; and failed sign-ins, by caller, for ten minutes. */
+/**
+ * The owner's sessions, the agent tokens and the one-time codes, by SHA-256; and failed sign-ins and wrong codes, by
+ * caller, for ten minutes. The rules are worker/auth-records.ts, over this object's own storage; one call runs at a
+ * time, so a code is taken once.
+ */
 export class AuthObject extends DurableObject<Env> {
-  private kv() {
-    return this.ctx.storage.kv;
+  // RPC calls reach methods on the class, so each is spelled out.
+  private readonly records = new AuthRecords(this.ctx.storage.kv);
+  async addSession(hash: string, expiresAt: number) {
+    return this.records.addSession(hash, expiresAt);
   }
-
-  async addSession(hash: string, expiresAt: number): Promise<void> {
-    this.kv().put(`session:${hash}`, { expires_at: expiresAt });
+  async hasSession(hash: string, now: number) {
+    return this.records.hasSession(hash, now);
   }
-
-  async hasSession(hash: string, now: number): Promise<boolean> {
-    const found = this.kv().get<{ expires_at: number }>(`session:${hash}`);
-    if (!found) return false;
-    if (found.expires_at <= now) {
-      this.kv().delete(`session:${hash}`);
-      return false;
-    }
-    return true;
+  async dropSession(hash: string) {
+    return this.records.dropSession(hash);
   }
-
-  async dropSession(hash: string): Promise<void> {
-    this.kv().delete(`session:${hash}`);
+  async addToken(hash: string, token: StoredToken) {
+    return this.records.addToken(hash, token);
   }
-
-  async addToken(hash: string, token: StoredToken): Promise<void> {
-    this.kv().put(`token:${hash}`, token);
-    this.kv().put(`token-id:${token.id}`, hash);
+  async findToken(hash: string, now: number) {
+    return this.records.findToken(hash, now);
   }
-
-  async findToken(hash: string, now: number): Promise<StoredToken | null> {
-    const token = this.kv().get<StoredToken>(`token:${hash}`);
-    return token && token.revoked_at === null && token.expires_at > now ? token : null;
+  async listTokens() {
+    return this.records.listTokens();
   }
-
-  async listTokens(): Promise<StoredToken[]> {
-    return [...this.kv().list<StoredToken>({ prefix: "token:" })].map(([, token]) => token).sort((a, b) => a.created_at - b.created_at);
+  async revokeToken(id: string, now: number) {
+    return this.records.revokeToken(id, now);
   }
-
-  async revokeToken(id: string, now: number): Promise<boolean> {
-    const hash = this.kv().get<string>(`token-id:${id}`);
-    const token = hash ? this.kv().get<StoredToken>(`token:${hash}`) : undefined;
-    if (!hash || !token) return false;
-    if (token.revoked_at === null) this.kv().put(`token:${hash}`, { ...token, revoked_at: now });
-    return true;
+  async loginFailures(key: string, now: number, failed: boolean) {
+    return this.records.loginFailures(key, now, failed);
   }
-
-  async loginFailures(key: string, now: number, failed: boolean): Promise<number> {
-    const slot = Math.floor(now / 600_000);
-    const name = `login:${key}`;
-    const kept = this.kv().get<{ slot: number; count: number }>(name);
-    const count = kept && kept.slot === slot ? kept.count : 0;
-    if (!failed) return count;
-    this.kv().put(name, { slot, count: count + 1 });
-    return count + 1;
+  async addCode(hash: string, code: StoredCode, now: number, limit: number) {
+    return this.records.addCode(hash, code, now, limit);
+  }
+  async takeCode(hash: string, now: number) {
+    return this.records.takeCode(hash, now);
+  }
+  async noteCodeToken(id: string, tokenId: string) {
+    return this.records.noteCodeToken(id, tokenId);
+  }
+  async codeState(id: string, now: number) {
+    return this.records.codeState(id, now);
+  }
+  async dropCode(id: string) {
+    return this.records.dropCode(id);
   }
 }

@@ -8,7 +8,9 @@ import { CheckedLine } from "./life-view";
 import { Section, Surface } from "../beautifui/site";
 import { fill, hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
-import { AppMark, Details, DetailsBlock, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
+import { AppMark, Details, EmptyState, Header, HintCard, Picture, RichText, SourceChip, StatePill } from "./parts";
+import { StartSteps } from "./start-view";
+import { HomeEnd } from "./connect-view";
 
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
@@ -138,6 +140,8 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
                 <AppTile key={app.name} app={app} index={i} />
               ))}
             </div>
+          ) : model.start ? (
+            <StartSteps start={model.start} connect={model.connect} />
           ) : (
             <EmptyState title={ui.empty_title} body={ui.empty_body} />
           )}
@@ -161,14 +165,16 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
           </Surface>
         </Section>
       )}
-      <Section number={number()} title={ui.hint_title} index={3}>
-        <Surface>
-          <div className="mx-auto max-w-[560px]">
-            <HintCard hint={model.hint} />
-          </div>
-        </Surface>
-      </Section>
-      <DetailsBlock facts={model.facts} />
+      {model.hint && (
+        <Section number={number()} title={ui.hint_title} index={3}>
+          <Surface>
+            <div className="mx-auto max-w-[560px]">
+              <HintCard hint={model.hint} />
+            </div>
+          </Surface>
+        </Section>
+      )}
+      <HomeEnd model={model} />
     </>
   );
 }

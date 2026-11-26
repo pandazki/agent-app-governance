@@ -6,6 +6,7 @@ import type { PageModel } from "../../local/src/page-model";
 import { chooseLang } from "../../local/src/page-words";
 import { APP_NAME, CHANNEL_HEADER, OWNER_SUBJECT, PAGE_CHANNEL } from "../src/protocol";
 import { forward, hostOrigin, json, ownerKeyRefusal, randomSecret, refuse, sameText, SESSION_MS, sha256, type GatewayDeps } from "./gateway";
+import { connectCommand, connectionLabel, createCode } from "./connect";
 
 // ---------------------------------------------------------------------------
 // The owner page, served by the Worker: the local edition's page (its views'
@@ -26,7 +27,9 @@ import { forward, hostOrigin, json, ownerKeyRefusal, randomSecret, refuse, sameT
 //     session must also carry the session's own token (`x-appgov-csrf`), which
 //     only a view served to that session holds.
 //   - Agent tokens and the CLI's sessions are not read here: these routes take
-//     no Authorization header at all.
+//     no Authorization header at all. So only the owner, in the page, makes a
+//     one-time code that connects an agent (worker/connect.ts), lists the
+//     connections and revokes one.
 //
 // What a view shows comes from R2, without a container: the list of apps from
 // the summaries (and their index, worker/apps-index.ts), one app's status,
@@ -60,6 +63,8 @@ const OWNER_LIFECYCLE = new Set(["take-down", "bring-back", "publish-again", "cl
 const DONE = DONE_KEYS;
 const VERSION = /^v\d+$/;
 const CHANGE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const CODE_ID = /^c[a-f0-9]{12}$/;
+const TOKEN_ID = /^t[a-f0-9]{12}$/;
 
 /** Whether a request is one of the page's: its views, its files, and its writes under /owner/. */
 export function isPageRequest(method: string, path: string): boolean {
@@ -229,8 +234,12 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
   if (!session) return html(401, signInModel(ctx, "/owner/signin"));
 
   if (url.pathname === "/") {
+    // The agent tokens that work now, for the list of connected assistants and the first steps: never the tokens.
+    const connections = (await deps.auth.listTokens())
+      .filter((t) => t.revoked_at === null && t.expires_at > ctx.now)
+      .map((t) => ({ id: t.id, label: t.label, created_at: t.created_at, ...(t.last_used_at ? { last_used_at: t.last_used_at } : {}), ...(t.via ? { via: t.via } : {}), ...(t.agent ? { agent: t.agent } : {}) }));
     const overview: Overview = { governance: deps.governance, governance_note: "", data_snapshot: null, summaries, apps: [], generated_at: new Date(ctx.now).toISOString(), host_url: self, ...(space ? { console_url: space } : {}), ...(page.manager ? { manager: page.manager } : {}) };
-    return html(200, homeModel(overview, ctx));
+    return html(200, homeModel(overview, { ...ctx, connections }));
   }
   if (!shape || !APP_NAME.test(name) || !summaries.some((s) => s.app_id === name)) return html(404, missingModel(ctx));
 
@@ -305,6 +314,26 @@ async function write(request: Request, url: URL, deps: GatewayDeps, session: str
   if (parts.length === 2 && parts[1] === "signout") {
     await deps.auth.dropSession(await sha256(session));
     return json({ signed_out: true }, 200, { "set-cookie": sessionCookie("", 0) });
+  }
+
+  // Connecting an assistant: a one-time code for a named connection, what became of it, closing it (worker/connect.ts).
+  if (parts[1] === "connect") {
+    if (parts.length === 2) {
+      const label = connectionLabel(input.label);
+      if (!label) return refuse(400, "bad_label", "name the connection, for example after the computer the assistant runs on");
+      const made = await createCode(deps, label, now);
+      if (!made) return refuse(429, "too_many_codes", "five codes are waiting already; close one, or wait ten minutes");
+      return json({ id: made.id, code: made.code, expires_at: new Date(made.expires_at).toISOString(), command: connectCommand(self, made.code) }, 201);
+    }
+    if (parts.length === 4 && CODE_ID.test(parts[2]!) && parts[3] === "state") return json(await deps.auth.codeState(parts[2]!, now));
+    if (parts.length === 4 && CODE_ID.test(parts[2]!) && parts[3] === "cancel") return json({ closed: await deps.auth.dropCode(parts[2]!) });
+    return refuse(404, "not_found", "not found");
+  }
+  if (parts[1] === "tokens") {
+    if (parts.length === 4 && TOKEN_ID.test(parts[2]!) && parts[3] === "revoke") {
+      return (await deps.auth.revokeToken(parts[2]!, now)) ? json({ revoked: parts[2] }) : refuse(404, "no_token", `no token ${parts[2]}`);
+    }
+    return refuse(404, "not_found", "not found");
   }
 
   const name = parts[2] ?? "";

@@ -15,7 +15,9 @@ const host = hostFromEnv(process.env, log, { hostUrl });
 // app directory, so the owner link printed below keeps working after a restart. Delete the file to retire it.
 const ownerToken = ownerTokenIn(hostStateDir(process.env), log);
 const pictures = picturesFromEnv(process.env, host, log);
-const server = createHostServer(host, { bind, ownerToken, pictures });
+// Where the apps folder is on the person's computer: the container sees it as /apps. Compose passes the path it mounted.
+const appsFolder = process.env.APPGOV_APPS_HOST_DIR?.trim() || undefined;
+const server = createHostServer(host, { bind, ownerToken, pictures, ...(appsFolder ? { appsFolder } : {}) });
 server.listen(port, bind, () => {
   const { address, port: bound } = server.address() as AddressInfo;
   host.announce();
@@ -24,4 +26,5 @@ server.listen(port, bind, () => {
   console.log(`[host] pictures of apps: ${pictures.enabled ? `taken through ${process.env.APPGOV_SCREENSHOT_CDP}` : "off (no APPGOV_SCREENSHOT_CDP); the page shows placeholders"}`);
   console.log(`[host] your apps: ${hostUrl}/`);
   console.log(`[host] owner link (open it yourself; it lets that browser approve, deny and undo; delete ${hostStateDir(process.env)}/owner-token to retire it): ${ownerLink(hostUrl, ownerToken)}`);
+  console.log(`[host] next: open the owner link above in your browser. Then open Claude Code or Codex in ${appsFolder ?? "the apps folder (local/apps)"} and ask it for an app; the page shows the steps.`);
 });

@@ -3,6 +3,7 @@ import { isPageRequest, servePage, type PageDeps } from "./page";
 import { asOf, readView, serverTiming, type ViewStore } from "./views";
 import { restated } from "../../host/src/lifecycle";
 import { currentListing, type RuntimeDeps } from "./runtime-check";
+import { connectScript, redeem } from "./connect";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -22,6 +23,11 @@ import { currentListing, type RuntimeDeps } from "./runtime-check";
 // an agent starts in (GET /starter), so what an agent runs matches this
 // centre. Every answer carries the centre's API level (API_HEADER).
 //
+// Besides signing in, two routes take no credential (worker/connect.ts):
+// GET /connect answers the script that connects a directory, which holds
+// nothing secret, and POST /connect trades a one-time code the owner made on
+// the page for an agent token, counted against guessing as a sign-in is.
+//
 // The owner page (worker/page.ts) has routes of its own, which take neither
 // credential: the owner signs in to it with the owner key and it keeps a
 // session of its own in a cookie.
@@ -40,7 +46,29 @@ export interface StoredToken {
   readonly created_at: number;
   readonly expires_at: number;
   readonly revoked_at: number | null;
+  /** When it last opened a request, to the hour; absent until it is used. */
+  readonly last_used_at?: number;
+  /** `code`: made by trading a one-time code from the owner page. Absent: made with `token create`. */
+  readonly via?: "code";
+  /** The agent the CLI detected when it traded the code, e.g. claude-code. */
+  readonly agent?: string;
 }
+
+/** A one-time code that connects an agent, kept by the SHA-256 of the code. */
+export interface StoredCode {
+  readonly id: string;
+  /** The connection's name, as the owner typed it: the agent token made from the code takes it. */
+  readonly label: string;
+  readonly created_at: number;
+  readonly expires_at: number;
+}
+
+/** What became of a code, as the page that made it asks. */
+export type CodeState =
+  | { readonly state: "waiting"; readonly expires_at: number }
+  | { readonly state: "used"; readonly label: string; readonly token_id?: string }
+  | { readonly state: "expired" }
+  | { readonly state: "gone" };
 
 /** Where sessions and agent tokens live, by the SHA-256 of the secret. Secrets themselves are never stored. */
 export interface AuthStore {
@@ -51,8 +79,17 @@ export interface AuthStore {
   findToken(hash: string, now: number): Promise<StoredToken | null>;
   listTokens(): Promise<StoredToken[]>;
   revokeToken(id: string, now: number): Promise<boolean>;
-  /** Failed sign-ins from `key` in the current ten minutes, counting this one when `failed`. */
+  /** Failed sign-ins (or wrong codes, under `connect:`) from `key` in the current ten minutes, counting this one when `failed`. */
   loginFailures(key: string, now: number, failed: boolean): Promise<number>;
+  /** Keep a code, unless `limit` codes wait already (false then). */
+  addCode(hash: string, code: StoredCode, now: number, limit: number): Promise<boolean>;
+  /** Take a code, once: it is gone after this call; one past its time gives null. */
+  takeCode(hash: string, now: number): Promise<StoredCode | null>;
+  /** Note which agent token a used code became. */
+  noteCodeToken(id: string, tokenId: string): Promise<void>;
+  codeState(id: string, now: number): Promise<CodeState>;
+  /** Close a code before it is used. */
+  dropCode(id: string): Promise<boolean>;
 }
 
 /** One app's Durable Object, as the gateway calls it. */
@@ -252,7 +289,13 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   // The owner page: its views, its files, its sign-in and its writes, none with the API's credentials.
   if (deps.page && isPageRequest(method, url.pathname)) return servePage(request, deps, deps.page, now);
 
-  // The only route without a credential: it takes the owner key and gives a session.
+  // Connecting a directory with a one-time code from the owner page: the script, and the trade (worker/connect.ts).
+  if (method === "GET" && url.pathname === "/connect") {
+    return new Response(connectScript(self, deps.starter.cli), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+  }
+  if (method === "POST" && url.pathname === "/connect") return redeem(request, deps, self, now);
+
+  // Takes the owner key and gives a session.
   if (method === "POST" && url.pathname === "/auth/login") {
     const where = request.headers.get("cf-connecting-ip") ?? "unknown";
     const body = parseObject(await readText(request));

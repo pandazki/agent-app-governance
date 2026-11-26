@@ -113,6 +113,8 @@ export interface PageRouteOptions {
   readonly checkHostName: (req: IncomingMessage) => void;
   /** The built client (web/dist); by default the one next to this source, read once. */
   readonly assets?: PageAssets;
+  /** The apps folder as the person's own computer names it, which the home view's first steps show. */
+  readonly appsFolder?: string;
 }
 
 let defaultAssets: PageAssets | undefined;
@@ -193,6 +195,7 @@ async function page(req: IncomingMessage, url: URL, opts: PageRouteOptions): Pro
     autoApproved: host.autoApproved,
     ownerOff: !opts.ownerToken,
     ...(overview.manager ? { manager: overview.manager } : {}),
+    ...(opts.appsFolder ? { appsFolder: opts.appsFolder } : {}),
   };
   const assets = opts.assets ?? (defaultAssets ??= loadPageAssets());
   const html = (status: number, model: PageModel): Answer => ({ status, headers: pageHeaders(nonce), body: renderShell(model, nonce, assets) });

@@ -740,3 +740,64 @@ describe("whether the app is there, on the page", () => {
     expect(app.life!.actions.map((action) => [action.verb, action.variant])).toEqual([["take-down", "secondary"]]);
   });
 });
+
+describe("the first minute, on the page", () => {
+  test("local: with no apps, the steps say where the apps folder is and what to say, in order; the hint section gives way to them", async () => {
+    const { ctx, overview } = await context("en");
+    const home = homeModel(overview, { ...ctx, appsFolder: "/Users/me/agent-app-governance/local/apps" });
+    expect(home.apps).toEqual([]);
+    expect(home.hint).toBeNull();
+    expect(home.connect).toBeNull();
+    expect(home.connections).toBeNull();
+    expect(home.start?.steps.map((step) => [step.title, step.state, step.copy?.text])).toEqual([
+      ["Open your AI assistant in your apps folder", "now", "/Users/me/agent-app-governance/local/apps"],
+      ["Ask it for your first app", "now", "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it."],
+    ]);
+    // Codex's network setting is behind the step's small info control, not on the page.
+    expect(home.start?.steps[0]?.more).toContain("sandbox_workspace_write.network_access=true");
+    const html = draw(home);
+    expect(html).toContain("/Users/me/agent-app-governance/local/apps");
+    expect(html).toContain('aria-current="step"');
+    expect(html).not.toContain("sandbox_workspace_write");
+    expect(html).not.toContain("Want a new app, or a change?");
+    // Without the folder's own path, the folder inside the installation, said as such; in Chinese too.
+    const zh = homeModel(overview, { ...ctx, lang: "zh" });
+    expect(zh.start?.steps.map((step) => [step.title, step.copy?.label, step.copy?.text])).toEqual([
+      ["在应用文件夹里打开你的 AI 助手", "应用文件夹，在你安装它的文件夹里：", "local/apps"],
+      ["让它做你的第一个应用", "这样说，或者描述你想要的应用：", "帮我做一个叫 reading-list 的新应用：记下我想读的书，可以添加书，读完了可以打勾。"],
+    ]);
+  });
+
+  test("with apps, there are no steps and the hint section stays as it is", async () => {
+    await host.create("notes");
+    const { ctx, overview } = await context("zh");
+    const home = homeModel(overview, { ...ctx, appsFolder: "/x/apps" });
+    expect(home.start).toBeNull();
+    expect(home.hint).toEqual({ body: "直接告诉你的 AI 助手。在应用文件夹里打开 Claude Code 或 Codex，然后这样说：", example: "帮我做一个叫 reading-list 的新应用：记下我想读的书，可以添加书，读完了可以打勾。" });
+    expect(draw(home)).toContain("想要一个新应用，或者改一改？");
+  });
+
+  test("signed in (the Cloudflare edition): connecting is step one until an assistant is connected, then asking for an app is", async () => {
+    const { ctx, overview } = await context("en");
+    const session = { ...ctx, access: { kind: "session", csrf: "c" } as const };
+    const none = homeModel(overview, { ...session, connections: [] });
+    expect(none.start?.steps.map((step) => [step.state, step.connect, step.copy === null])).toEqual([["now", true, true], ["later", false, false]]);
+    const before = draw(none, "yes");
+    expect(before).toContain("Connect my AI assistant");
+    expect(before).toContain('placeholder="Name it, for example after this computer"');
+    expect(before).toContain("Get a code");
+    // The sentence for a first app waits until step one is done.
+    expect(before).not.toContain("reading-list");
+    const at = Date.now() - 3 * 86_400_000;
+    const one = homeModel(overview, { ...session, connections: [{ id: "t0123456789ab", label: "MacBook", created_at: at, via: "code", agent: "claude-code" }] });
+    expect(one.start?.steps.map((step) => [step.state, step.doneNote])).toEqual([["done", "Connected: MacBook"], ["now", null]]);
+    expect(words(one.connections?.[0]?.meta)).toBe("Claude Code · connected {rel} · not used yet");
+    const after = draw(one, "yes");
+    expect(after).toContain("Connected: MacBook");
+    expect(after).toContain("reading-list");
+    expect(after).toContain("AI assistants · 1");
+    // A token made in a terminal is listed too, as made there.
+    const cli = homeModel(overview, { ...session, connections: [{ id: "t0123456789ac", label: "laptop", created_at: at, last_used_at: Date.now() }] });
+    expect(words(cli.connections?.[0]?.meta)).toBe("made in a terminal {rel} · last used {rel}");
+  });
+});

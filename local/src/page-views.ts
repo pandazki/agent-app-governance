@@ -12,6 +12,8 @@ import type {
   ChangeModel,
   Checked,
   CheckRow,
+  ConnectModel,
+  Connection,
   Fact,
   HistoryRow,
   HomeModel,
@@ -29,6 +31,7 @@ import type {
   Side,
   SignInModel,
   Stamp,
+  StartStep,
   Tone,
   Ui,
   UnreadableModel,
@@ -182,6 +185,25 @@ export interface PageContext {
    * now"), `failed` says why the last asking did not answer. Without it, every view asked PneumaSpace as it was built.
    */
   readonly runtimeCheck?: { readonly href: string; readonly failed: string | null };
+  /** The local edition: the apps folder as the person's own computer names it, when the Host was told (APPGOV_APPS_HOST_DIR). */
+  readonly appsFolder?: string;
+  /**
+   * The Cloudflare edition's home view: agents connect from the page with a one-time code, and these are the agent
+   * tokens that are valid now. Without it, agents need no credential (the local edition) and the page connects nothing.
+   */
+  readonly connections?: readonly ConnectionFacts[];
+}
+
+/** A valid agent token, as the page lists it: never the token itself. */
+export interface ConnectionFacts {
+  readonly id: string;
+  readonly label: string;
+  /** Milliseconds since the epoch. */
+  readonly created_at: number;
+  readonly last_used_at?: number;
+  /** `code`: connected from the page; absent: made with `token create` in a terminal. */
+  readonly via?: string;
+  readonly agent?: string;
 }
 
 // The record and the waiting changes come from files an agent can write: any field may be missing or of another type.
@@ -665,7 +687,7 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
     apps,
     down: { cards: down, show: down.length === 1 ? w.down_show_one : fill(w.down_show_other, { n: down.length }) },
     checked: checkedOf(ctx, oldest),
-    hint: { body: w.hint_body, example: w.hint_new },
+    ...firstSteps(ctx, w, summaries.length === 0),
     facts: facts([
       { label: w.d_governance, value: ctx.governanceNote ? `${str(ctx.governance)}: ${str(ctx.governanceNote)}` : str(ctx.governance) },
       { label: w.d_snapshot, value: ctx.dataSnapshot ? ctx.dataSnapshot : w.d_none },
@@ -676,6 +698,45 @@ export function homeModel(overview: Overview, ctx: PageContext): HomeModel {
       { label: w.d_terminal, value: `${cli("list")} · ${cli("status <name>")} · ${cli("history <name>")}`, mono: true },
     ]),
   };
+}
+
+/**
+ * What the home view says about getting started: with no apps, the steps to a first one, in order, and where the
+ * person is in them; with apps, the hint for the next one. On the Cloudflare edition an assistant connects from the
+ * page with a one-time code, so the first step is done once one is connected. On the local edition an agent needs no
+ * credential: the apps folder already tells it what it needs, so "connecting" is opening the assistant there.
+ */
+function firstSteps(ctx: PageContext, w: Words, empty: boolean): Pick<HomeModel, "start" | "hint" | "connect" | "connections"> {
+  const iso = (ms: number | undefined) => (typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : undefined);
+  const valid = ctx.connections ? [...ctx.connections].sort((a, b) => b.created_at - a.created_at) : null;
+  const connections: Connection[] | null = valid
+    ? valid.map((c) => {
+        const agent = c.agent && c.agent !== "unknown" ? `${agentWords(w, c.agent, undefined)} · ` : "";
+        const used = c.last_used_at ? w.conn_used : w.conn_unused;
+        return { id: c.id, label: c.label, meta: rich(ctx, `${agent}${c.via === "code" ? w.conn_made : w.conn_cli} · ${used}`, {}, { when: { iso: iso(c.created_at), mode: "rel" }, used: { iso: iso(c.last_used_at), mode: "rel" } }), revokeUrl: `/owner/tokens/${encodeURIComponent(c.id)}/revoke` };
+      })
+    : null;
+  const connect: ConnectModel | null = valid ? { url: "/owner/connect", stateUrl: "/owner/connect/{id}/state", cancelUrl: "/owner/connect/{id}/cancel", done: link("/", ctx.lang), sentence: w.connect_sentence } : null;
+  const ask = { label: w.start_ask_label, text: w.hint_new, mono: false };
+  if (!empty) return { start: null, hint: { body: w.hint_body, example: w.hint_new }, connect, connections };
+  const steps: StartStep[] = valid
+    ? [
+        { title: w.start_connect, state: valid.length ? "done" : "now", copy: null, doneNote: valid[0] ? fill(w.start_connected, { label: valid[0].label }) : null, more: null, connect: true },
+        { title: w.start_ask, state: valid.length ? "now" : "later", copy: ask, doneNote: null, more: null, connect: false },
+      ]
+    : [
+        {
+          title: w.start_open,
+          state: "now",
+          copy: ctx.appsFolder ? { label: w.start_open_label, text: ctx.appsFolder, mono: true } : { label: w.start_open_label_relative, text: "local/apps", mono: true },
+          doneNote: null,
+          more: w.start_open_more,
+          connect: false,
+        },
+        // Whether the assistant was opened there, this Host cannot tell: the sentence is shown from the start.
+        { title: w.start_ask, state: "now", copy: ask, doneNote: null, more: null, connect: false },
+      ];
+  return { start: { steps }, hint: null, connect, connections };
 }
 
 // --- the history, as a person would tell it ------------------------------------
