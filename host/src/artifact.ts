@@ -4,6 +4,7 @@ import { openChangeRecord, type ChangeRecord, type ChangeRecordEntry } from "@pn
 import { copyTree, diffTrees, listFiles, treeSignature, type TreeDiff, type TreeWalkOptions } from "@pneuma-framework/host-kit/workspace";
 import { releaseRolloutFilePath } from "@pneuma-framework/core/release-rollout-store";
 import { STATE_DIR } from "./constants";
+import type { PreviewRequestFacts } from "./preview-requests";
 import type { TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -203,8 +204,17 @@ export interface HostEntryFields {
   readonly risk_reasons?: readonly string[];
   /** `preset` names the risk preset that was in force, so a later reader knows which rules let the change through. */
   readonly approval?: { readonly preset?: string; readonly route?: string; readonly by: readonly string[]; readonly reason_code: string };
-  /** `coverage` on the npm-test check: what the test run covered, as the runner reported it. */
-  readonly checks?: readonly { readonly id: string; readonly status: "passed" | "failed"; readonly detail?: string; readonly coverage?: TestCoverage }[];
+  /**
+   * `coverage` on the npm-test check: what the test run covered, as the runner reported it. `requests` on the
+   * space-preview check: how many of the app's own requests the preview answered as expected, or that it only started.
+   */
+  readonly checks?: readonly {
+    readonly id: string;
+    readonly status: "passed" | "failed";
+    readonly detail?: string;
+    readonly coverage?: TestCoverage;
+    readonly requests?: PreviewRequestFacts;
+  }[];
   readonly reason?: string;
   readonly address?: string;
   readonly agent_note?: string;
@@ -321,7 +331,15 @@ export function readScaffold(root: string): ScaffoldBoundary {
 const AGENTS_MARKER = "## Changing this app (read this before the first edit)";
 
 /** Turn a plain PneumaSpace app directory into a self-describing governed artifact. */
-export function installOverlay(root: string, overlayDir: string, cliSource: string): void {
+/**
+ * `previewFile`: where the app keeps its preview requests (src/preview-requests.ts), relative to the app. An overlay
+ * that ships a `preview.json` for the platform's template puts it there when the template did not bring one.
+ */
+export function installOverlay(root: string, overlayDir: string, cliSource: string, previewFile?: string): void {
+  if (previewFile && existsSync(join(overlayDir, "preview.json")) && !existsSync(join(root, previewFile))) {
+    mkdirSync(dirname(join(root, previewFile)), { recursive: true });
+    copyFileSync(join(overlayDir, "preview.json"), join(root, previewFile));
+  }
   const agents = join(root, "AGENTS.md");
   const existing = existsSync(agents) ? readFileSync(agents, "utf8") : "";
   if (!existing.includes(AGENTS_MARKER)) {

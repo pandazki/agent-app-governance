@@ -34,7 +34,7 @@ This repository gives such apps one way to go live. You create an app here from 
 
 - **One setting for how strict it is.** The Host runs in one of three modes:
   - `record`: every change is recorded and the Host publishes it. Nothing checks or approves it. A change that fails to start stays recorded but not live.
-  - `personal` (the default): a change has to pass the app's tests and, unless previews are switched off, start in a preview. A standing rule lets ordinary changes go live; risky ones wait for you. With the default preset, a change is risky when visitors no longer have to sign in, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row. An `UPDATE` that changes stored rows is not caught.
+  - `personal` (the default): a change has to pass the app's tests and, unless previews are switched off, start in a preview and answer there the requests the app declares in `preview.json`. A standing rule lets ordinary changes go live; risky ones wait for you. With the default preset, a change is risky when visitors no longer have to sign in, or when new SQL drops or renames a table or column, drops an index, empties a table, or deletes every row. An `UPDATE` that changes stored rows is not caught.
   - `review-all`: the same checks, and you decide every change after the app is created. Creating an app never waits for you.
 
   Which change counts as risky is set in a preset file, not in code.

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { folderKey } from "../src/protocol";
+import { FAKE_TOKEN } from "./fake-plane";
 import { startStack, type Stack } from "./stack";
 
 // The CLI against the whole edition on this machine (test/stack.ts): the done list of the Cloudflare edition,
@@ -149,6 +150,49 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.bucket.objects.has(folderKey("todo"))).toBe(true);
     // Made with the agent token: the record names the agent and the token, not the Host on the owner's behalf.
     expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
+  });
+
+  test("the template's own requests were made against the first preview, with the platform token, in order", async () => {
+    const preview = stack.plane.apps.find((a) => a.expiresAt !== null)!.name;
+    expect(stack.plane.appRequests.filter((line) => line.startsWith(`${preview} `))).toEqual([`${preview} GET /api/items`, `${preview} PUT /api/items`, `${preview} GET /api/items`]);
+    expect((await cli(copy(), ["history"])).out).toContain("preview (passed): 3 requests the app declares in tests/preview.json answered as expected on the preview.");
+  });
+
+  test("a change whose data route breaks is stopped by the preview's requests, and the agent sees what was sent and what came back", async () => {
+    stack.plane.answer = (_app, request) => (request.method === "PUT" ? Response.json({ error: "items is not iterable" }, { status: 500 }) : undefined);
+    writeFileSync(join(copy(), "app", "public", "note.txt"), "a change\n");
+    try {
+      const result = await cli(copy(), ["submit", "Save the shelf"]);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("rejected");
+      // The third request reads what the second should have stored, so it fails too, and says so.
+      expect(result.out).toContain("1 of the 3 requests the app declares in tests/preview.json answered as expected on the preview.");
+      expect(result.out).toContain('request 3 of 3: GET /api/items\n  expected: status 200 and a reply that contains "Checked on the preview"');
+      expect(result.out).toContain('request 2 of 3: PUT /api/items {"revision":null,"items":[{"id":"checked"');
+      expect(result.out).toContain('got: status 500; the reply: {"error":"items is not iterable"}');
+    } finally {
+      stack.plane.answer = null;
+      await cli(copy(), ["discard"]);
+    }
+    expect((await cli(copy(), ["status"])).out).not.toContain("note.txt");
+  });
+
+  test("a preview that echoes the Host's token gets it back removed: neither the refusal nor the history holds it", async () => {
+    // As if PneumaSpace forwarded the Authorization header and the app's route echoed it, past the cut and at its end.
+    stack.plane.answer = (_app, request) =>
+      request.method === "PUT" ? new Response(`{"seen":"Bearer ${FAKE_TOKEN}"}${"x".repeat(70_000)}Bearer ${FAKE_TOKEN}`, { status: 500 }) : undefined;
+    writeFileSync(join(copy(), "app", "public", "note.txt"), "a change\n");
+    try {
+      const result = await cli(copy(), ["submit", "Save the shelf"]);
+      expect(result.out).toContain("preview_requests_failed");
+      expect(result.out).toContain(`got: status 500; the reply: {"seen":"Bearer [the Host's credential, removed]"}xxx`);
+      expect(result.out).not.toContain(FAKE_TOKEN);
+      expect(result.out).not.toContain(FAKE_TOKEN.slice(0, 8));
+      expect((await cli(copy(), ["history"])).out).not.toContain(FAKE_TOKEN.slice(0, 8));
+    } finally {
+      stack.plane.answer = null;
+      await cli(copy(), ["discard"]);
+    }
   });
 
   test("an ordinary change is checked, previewed, approved by the standing rule and released; the working copy matches", async () => {

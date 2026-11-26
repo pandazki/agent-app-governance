@@ -445,6 +445,7 @@ function printChange(result, appName) {
     if (result.one_way) console.log(`ONE-WAY: ${String(result.one_way).replace(/\.+$/, "")}. Going back past this version needs the owner's confirmation.`);
     if (result.note) console.log(result.note);
     if (result.test_warning) console.log(result.test_warning);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     return 0;
   }
   if (result.status === "release_failed") {
@@ -461,6 +462,7 @@ function printChange(result, appName) {
     console.log(`risks: ${result.risks.join(", ")}`);
     for (const line of result.disclosure) console.log(`  - ${line}`);
     if (result.test_warning) console.log(result.test_warning);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide with" : "They decide with";
     console.log(`Show this to the owner. ${look}: node ${STATE_DIR}/appgov.mjs approve ${result.change_id}   (or deny)`);
@@ -726,6 +728,8 @@ switch (command) {
         if (h.approval) console.log(`    approval: ${h.approval.reason_code} by ${h.approval.by.join(", ") || "nobody yet"} (${h.risks?.join(", ") ?? ""})`);
         const tests = h.checks?.find((check) => check.id === "npm-test");
         if (tests?.coverage) console.log(`    tests (${tests.status}): ${tests.coverage.note}`);
+        const shown = h.checks?.find((check) => check.id === "space-preview");
+        if (shown?.requests) console.log(`    preview (${shown.status}): ${shown.requests.note}`);
         // Absence of a guarantee means it was not guaranteed; an empty list means recorded only.
         if (h.kind !== "snapshot") console.log(`    guarantees: ${h.guarantees.length ? h.guarantees.join(", ") : "none (recorded only)"}`);
         if (h.one_way) console.log(`    ONE-WAY: ${h.one_way.reason}`);

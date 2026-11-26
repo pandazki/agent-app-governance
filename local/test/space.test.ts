@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CREDENTIAL_MARKER } from "../../host/src/preview-requests";
 import { Space } from "../../host/src/space";
 
 // The real client, against a stand-in admin API and a stand-in appctl: what goes over the wire for the
@@ -40,6 +41,15 @@ beforeAll(async () => {
       );
       return;
     }
+    // The local gateway's sign-in, and a preview whose route echoes the cookie it was sent.
+    if (req.method === "POST" && req.url === "/_pneuma-space/login") {
+      res.writeHead(303, { location: "/apps/todo-pvab12/", "set-cookie": `pneuma_space_session=${SESSION}; Path=/; HttpOnly` }).end();
+      return;
+    }
+    if (req.method === "GET" && req.url === "/apps/todo-pvab12/echo") {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ cookie: req.headers.cookie ?? null }));
+      return;
+    }
     res.writeHead(answers.get(`${req.method} ${req.url}`) ?? 200, { "content-type": "application/json" }).end("{}");
   });
   await new Promise<void>((resolve) => admin.listen(0, "127.0.0.1", resolve));
@@ -50,9 +60,18 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+const SESSION = "fake-session-for-the-echo-test";
 const space = () => new Space({ cli: join(dir, "appctl.mjs"), adminUrl, ingressUrl: adminUrl, publicUrl: "http://127.0.0.1:8080", owner: "user:me" });
 
 describe("the PneumaSpace client", () => {
+  test("a preview's request goes signed in to the local gateway, and an echo of the session comes back removed", async () => {
+    const reply = await space().request!("todo-pvab12", { method: "GET", path: "/echo" });
+    expect(reply.status).toBe(200);
+    expect(reply.body).toBe(JSON.stringify({ cookie: CREDENTIAL_MARKER }));
+    expect(reply.body).not.toContain(SESSION);
+  });
+
+
   test("a preview is published with --ephemeral and its ttl, and a release names its manager, with the url only when there is one", async () => {
     const preview = await space().publish("todo-pvab12", "/apps/todo/.appgov/drafts/c1", { ephemeral: { ttlSeconds: 600 }, manager: { name: "appgov", url: "http://127.0.0.1:8090/" } });
     expect(JSON.parse(preview.output.split("\n")[0]!)).toEqual([

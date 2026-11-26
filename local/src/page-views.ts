@@ -997,6 +997,7 @@ function itemStanding(ctx: PageContext, item: TimelineItem, owner: string, histo
 function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean): Fact[] {
   const main = item.main;
   const tests = items<{ id?: unknown; status?: unknown; coverage?: { note?: unknown } }>(main.checks).find((check) => check?.id === "npm-test");
+  const shown = items<{ id?: unknown; status?: unknown; requests?: { note?: unknown } }>(main.checks).find((check) => check?.id === "space-preview");
   const snapshot = item.entries.find((entry) => entry.kind === "snapshot")?.data_ref;
   const approval = main.approval as { reason_code?: unknown; by?: unknown; preset?: unknown } | undefined;
   const candidates = items<{ agent?: unknown; markers?: unknown }>(main.agent_candidates);
@@ -1010,6 +1011,7 @@ function itemFacts(w: Words, item: TimelineItem, name: string, goBack: boolean):
     items(main.risks).length ? { label: w.d_risks, value: list(main.risks), mono: true } : null,
     approval ? { label: w.d_approval, value: `${str(approval.reason_code)} · ${list(approval.by)}${approval.preset ? ` (${str(approval.preset)})` : ""}`, mono: true } : null,
     tests?.coverage ? { label: w.d_tests, value: `${str(tests.status)}: ${str(tests.coverage.note)}` } : null,
+    shown?.requests ? { label: w.d_preview, value: `${str(shown.status)}: ${str(shown.requests.note)}` } : null,
     item.oneWay ? { label: w.d_one_way, value: item.oneWay.reason } : null,
     snapshot ? { label: w.d_data, value: `${str(snapshot.capability)} ${str(snapshot.ref)}`, mono: true } : null,
     main.reason ? { label: w.d_reason, value: str(main.reason), mono: true } : null,
@@ -1219,7 +1221,7 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
       facts: facts([malformed ? { label: w.d_malformed, value: malformed } : null]),
     };
   }
-  const checks = items<{ id?: unknown; status?: unknown; coverage?: { tests?: unknown; app_tests?: unknown } }>(pending.checks);
+  const checks = items<{ id?: unknown; status?: unknown; coverage?: { tests?: unknown; app_tests?: unknown }; requests?: { answered?: unknown } }>(pending.checks);
   const tests = checks.find((check) => check?.id === "npm-test");
   const previewCheck = checks.find((check) => check?.id === "space-preview");
   const risks = items<string>(pending.risks);
@@ -1242,7 +1244,11 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
       if (own === 0) checked.push({ text: w.tests_none_own, tone: "caution" });
     }
   }
-  if (previewCheck?.status === "passed") checked.push({ text: w.started_in_preview, tone: "done" });
+  if (previewCheck?.status === "passed") {
+    // What the preview showed: the app's own requests answering, or only that it started (src/preview-requests.ts).
+    const answered = previewCheck.requests?.answered;
+    checked.push({ text: typeof answered === "number" && answered > 0 ? (answered === 1 ? w.requests_in_preview_one : fill(w.requests_in_preview, { n: answered })) : w.started_in_preview, tone: "done" });
+  }
   checked.push({ text: paths.length === 1 ? w.files_one : fill(w.files_other, { n: paths.length }), tone: "done", files: paths.slice(0, 40) });
   // Only what the standing policy could not approve is why the change waits; in review-all mode that is every risk.
   const auto = new Set(ctx.autoApproved ?? []);

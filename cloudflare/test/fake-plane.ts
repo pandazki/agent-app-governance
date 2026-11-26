@@ -34,6 +34,15 @@ export class FakePlane {
   maxTtl = 3600;
   /** When set, every app answers with this status and no app span (as a plane that refuses would). */
   refuseApps = false;
+  /**
+   * How a running app answers a request other than its home page, with its own storage (empty for a new app, as a
+   * preview's is). Without it, every app answers like the template's starter: /api/items lists the sample entries
+   * until a PUT stores others.
+   */
+  answer: ((app: string, request: { method: string; path: string; body?: string }, store: Map<string, unknown>) => Response | undefined) | null = null;
+  /** Each request an app was asked, other than for its home page and the probe's path: "<app> <method> /<path>". */
+  readonly appRequests: string[] = [];
+  private readonly stores = new Map<string, Map<string, unknown>>();
   private uploads = new Map<string, { app: string; digest: string; bytes: number; ephemeral: boolean; body?: Uint8Array }>();
   private seq = 0;
 
@@ -51,7 +60,7 @@ export class FakePlane {
       return this.api(method, url.pathname.slice(7).split("/").filter(Boolean), body, manager);
     }
     const match = /^\/apps\/([a-z][a-z0-9-]*)\/(.*)$/.exec(url.pathname);
-    if (match) return this.serve(match[1]!, match[2]!);
+    if (match) return this.serve(match[1]!, match[2]!, method, typeof init?.body === "string" ? init.body : undefined);
     return this.error(404, "not_found", "Route not found.");
   }) as typeof fetch;
 
@@ -164,12 +173,30 @@ export class FakePlane {
     return new Response(null, { status: 200 });
   }
 
-  private serve(name: string, path: string): Response {
+  private serve(name: string, path: string, method = "GET", body?: string): Response {
     const app = this.live().find((a) => a.name === name && a.status === "registered");
     if (this.refuseApps || !app) return this.error(app ? 503 : 404, "app", "Application is not active.");
     const release = app.releases.find((r) => r.number === app.current)!;
     app.awake = true;
     if (path === "" && release.files["public/index.html"] !== undefined) return new Response(release.files["public/index.html"], { headers: { "content-type": "text/html", "server-timing": "static;dur=1" } });
+    if (path !== "" && path !== "appgov-probe") {
+      this.appRequests.push(`${name} ${method} /${path}`);
+      if (!this.stores.has(app.id)) this.stores.set(app.id, new Map());
+      const store = this.stores.get(app.id)!;
+      const timing = { "server-timing": "app;dur=2" };
+      const answered = this.answer?.(name, { method, path: `/${path}`, ...(body !== undefined ? { body } : {}) }, store);
+      if (answered) {
+        const headers = new Headers(answered.headers);
+        headers.set("server-timing", "app;dur=2");
+        return new Response(answered.body, { status: answered.status, headers });
+      }
+      if (path === "api/items" && method === "GET") return Response.json({ items: store.get("items") ?? [{ id: "first-screen", title: "The one-screen project" }], sample: !store.has("items") }, { headers: timing });
+      if (path === "api/items" && method === "PUT") {
+        const items = (JSON.parse(body ?? "{}") as { items?: unknown }).items;
+        store.set("items", items);
+        return Response.json({ items, sample: false }, { headers: timing });
+      }
+    }
     return Response.json({ error: "Not found" }, { status: 404, headers: { "server-timing": "app;dur=3" } });
   }
 
