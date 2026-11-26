@@ -1356,8 +1356,13 @@ export class AppHost {
       const taken = await this.opts.space.app(name).catch((err: unknown) => {
         throw new HostError(502, `cannot ask PneumaSpace whether ${name} exists: ${err instanceof Error ? err.message : String(err)}`);
       });
-      const ours = taken?.manager?.name === this.manager.name ? `, managed by this Host (${this.manager.name}) though this apps directory has no such app; its directory may have moved` : "";
-      if (taken) throw new HostError(409, `PneumaSpace already has an app named ${name}${ours}; pick another name`);
+      if (taken?.manager?.name === this.manager.name) {
+        throw new HostError(409, `PneumaSpace already has an app named ${name}, managed by this Host (${this.manager.name}) though this apps directory has no such app; its directory may have moved; pick another name`, "name_taken");
+      }
+      if (taken) {
+        const who = taken.manager ? `${taken.manager.name} manages it` : "it was made in the workspace outside this Host";
+        throw new HostError(409, `PneumaSpace already has an app named ${name}, and this Host does not manage it: ${who}. This Host never takes over or changes an app it does not manage, so choose another name.`, "name_taken");
+      }
 
       let result: ChangeResult | undefined;
       try {
