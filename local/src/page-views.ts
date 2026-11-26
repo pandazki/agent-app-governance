@@ -1072,7 +1072,8 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
     historyError,
     ...(ctx.historyMore ? { earlier: { label: w.show_whole_history, href: link(`/app/${name}/history`, ctx.lang) } } : {}),
     ...(ctx.historyAll ? { historyAll: true } : {}),
-    hint: { body: w.hint_app_body, example: fill(w.hint_app, { name }) },
+    // No invitation the Host would refuse: while the app is taken down or gone, the notice above says changes are not taken.
+    hint: presence.standing === "down" || presence.standing === "removed_elsewhere" || presence.standing === "vanished" ? null : { body: w.hint_app_body, example: fill(w.hint_app, { name }) },
     facts: facts([
       { label: w.d_current, value: str(status.active_version ?? w.d_none), mono: true },
       { label: w.d_serving, value: status.serving_uncertain ? str(status.serving_uncertain) : str(status.serving_version ?? w.d_none), mono: !status.serving_uncertain },

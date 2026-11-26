@@ -699,10 +699,16 @@ describe("whether the app is there, on the page", () => {
       url: "/owner/apps/notes/clear",
     });
     expect(app.life!.actions.map((action) => action.verb)).toEqual(["clear", "bring-back"]);
+    // No invitation to ask the agent for a change the Host would refuse; the notice says changes are not taken.
+    expect(app.hint).toBeNull();
     const appHtml = draw(app, "yes");
     expect(appHtml).toContain("Not running");
     expect(appHtml).toContain("Take down or clear");
     expect(appHtml).not.toContain("Open the app");
+    expect(appHtml).not.toContain("To change this app, tell your agent");
+    // The typed name is asked in the page's one-line field, the sign-in screen's own.
+    expect(appHtml).toMatch(/<input type="text" autoComplete="off" spellCheck="false" aria-label="Type the app&#x27;s name, notes, to clear it" placeholder="notes" maxLength="64" class="h-9 w-full rounded-control bg-field /);
+    expect(appHtml).not.toContain("<textarea");
   });
 
   test("an app that vanished leads with it in both languages, and a waiting change cannot go live", async () => {
@@ -719,6 +725,8 @@ describe("whether the app is there, on the page", () => {
       expect(app.notices[0]!.tone).toBe("red");
       expect(app.notices[0]!.text).toContain(lang === "en" ? "This app is not on PneumaSpace." : "这个应用不在 PneumaSpace 上。");
       expect(app.life!.actions.map((action) => action.label)).toEqual(lang === "en" ? ["Clear", "Publish again"] : ["清除", "重新发布"]);
+      expect(app.hint).toBeNull();
+      expect(draw(app, "yes")).not.toContain(lang === "en" ? "To change this app, tell your agent" : "想改这个应用");
       const change = changeModel("todo", status, waiting.change_id, ctx);
       expect(change.decision.blocked).toContain(lang === "en" ? "PneumaSpace no longer has this app" : "PneumaSpace 上已经没有这个应用");
     }
@@ -728,7 +736,7 @@ describe("whether the app is there, on the page", () => {
     await host.create("todo");
     const { ctx } = await context();
     const app = appModel("todo", await host.status("todo"), host.history("todo"), { ...ctx, path: "/app/todo" });
-    expect(app).toMatchObject({ state: "normal", serving: true, life: { open: false } });
+    expect(app).toMatchObject({ state: "normal", serving: true, life: { open: false }, hint: { example: "In my todo app, make the buttons bigger." } });
     expect(app.life!.actions.map((action) => [action.verb, action.variant])).toEqual([["take-down", "secondary"]]);
   });
 });

@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
 import LoadingState from "../beautifui/primitives/LoadingState";
-import { Drawer, FieldRow } from "../beautifui/primitives/Recommendation";
+import { Drawer } from "../beautifui/primitives/Recommendation";
 import { act, useOwner, usePage, useUi } from "./lib";
 import type { Checked, LifeCard, LifeVerb } from "./model";
 import { Failure, refusalText } from "./change-view";
-import { ButtonLink, RichText } from "./parts";
+import { ButtonLink, RichText, TextField } from "./parts";
 
 function Bullets({ lines, tone = "text-ink-2" }: { lines: readonly string[]; tone?: string }) {
   return (
@@ -83,8 +83,8 @@ export function LifeBlock({ life }: { life: LifeCard }) {
           )}
           {action.typeName && (
             <div className="mt-2">
-              <p className="pb-0.5 text-[12px] text-ink-3">{action.typeLabel}</p>
-              <FieldRow value={typed} onChange={setTyped} placeholder={action.typeName} label={action.typeLabel ?? action.typeName} maxLength={64} />
+              <p className="pb-1 text-[12px] text-ink-3">{action.typeLabel}</p>
+              <TextField value={typed} onChange={setTyped} label={action.typeLabel ?? action.typeName} placeholder={action.typeName} disabled={busy} maxLength={64} />
             </div>
           )}
           {failure && mode === action.verb && <Failure text={failure.text} detail={failure.detail} />}

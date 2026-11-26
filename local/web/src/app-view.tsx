@@ -166,13 +166,15 @@ export function AppView({ model, onSearch }: { model: AppModel; onSearch: () => 
           )}
         </Surface>
       </Section>
-      <Section number={number()} title={ui.hint_title} index={4}>
-        <Surface>
-          <div className="mx-auto max-w-[560px]">
-            <HintCard hint={model.hint} />
-          </div>
-        </Surface>
-      </Section>
+      {model.hint && (
+        <Section number={number()} title={ui.hint_title} index={4}>
+          <Surface>
+            <div className="mx-auto max-w-[560px]">
+              <HintCard hint={model.hint} />
+            </div>
+          </Surface>
+        </Section>
+      )}
       {/* Taking the app down and clearing it are not everyday acts: they sit with the app's details, open while it is not there. */}
       <div className="flex flex-col gap-1.5 px-5 py-6 sm:px-8 sm:py-8">
         {model.life && (

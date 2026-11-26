@@ -253,7 +253,8 @@ export interface AppModel extends Common {
   readonly earlier?: { readonly label: string; readonly href: string };
   /** Every row is shown from the start: this is the whole history, asked for. */
   readonly historyAll?: boolean;
-  readonly hint: Hint;
+  /** What to tell the agent for a change; null while the Host refuses changes to the app (taken down, or not on PneumaSpace). */
+  readonly hint: Hint | null;
   readonly facts: readonly Fact[];
 }
 
