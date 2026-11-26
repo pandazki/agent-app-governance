@@ -1,0 +1,5 @@
+{
+  "requests": [
+    { "method": "GET", "path": "/", "expect": { "status": 200, "contains": "src/app.ts" } }
+  ]
+}

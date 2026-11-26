@@ -1,3 +1,4 @@
+import type { SendToPreview } from "../../host/src/preview-requests";
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { listFiles } from "@pneuma-framework/host-kit/workspace";
@@ -49,6 +50,14 @@ export class FakeSpace implements SpaceRuntime {
   refuse: ((name: string, dir: string) => boolean) | null = null;
   /** When set, a publish it returns true for goes up but does not boot. */
   unhealthy: ((name: string, dir: string) => boolean) | null = null;
+  /**
+   * How a running app answers a preview's declared requests, with the app's per-app storage (empty for a new name). Without
+   * it, every app answers like the template's starter: GET / with a page that names src/app.ts, anything else 404.
+   */
+  answer: ((app: string, request: { method: string; path: string; body?: string }, store: Map<string, unknown>) => { status: number; body: string }) | null = null;
+  /** Each request made, in order: "<app> <method> <path>". */
+  readonly requests: string[] = [];
+  private readonly stores = new Map<string, Map<string, unknown>>();
   /** When set, a discard or take-down it returns true for fails and the app stays live. */
   failDiscard: ((name: string) => boolean) | null = null;
   /** Called at the start of every publish: stands in for whatever else happens while a publish is under way. */
@@ -154,6 +163,15 @@ export class FakeSpace implements SpaceRuntime {
     const ends = app.expiresAt !== null ? `  expires ${new Date(app.expiresAt).toISOString()}  app ${app.id}` : "";
     return { code: 0, output: `${name}  ${this.address(name)}  release ${app.releases}${ends}`, ...(app.expiresAt !== null ? { app: app.id } : {}) };
   }
+
+  readonly request: SendToPreview = async (app, request) => {
+    this.requests.push(`${app} ${request.method} ${request.path}`);
+    const live = this.live.get(app);
+    if (!live || live.status !== "registered" || !live.boots) return { status: 0, body: "", error: "not running" };
+    if (!this.stores.has(live.id)) this.stores.set(live.id, new Map());
+    if (this.answer) return this.answer(app, request, this.stores.get(live.id)!);
+    return request.method === "GET" && request.path === "/" ? { status: 200, body: "<h2>Hello, me</h2><p>This page is src/app.ts.</p>" } : { status: 404, body: "not found" };
+  };
 
   async probe(name: string): Promise<ProbeResult> {
     const app = this.live.get(name);

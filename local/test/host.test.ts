@@ -8,6 +8,7 @@ import type { DataSnapshotCapability } from "@pneuma-framework/host-kit/change-r
 import { STATE_DIR_NAME } from "@pneuma-framework/core";
 import { agentLane } from "../src/agents";
 import { listFiles } from "@pneuma-framework/host-kit/workspace";
+import { CREDENTIAL_MARKER, pathProblem, PREVIEW_REQUEST_LIMITS, previewUrl, readPreviewRequests, scrubCredentials } from "../../host/src/preview-requests";
 import { FRAMEWORK_DIR, installOverlay, restoreWorkingTree, snapshot, STATE_DIR } from "../../host/src/artifact";
 import { dataSnapshotFromEnv, hostUrlFromEnv, managerFromEnv, previewTtlFromEnv } from "../src/config";
 import { print } from "../src/drive";
@@ -2988,5 +2989,123 @@ describe("the instructions an agent gets name one way to publish", () => {
     for (const file of ["local/overlay/AGENTS.apps.md", "local/overlay/AGENTS.appgov.md", "cloudflare/overlay/AGENTS.start.md", "cloudflare/overlay/AGENTS.appgov.md"]) {
       expect({ file, has: readFileSync(join(root, file), "utf8").includes(rule) }).toEqual({ file, has: true });
     }
+  });
+});
+
+describe("the requests an app declares, made against its preview", () => {
+  // An app with a small API, as the fake runtime answers it: POST /api/books stores a title, GET /api/books lists them.
+  const books = (broken: boolean) => (_app: string, request: { method: string; path: string; body?: string }, store: Map<string, unknown>) => {
+    const list = (store.get("books") as string[] | undefined) ?? [];
+    if (request.path === "/api/books" && request.method === "POST") {
+      if (broken) return { status: 500, body: '{"error":"Cannot read properties of undefined (reading \'title\')"}' };
+      store.set("books", [...list, (JSON.parse(request.body ?? "{}") as { title: string }).title]);
+      return { status: 201, body: "{}" };
+    }
+    if (request.path === "/api/books" && request.method === "GET") return { status: 200, body: JSON.stringify({ books: list }) };
+    return request.path === "/" ? { status: 200, body: "This page is src/app.ts." } : { status: 404, body: "not found" };
+  };
+  const declare = (requests: unknown) => edit("todo", "src/preview.json", `${JSON.stringify({ requests }, null, 2)}\n`);
+  const addAndList = [
+    { method: "POST", path: "/api/books", body: { title: "Dune" }, expect: { status: 201 } },
+    { path: "/api/books", expect: { status: 200, contains: "Dune" } },
+  ];
+
+  beforeEach(async () => void (await host.create("todo")));
+
+  test("a new app gets the starter file, and its request is made against the first preview", () => {
+    expect(JSON.parse(readFileSync(app("todo", "src", "preview.json"), "utf8"))).toEqual({ requests: [{ method: "GET", path: "/", expect: { status: 200, contains: "src/app.ts" } }] });
+    expect(space.requests).toEqual(["todo-pv" + host.history("todo")[0]!.change_id.slice(-4) + " GET /"]);
+    expect(host.history("todo")[0]!.checks?.find((c) => c.id === "space-preview")?.requests?.note).toBe("1 request the app declares in src/preview.json answered as expected on the preview.");
+  });
+
+  test("a broken data route stops the change: per failing request, what was sent and what came back; the preview is discarded", async () => {
+    space.answer = books(true);
+    declare(addAndList);
+    edit("todo", "src/books.ts", "export const books = [];\n");
+    const result = await host.submit({ name: "todo", intent: "keep a list of books", agent: "codex" });
+    expect(result).toMatchObject({ status: "rejected", reason: "preview_requests_failed" });
+    const detail = (result as { detail: string }).detail;
+    expect(detail).toStartWith("0 of the 2 requests the app declares in src/preview.json answered as expected on the preview. What the preview todo-pv");
+    expect(detail).toContain(`request 1 of 2: POST /api/books {"title":"Dune"}\n  expected: status 201\n  got: status 500; the reply: {"error":"Cannot read properties of undefined (reading 'title')"}`);
+    expect(detail).toContain(`request 2 of 2: GET /api/books\n  expected: status 200 and a reply that contains "Dune"\n  got: status 200, and the reply does not contain "Dune"; the reply: {"books":[]}`);
+    expect(detail).toContain("Fix the app, or the request in src/preview.json if it expects the wrong thing, then submit again.");
+    const entry = host.history("todo").at(-1)!;
+    expect(entry).toMatchObject({ outcome: "rejected", reason: "preview_requests_failed", guarantees: ["verified"] });
+    expect(entry.checks?.find((c) => c.id === "space-preview")).toMatchObject({ status: "failed", requests: { file: "src/preview.json", declared: 2, made: 2, answered: 0 } });
+    // Nothing went live, and the preview did not stay.
+    expect([...space.live.keys()].filter((name) => name.startsWith("todo-pv") && space.live.get(name)!.status === "registered")).toEqual([]);
+    expect(await host.status("todo")).toMatchObject({ active_version: "v1" });
+
+    // Fixed, the same change goes live, and the record says what the preview showed.
+    space.answer = books(false);
+    const fixed = await host.submit({ name: "todo", intent: "keep a list of books", agent: "codex" });
+    expect(fixed).toMatchObject({ status: "published", version: "v2", preview_requests: { declared: 2, made: 2, answered: 2, note: "2 requests the app declares in src/preview.json answered as expected on the preview." } });
+    expect(host.history("todo").at(-1)!.guarantees).toContain("previewed");
+  });
+
+  test("a change to the requests alone is not app code without a test", async () => {
+    declare([{ path: "/", expect: { status: 200, contains: "src/app.ts" } }, { path: "/missing", expect: { status: 404 } }]);
+    const result = await host.submit({ name: "todo", intent: "check more of it", agent: "codex" });
+    expect(result).toMatchObject({ status: "published", preview_requests: { answered: 2 } });
+    expect((result as { test_warning?: string }).test_warning).toBeUndefined();
+  });
+
+  test("without the file, the change goes on as before, and the record says the preview only showed the app starts", async () => {
+    rmSync(app("todo", "src", "preview.json"));
+    edit("todo", "src/extra.ts", "export const extra = 1;\n");
+    const before = space.requests.length;
+    const result = await host.submit({ name: "todo", intent: "a small change", agent: "codex" });
+    expect(result).toMatchObject({
+      status: "published",
+      preview_requests: { declared: 0, made: 0, note: "The preview showed only that the app starts: the app has no src/preview.json, so none of its routes was tried on the platform." },
+    });
+    expect(space.requests.length).toBe(before);
+  });
+
+  test("a file that is there but wrong stops the change before any preview, saying what is wrong and the format", async () => {
+    declare([{ method: "GET", path: "https://example.com/steal", expect: { status: 200 } }]);
+    const publishes = space.log.filter((line) => line.startsWith("publish")).length;
+    const result = await host.submit({ name: "todo", intent: "reach out", agent: "codex" });
+    expect(result).toMatchObject({ status: "rejected", reason: "invalid_preview_requests" });
+    expect((result as { detail: string }).detail).toContain('src/preview.json: request 1: "path" must start with a single "/": it is a path inside the app, not an address');
+    expect((result as { detail: string }).detail).toContain("Nothing was published or released.");
+    expect(space.log.filter((line) => line.startsWith("publish")).length).toBe(publishes);
+  });
+});
+
+describe("the Host's credential never comes back in a reply", () => {
+  test("each credential is replaced, and so is the start of one where the reply was cut", () => {
+    const secret = "pneuma_space_session=s3cr3t-value";
+    expect(scrubCredentials(`a ${secret} b ${secret}`, [secret])).toBe(`a ${CREDENTIAL_MARKER} b ${CREDENTIAL_MARKER}`);
+    expect(scrubCredentials("ends with pneuma_space_ses", [secret], true)).toBe(`ends with ${CREDENTIAL_MARKER}`);
+    // Not cut: an end that only looks like the start of one is the reply's own text.
+    expect(scrubCredentials("ends with pneuma_space_ses", [secret])).toBe("ends with pneuma_space_ses");
+    expect(scrubCredentials("nothing here", ["", secret], true)).toBe("nothing here");
+  });
+});
+
+describe("a declared request cannot leave the preview", () => {
+  test("paths stay inside the app; the address is built under the preview's own prefix", () => {
+    for (const path of ["/", "/api/items", "/api/items?q=a/../b", "/app.js"]) expect({ path, problem: pathProblem(path) }).toEqual({ path, problem: undefined });
+    for (const path of ["api/items", "//evil.example/x", "https://evil.example/", "/../other-app/", "/a/%2e%2e/b", "/a%2fb", "/a\\b", "/a#b", "/a b", "", 42]) {
+      expect({ path, problem: typeof pathProblem(path) }).toEqual({ path, problem: "string" });
+    }
+    expect(previewUrl("http://gateway:8080/", "todo-pv1a2b", "/api/items?q=1")?.toString()).toBe("http://gateway:8080/apps/todo-pv1a2b/api/items?q=1");
+    expect(previewUrl("http://gateway:8080", "todo-pv1a2b", "/../todo/")).toBeUndefined();
+  });
+
+  test("the list is capped, and the format takes nothing it does not know", () => {
+    const dir = mkdtempSync(join(work, "requests-"));
+    const write = (value: unknown) => put(dir, "src/preview.json", JSON.stringify(value));
+    write({ requests: Array.from({ length: PREVIEW_REQUEST_LIMITS.requests + 1 }, () => ({ path: "/", expect: { status: 200 } })) });
+    expect(readPreviewRequests(dir, "src")).toMatchObject({ ok: false, detail: expect.stringContaining(`at most ${PREVIEW_REQUEST_LIMITS.requests} are made`) });
+    write({ requests: [{ path: "/", headers: { authorization: "x" }, expect: { status: 200 } }] });
+    expect(readPreviewRequests(dir, "src")).toMatchObject({ ok: false, detail: expect.stringContaining('request 1 has "headers", which the format does not have') });
+    write({ requests: [{ path: "/", body: { big: "x".repeat(PREVIEW_REQUEST_LIMITS.bodyBytes) }, method: "POST", expect: { status: 200 } }] });
+    expect(readPreviewRequests(dir, "src")).toMatchObject({ ok: false, detail: expect.stringContaining(`over ${PREVIEW_REQUEST_LIMITS.bodyBytes} bytes`) });
+    write({ requests: [{ path: "/" }] });
+    expect(readPreviewRequests(dir, "src")).toMatchObject({ ok: false, detail: expect.stringContaining('"expect" is an object') });
+    write({ requests: [{ path: "/api", method: "post", body: { a: 1 }, expect: { status: 201, contains: "ok" } }] });
+    expect(readPreviewRequests(dir, "src")).toEqual({ ok: true, file: "src/preview.json", present: true, requests: [{ method: "POST", path: "/api", body: { a: 1 }, expect: { status: 201, contains: "ok" } }] });
   });
 });

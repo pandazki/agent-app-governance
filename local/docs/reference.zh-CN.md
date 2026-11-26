@@ -54,7 +54,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 | 保证 | 含义 |
 | --- | --- |
 | `verified` | 应用的测试（`npm ci --ignore-scripts && npm test`）在这份内容上通过了 |
-| `previewed` | 这份内容在发布前以临时名字在 PneumaSpace 上启动过，首页的应答不是服务器错误（状态码低于 500） |
+| `previewed` | 这份内容在发布前以临时名字在 PneumaSpace 上启动过，首页的应答不是服务器错误（状态码低于 500），应用在 `src/preview.json` 里声明的每个请求也都得到了预期的回答 |
 | `approved` | 有一条批准记录：常设规则的或主人的 |
 | `sealed` | 发布并记录下来的内容，和检查过的内容逐字节相同 |
 
@@ -73,10 +73,12 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 1. 工作目录被拷成一份草稿。改动只能碰 `src/`、`public/app/`、`pneuma-space.json`、`package.json`、`package-lock.json` 和 `AGENTS.md`；碰了别的，在任何检查之前就以 `outside_writable_roots` 拒绝。改了 `sdk/`、`ui/`、`public/ui.css`、`public/ui.js`、`appgov.scaffold.json` 或 `CLAUDE.md`，以 `protected_file_changed` 拒绝。这两份清单在 `overlay/appgov.scaffold.json` 里。
 2. `npm ci --ignore-scripts && npm test` 在应用目录之外的另一份拷贝里运行，因为测试也是 agent 写的代码。条目会记下跑了多少个测试、其中多少是应用自己的；这个数字来自 Node 24 及以上版本的测试运行器写出的 JUnit 报告，换了别的运行器，应用自己的那部分就记为未知。改动碰了 `src/` 或 `public/app/`、却一个应用自己的测试都没跑时，`submit` 会用一行话说明。这不会拦下改动。
-3. 预览：草稿以临时应用发布，名字是 `<app>-pv` 加上改动编号的四个字符，有自己的空存储。它在发布 `APPGOV_PREVIEW_TTL` 秒后自己结束（默认 3600；PneumaSpace 不接受超过它的 `ephemeral_max_ttl_seconds`，这个值默认是 3600，可以用 `PUT /api/policy` 调高）。每个等待中的改动会占用一个临时应用，直到有了决定或预览结束。如果 PneumaSpace 拒绝发布预览，原因是租户的临时应用名额用完了，或者要求的存活时间太长，改动就以 `preview_refused` 拒绝，这不算检查没通过。
+3. 预览：草稿以临时应用发布，名字是 `<app>-pv` 加上改动编号的四个字符，有自己的空存储。它在发布 `APPGOV_PREVIEW_TTL` 秒后自己结束（默认 3600；PneumaSpace 不接受超过它的 `ephemeral_max_ttl_seconds`，这个值默认是 3600，可以用 `PUT /api/policy` 调高）。每个等待中的改动会占用一个临时应用，直到有了决定或预览结束。如果 PneumaSpace 拒绝发布预览，原因是租户的临时应用名额用完了，或者要求的存活时间太长，改动就以 `preview_refused` 拒绝，这不算检查没通过。预览首页有了应答之后，Host 对它发出应用自己的请求（见下）。
 4. 风险规则给改动分类，批准规则决定它要不要等主人。
 5. Host 在对比草稿时算一次内容哈希，在即将发布的那份拷贝上再比一次。中间变过的草稿以 `draft_changed_after_check` 拒绝。
 6. 发布。PneumaSpace 拒绝时（`publish_failed`），地址没被动过；应用没有应答时（`published_unhealthy`），Host 把地址放回之前的版本。两种情况下改动都被拒绝，不记录新版本。
+
+**应用自己的请求。** 应用可以在 `src/preview.json` 里列出能说明它正常的请求，例如 `{"requests": [{"method": "POST", "path": "/api/items", "body": {"title": "Dune"}, "expect": {"status": 201}}, {"path": "/api/items", "expect": {"status": 200, "contains": "Dune"}}]}`：一个方法（默认 GET，也可以是 POST、PUT、PATCH 或 DELETE）、应用内的一个路径、可选的 JSON 请求体、回答必须有的状态码，以及可选的、回答里必须出现的文字。Host 自己按顺序把它们发给预览，每个一次，有一个失败也全部发完，发的时候以应用主人的身份登录本地网关（`APPGOV_OWNER`；本地的登录不要密码）。应用看到的是主人发来的请求（通过身份请求头）；本地网关也会把 Host 的会话 cookie 转给应用，它能做到的不超过那个不要密码的登录，而且回答里只要带回了它，Host 在检查和展示回答之前都会把它替换掉。有一个回答不符合预期，改动就以 `preview_requests_failed` 拒绝，预览被丢弃；拒绝信息逐个列出失败的请求发了什么、预期是什么，以及回答的状态码和开头一段。文件存在但不合格式，改动在发布任何预览之前就以 `invalid_preview_requests` 拒绝。请求只发给预览，从不发给正式的应用：路径出不了预览（不能是地址，不能有 `..`、编码过的 `.` 或 `/`，也不能有 `\`、`#` 或空格），重定向只算一个状态码，从不跟随。上限：20 个请求，请求体 16 KB，路径 512 个字符，`contains` 200 个字符，每个请求 20 秒，合计 90 秒，回答只读前 64 KB。模板带着一个文件，里面的一个请求和起步应用相符。之前创建的应用没有这个文件；它的预览只说明它能启动，`history` 会写明这一点。
 
 等主人决定的改动会一直保留预览，直到有了决定或预览结束。批准时预览必须还在：预览结束后批准会被拒绝，返回 `preview_gone`（409）；PneumaSpace 没有应答时返回 `preview_unknown`（502）。`preview <id>`，或页面上的"再给我看一次"，会把检查过的草稿重新发布成预览，并有新的结束时间。批准或拒绝都会丢弃预览。设置 `APPGOV_PREVIEW=off` 后没有预览，批准也不需要预览，任何条目都不会有 `previewed`。
 
@@ -273,6 +275,7 @@ Host 只接受这些主机名：`localhost`、`127.0.0.1`、`[::1]`、`APPGOV_HO
 | `AGENTS.md`、`CLAUDE.md` | 怎么改这个应用：先是给 agent 的规则，然后是 PneumaSpace 对模板的说明 |
 | `pneuma-space.json` | 应用向 PneumaSpace 申请什么（能力） |
 | `appgov.scaffold.json` | 改动能碰哪些目录、哪些文件受保护，以及有哪些检查 |
+| `src/preview.json` | 应用声明了请求时，预览必须按预期回答的那些请求 |
 | `.pneuma-framework/versions/vN/` | 每个记录下来的版本的干净源码 |
 | `.pneuma-framework/history.jsonl` | 每次尝试一行，附带成立的保证 |
 | `.pneuma-framework/record.json` | 版本计数和当前版本 |

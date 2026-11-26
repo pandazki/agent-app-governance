@@ -59,6 +59,7 @@ import { choicesFor, clearingWords, downOf, LIFECYCLE_KINDS, runtimeFacts, stand
 import { askApp, DEFAULT_MANAGER, managerFrom, type ManagerState, type ProbeResult, type SpaceRuntime } from "./space";
 import { DEFAULT_PREVIEW_TTL_SECONDS, previewName, Previews, type PreviewState, type StandingPreview } from "./preview";
 import { timed, timedSync } from "./steps";
+import { noRequestsFacts, PREVIEW_REQUESTS_FILE, readPreviewRequests, type PreviewRequestFacts } from "./preview-requests";
 import { runCheckCommand, TEMPLATE_LAYOUT, testCoverage, testWarning, type AppLayout, type CheckRun, type TestCoverage } from "./test-coverage";
 
 // ---------------------------------------------------------------------------
@@ -299,6 +300,8 @@ type ChangeOutcome =
       readonly tests?: TestCoverage;
       /** One line when the change touched app code and none of the app's own tests ran, or that is unknown. */
       readonly test_warning?: string;
+      /** What the preview showed: the app's own requests answered, or only that it starts. Absent without a preview. */
+      readonly preview_requests?: PreviewRequestFacts;
     }
   | { readonly status: "rejected"; readonly change_id: string; readonly reason: string; readonly detail: string }
   | {
@@ -309,6 +312,7 @@ type ChangeOutcome =
       readonly changed_paths: readonly string[];
       readonly tests?: TestCoverage;
       readonly test_warning?: string;
+      readonly preview_requests?: PreviewRequestFacts;
       /** The preview the owner can open before deciding, standing until they do or until it ends itself. */
       readonly preview?: StandingPreview;
       /** What the submitter declared lost, in its own words, when it submitted the change as one-way. */
@@ -403,7 +407,7 @@ export interface AppStatus {
   readonly uncommitted: readonly string[];
   /** With previews on, each with its preview as PneumaSpace answers for it now. */
   /** Each change that waits for the owner, with what its test check covered and the warning when no app test covered app code. */
-  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState; readonly tests?: TestCoverage; readonly test_warning?: string })[];
+  readonly pending: readonly (PendingChange & { readonly preview?: PreviewState; readonly tests?: TestCoverage; readonly test_warning?: string; readonly preview_requests?: PreviewRequestFacts })[];
   /**
    * One plain line for each file in `.appgov/pending/` that is not a waiting change in the shape this Host
    * writes, naming the file. Such a file is left out of `pending` and cannot be approved or denied, and the
@@ -654,10 +658,11 @@ function earnedByChecks(checks: readonly Check[]): string[] {
 }
 
 /** What the test check ran, and the warning for a change to app code that no app test covered, for a change's result. */
-function testFacts(checks: readonly Check[], changedPaths: readonly string[], layout: AppLayout): { tests?: TestCoverage; test_warning?: string } {
+function testFacts(checks: readonly Check[], changedPaths: readonly string[], layout: AppLayout): { tests?: TestCoverage; test_warning?: string; preview_requests?: PreviewRequestFacts } {
   const coverage = checks.find((check) => check.id === "npm-test")?.coverage;
   const warning = testWarning(changedPaths, coverage, layout);
-  return { ...(coverage ? { tests: coverage } : {}), ...(warning ? { test_warning: warning } : {}) };
+  const requests = checks.find((check) => check.id === "space-preview")?.requests;
+  return { ...(coverage ? { tests: coverage } : {}), ...(warning ? { test_warning: warning } : {}), ...(requests ? { preview_requests: requests } : {}) };
 }
 
 /** 2026-11-23T22:48:12.345Z -> 2026-11-23 22:48 UTC */
@@ -1027,7 +1032,14 @@ export class AppHost {
    * the bytes the preview uploaded, and discarding the preview afterwards deletes nothing. Discarding first
    * costs one more upload and one bundle deletion per change (measured: about 8 s each).
    */
-  private async gate(name: string, changeId: string, draftRoot: string, command: string, checks: Check[], preview: { id?: string }): Promise<VerifyResult & { readonly refused?: string }> {
+  private async gate(
+    name: string,
+    changeId: string,
+    draftRoot: string,
+    command: string,
+    checks: Check[],
+    preview: { id?: string },
+  ): Promise<VerifyResult & { readonly refused?: string; readonly rejected?: { readonly reason: string; readonly detail: string } }> {
     // The command runs in a copy. `npm test` executes code the agent wrote, and whatever that code
     // writes must not end up in the tree that was diffed, classified and is about to be released.
     // The copy lives outside the app, so no relative path from it leads to the draft; a write that
@@ -1049,11 +1061,22 @@ export class AppHost {
     if (!tests.ok) return tests;
     if (this.opts.preview === false) return tests;
 
-    const booted = await this.previews.boot(previewName(name, changeId), draftRoot);
+    // The app's own requests, read from the draft that was checked; a file that is there but wrong stops the change before any preview.
+    const declared = readPreviewRequests(draftRoot, this.layout.test_dir);
+    if (!declared.ok) {
+      checks.push({ id: "space-preview", status: "failed", detail: declared.detail.slice(0, 600) });
+      return { ok: false, output: `${tests.output}\n${declared.detail}`, rejected: { reason: "invalid_preview_requests", detail: `${declared.detail}\nNothing was published or released.` } };
+    }
+    const booted = await this.previews.boot(previewName(name, changeId), draftRoot, { file: declared.file, requests: declared.requests });
     const output = `${tests.output}\n${booted.output}`;
     // PneumaSpace refused the preview for a reason that is not the change's: no check failed, and the caller gives it its own reason.
     if (!booted.ok && booted.refused) return { ok: false, output, refused: `${booted.refused}.\n${booted.output.slice(-600)}` };
-    checks.push({ id: "space-preview", status: booted.ok ? "passed" : "failed", detail: booted.ok ? undefined : output.slice(-600) });
+    if (!booted.ok && booted.requests) {
+      checks.push({ id: "space-preview", status: "failed", detail: booted.requests.refusal.slice(0, 600), requests: booted.requests.facts });
+      return { ok: false, output, rejected: { reason: "preview_requests_failed", detail: booted.requests.refusal } };
+    }
+    const requests = booted.ok ? (booted.requests ?? noRequestsFacts(declared.file, declared.present)) : undefined;
+    checks.push({ id: "space-preview", status: booted.ok ? "passed" : "failed", detail: booted.ok ? undefined : output.slice(-600), ...(requests ? { requests } : {}) });
     if (booted.ok) preview.id = booted.id;
     return { ok: booted.ok, output };
   }
@@ -1347,7 +1370,7 @@ export class AppHost {
   private async createApp(name: string, paths: AppPaths, intent: string, actor?: CreateActor): Promise<ChangeResult> {
     const init = await this.opts.space.init(paths.root);
     if (init.code !== 0) throw new HostError(502, `template init failed: ${init.output.slice(-400)}`);
-    installOverlay(paths.root, this.opts.overlayDir, this.opts.cliSource);
+    installOverlay(paths.root, this.opts.overlayDir, this.opts.cliSource, `${this.layout.test_dir}/${PREVIEW_REQUESTS_FILE}`);
     this.recordAddress(paths.root, "app", name);
     this.describeAppsDir();
 
@@ -1382,9 +1405,9 @@ export class AppHost {
       if (governed) {
         const gate = await this.gate(name, changeId, draftRoot, scaffold.verify_command, checks, preview);
         if (!gate.ok) {
-          const reason = gate.refused ? "preview_refused" : "verify_failed";
+          const reason = gate.refused ? "preview_refused" : (gate.rejected?.reason ?? "verify_failed");
           record.note<HostEntryFields>({ ...meta, guarantees: earnedByChecks(checks), extra: { outcome: "rejected", control, reason, checks, ...who } });
-          return { status: "rejected", change_id: changeId, reason, detail: gate.refused ?? gate.output.slice(-2000) };
+          return { status: "rejected", change_id: changeId, reason, detail: gate.refused ?? gate.rejected?.detail ?? gate.output.slice(-2000) };
         }
         // Creating the app is the owner's own act; it is recorded as their approval.
         const decision = decide({
@@ -1694,6 +1717,7 @@ export class AppHost {
             }
             return this.gate(input.name, changeId, root, scaffold.verify_command, checks, preview).then((gate) => {
               if (gate.refused) throw new ChangeRefused("preview_refused", gate.refused);
+              if (gate.rejected) throw new ChangeRefused(gate.rejected.reason, gate.rejected.detail);
               return gate;
             });
           },

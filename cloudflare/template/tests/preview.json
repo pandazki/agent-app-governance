@@ -1,0 +1,12 @@
+{
+  "requests": [
+    { "method": "GET", "path": "/api/items", "expect": { "status": 200, "contains": "The one-screen project" } },
+    {
+      "method": "PUT",
+      "path": "/api/items",
+      "body": { "revision": null, "items": [{ "id": "checked", "title": "Checked on the preview", "note": "", "category": "Ideas", "url": "", "pinned": false, "archived": false }] },
+      "expect": { "status": 200 }
+    },
+    { "method": "GET", "path": "/api/items", "expect": { "status": 200, "contains": "Checked on the preview" } }
+  ]
+}

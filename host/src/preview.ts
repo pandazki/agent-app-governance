@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { snapshot, sourceSignature } from "./artifact";
+import { makePreviewRequests, refusalText, type PreviewRequest, type PreviewRequestFacts } from "./preview-requests";
 import type { SpaceApp, SpaceManager, SpaceRuntime } from "./space";
 import { timed } from "./steps";
 
@@ -35,8 +36,9 @@ export type StandingPreview = Extract<PreviewState, { state: "standing" }>;
  * to publish it for a reason that is not the change's (the tenant's ephemeral quota, or a ttl above its maximum), in words.
  */
 export type Booted =
-  | { readonly ok: true; readonly output: string; readonly preview: StandingPreview; readonly id?: string }
-  | { readonly ok: false; readonly output: string; readonly refused?: string };
+  | { readonly ok: true; readonly output: string; readonly preview: StandingPreview; readonly id?: string; readonly requests?: PreviewRequestFacts }
+  /** `requests`: the app's own requests were made and one did not answer as expected; `refusal` says what was sent and what came back. */
+  | { readonly ok: false; readonly output: string; readonly refused?: string; readonly requests?: { readonly facts: PreviewRequestFacts; readonly refusal: string } };
 
 /**
  * Why PneumaSpace refused to publish a preview, in words, when the reason is not the change: the tenant's ephemeral
@@ -84,7 +86,7 @@ export class Previews {
    * again. A PneumaSpace from before ephemeral apps ignores the marker and keeps a durable app, which
    * would never end: that one is taken down again and the preview fails, saying why.
    */
-  async boot(app: string, root: string): Promise<Booted> {
+  async boot(app: string, root: string, check?: { readonly file: string; readonly requests: readonly PreviewRequest[] }): Promise<Booted> {
     const { space, manager } = this.opts;
     const published = await timed("publish the preview", () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager }));
     let output = `[preview ${app}] ${published.output}`;
@@ -92,11 +94,26 @@ export class Previews {
       const refused = refusal(published.output, this.opts.ttlSeconds);
       return refused ? { ok: false, output, refused } : { ok: false, output };
     }
-    const probe = await timed("wait until the preview answers", () => space.probe(app));
+    const keepAwake = Boolean(check?.requests.length);
+    const probe = await timed("wait until the preview answers", () => space.probe(app, { keepAwake }));
     output += `\n[preview ${app}] GET / -> ${probe.status} ${probe.detail}`;
     if (!probe.ok) {
       await this.drop(app, published.app);
       return { ok: false, output };
+    }
+    let facts: PreviewRequestFacts | undefined;
+    if (check && keepAwake) {
+      const send = space.request?.bind(space);
+      const made = send
+        ? await timed("make the app's own requests", () => makePreviewRequests(app, check.file, check.requests, send))
+        : { facts: { file: check.file, declared: check.requests.length, made: 0, answered: 0, note: `This platform runtime cannot make the requests in ${check.file}.` }, failures: ["no request was made"] };
+      space.rest?.(app);
+      facts = made.facts;
+      output += `\n[preview ${app}] ${made.facts.note}`;
+      if (made.failures.length) {
+        await this.drop(app, published.app);
+        return { ok: false, output, requests: { facts: made.facts, refusal: refusalText(made.facts, made.failures, app) } };
+      }
     }
     const { state: preview, listed } = await timed("read the preview's state", () => this.read(app));
     if (listed && listed.expiresAt === null) {
@@ -109,7 +126,7 @@ export class Previews {
     }
     // PneumaSpace did not say when it ends: it answered a moment ago, so it stands.
     const standing: StandingPreview = preview.state === "standing" ? preview : { state: "standing", app, address: space.address(app), expires_at: null };
-    return { ok: true, output, preview: standing, ...(published.app ? { id: published.app } : {}) };
+    return { ok: true, output, preview: standing, ...(published.app ? { id: published.app } : {}), ...(facts ? { requests: facts } : {}) };
   }
 
   /**

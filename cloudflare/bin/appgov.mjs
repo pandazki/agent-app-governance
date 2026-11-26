@@ -531,6 +531,7 @@ function printChange(result) {
     if (result.one_way) console.log(`ONE-WAY: ${String(result.one_way).replace(/\.+$/, "")}. Going back past this version needs the owner's confirmation.`);
     if (result.note) console.log(result.note);
     if (result.test_warning) console.log(result.test_warning);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     return 0;
   }
   if (result.status === "release_failed") {
@@ -546,6 +547,7 @@ function printChange(result) {
     console.log(`risks: ${result.risks.join(", ")}`);
     for (const line of result.disclosure) console.log(`  - ${line}`);
     if (result.test_warning) console.log(result.test_warning);
+    if (result.preview_requests) console.log(result.preview_requests.note);
     if (result.preview) console.log(previewLine(result.preview, result.change_id));
     const look = result.preview ? "They can open the preview, then decide, signed in as the owner, in their own terminal, with" : "They decide, signed in as the owner, in their own terminal, with";
     console.log(`Show this to the owner. ${look}: node ${SELF} approve ${result.change_id}   (or deny)`);
@@ -941,6 +943,7 @@ switch (command) {
         for (const line of p.disclosure) console.log(`  - ${line}`);
         if (p.tests) console.log(`  tests: ${p.tests.note}`);
         if (p.test_warning) console.log(`  ${p.test_warning}`);
+        if (p.preview_requests) console.log(`  ${p.preview_requests.note}`);
         if (p.preview) console.log(`  ${previewLine(p.preview, p.change_id)}`);
       }
       for (const line of s.malformed_pending ?? []) console.log(line);
@@ -958,6 +961,8 @@ switch (command) {
         if (h.approval) console.log(`    approval: ${h.approval.reason_code} by ${h.approval.by.join(", ") || "nobody yet"} (${h.risks?.join(", ") ?? ""})`);
         const tests = h.checks?.find((check) => check.id === "npm-test");
         if (tests?.coverage) console.log(`    tests (${tests.status}): ${tests.coverage.note}`);
+        const shown = h.checks?.find((check) => check.id === "space-preview");
+        if (shown?.requests) console.log(`    preview (${shown.status}): ${shown.requests.note}`);
         if (h.kind !== "snapshot") console.log(`    guarantees: ${h.guarantees.length ? h.guarantees.join(", ") : "none (recorded only)"}`);
         if (h.one_way) console.log(`    ONE-WAY: ${h.one_way.reason}`);
         if (h.one_way_crossed) console.log(`    went back past one-way ${h.one_way_crossed.versions.join(", ")}: code only${h.confirmed_by ? `, confirmed by ${h.confirmed_by}` : ""}`);
@@ -1078,6 +1083,7 @@ switch (command) {
     for (const line of pending.disclosure) console.log(`  - ${line}`);
     if (pending.tests) console.log(`tests: ${pending.tests.note}`);
     if (pending.test_warning) console.log(pending.test_warning);
+    if (pending.preview_requests) console.log(pending.preview_requests.note);
     if (pending.preview) console.log(previewLine(pending.preview, args[0]));
     await confirmAsOwner(command, what);
     const result = await call("POST", `${base}/changes/${args[0]}/${command}`, { reason: args.slice(1).join(" ") || undefined }, { owner: true });

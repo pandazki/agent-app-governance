@@ -1,3 +1,4 @@
+import { previewUrl, replyText, scrubCredentials, PREVIEW_REQUEST_LIMITS, type SendToPreview } from "./preview-requests";
 import { spawn } from "node:child_process";
 
 // ---------------------------------------------------------------------------
@@ -121,8 +122,18 @@ export interface SpaceRuntime {
   app(name: string): Promise<SpaceApp | null>;
   /** Publish a source directory under an app name. Same name keeps all data. */
   publish(name: string, dir: string, options?: PublishOptions): Promise<PublishResult>;
-  /** Wake the app and read its root path. Any status below 500 means it booted. */
-  probe(name: string): Promise<ProbeResult>;
+  /**
+   * Wake the app and read its root path. Any status below 500 means it booted. `keepAwake`: requests follow (a preview's
+   * own, src/preview-requests.ts), so a runtime that puts a preview to sleep after its probe waits for `rest`.
+   */
+  probe(name: string, options?: { readonly keepAwake?: boolean }): Promise<ProbeResult>;
+  /**
+   * Make one of a preview's declared requests, as the app's owner, at `path` inside the app. Never follows a redirect and
+   * never throws: a request that cannot be made answers status 0 with `error`. Absent where the runtime cannot make them.
+   */
+  request?: SendToPreview;
+  /** After a probe with `keepAwake` and the requests: what the probe would have done after it, such as putting a preview to sleep. */
+  rest?(name: string): void;
   /**
    * End an ephemeral app and its data in one call. `manager` names the manager, which a managed app
    * requires. `app` is the id its publish returned: PneumaSpace then ends nothing when the name now
@@ -297,6 +308,59 @@ export class Space implements SpaceRuntime {
     // appctl ends an ephemeral app's line with "expires <when>  app <id>".
     const app = result.code === 0 ? /\bexpires \S+ +app (\S+)\s*$/m.exec(result.output)?.[1] : undefined;
     return app ? { ...result, app } : result;
+  }
+
+  /**
+   * The local gateway's sign-in has no password: whoever names a user is that user (PneumaSpace's local identity). The
+   * requests go as the apps' owner, the subject this Host creates apps for, as on the Cloudflare edition, where the
+   * platform token the Host holds is the owner's; another subject signs in as appgov-preview. The session stays in memory.
+   */
+  private async session(app: string): Promise<string | { error: string }> {
+    const name = /^user:([a-z0-9_-]{1,32})$/.exec(this.opts.owner)?.[1] ?? "appgov-preview";
+    try {
+      const res = await fetch(`${this.opts.ingressUrl.replace(/\/$/, "")}/_pneuma-space/login`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ name, next: `/apps/${app}/` }).toString(),
+        redirect: "manual",
+        signal: AbortSignal.timeout(PREVIEW_REQUEST_LIMITS.eachMs),
+      });
+      await res.body?.cancel();
+      const cookie = /(?:^|,\s*)(pneuma_space_session=[^;,\s]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
+      return cookie ?? { error: `the local gateway's sign-in answered ${res.status} without a session` };
+    } catch (err) {
+      return { error: `the local gateway's sign-in did not answer (${err instanceof Error ? err.message : String(err)})` };
+    }
+  }
+
+  private readonly sessions = new Map<string, Promise<string | { error: string }>>();
+
+  readonly request: SendToPreview = async (app, request) => {
+    const url = previewUrl(this.opts.ingressUrl, app, request.path);
+    if (!url) return { status: 0, body: "", error: `the path ${JSON.stringify(request.path)} leaves the app` };
+    let session = this.sessions.get(app);
+    if (!session) this.sessions.set(app, (session = this.session(app)));
+    const cookie = await session;
+    if (typeof cookie !== "string") {
+      this.sessions.delete(app);
+      return { status: 0, body: "", error: cookie.error };
+    }
+    try {
+      const res = await fetch(url, {
+        method: request.method,
+        headers: { cookie, accept: "application/json, text/html;q=0.9, */*;q=0.8", ...(request.body !== undefined ? { "content-type": "application/json" } : {}) },
+        ...(request.body !== undefined ? { body: request.body } : {}),
+        redirect: "manual",
+        signal: AbortSignal.timeout(PREVIEW_REQUEST_LIMITS.eachMs),
+      });
+      return { status: res.status, body: await replyText(res, [cookie, cookie.slice(cookie.indexOf("=") + 1)]) };
+    } catch (err) {
+      return { status: 0, body: "", error: scrubCredentials(err instanceof Error ? err.message : String(err), [cookie, cookie.slice(cookie.indexOf("=") + 1)]) };
+    }
+  };
+
+  rest(name: string): void {
+    this.sessions.delete(name);
   }
 
   async probe(name: string): Promise<ProbeResult> {
