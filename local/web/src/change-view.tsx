@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { Button } from "../beautifui/atoms/Button";
-import { ValuePill } from "../beautifui/atoms/ValuePill";
 import LoadingState from "../beautifui/primitives/LoadingState";
 import { CheckOption, Drawer, FieldRow, Meter } from "../beautifui/primitives/Recommendation";
 import TaskRows, { type TaskRow } from "../beautifui/primitives/TaskRows";
@@ -33,7 +32,7 @@ export function refusalText(refusals: Readonly<Record<string, string>>, data: Re
 }
 
 export function noticeRow(notice: Notice, i: number): TaskRow {
-  return { key: `n${i}`, wrap: true, label: <span className="font-normal leading-relaxed">{notice.text}</span>, status: notice.tone === "red" ? "failed" : notice.tone === "orange" ? "caution" : "plain" };
+  return { key: `n${i}`, wrap: true, label: <span className="leading-relaxed">{notice.text}</span>, status: notice.tone === "red" ? "failed" : notice.tone === "orange" ? "caution" : "plain" };
 }
 
 type Again = "idle" | "working" | { error: string; detail: string };
@@ -215,7 +214,7 @@ function DecisionCard({ model }: { model: ChangeModel }) {
         <p className="text-[14px] font-semibold leading-relaxed text-ink [overflow-wrap:anywhere]" dir="auto">{model.intent}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-ink-2">
           <span>{model.appTitle}</span>
-          {d.oneWay && <ValuePill tone="red">{ui.one_way}</ValuePill>}
+          {d.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
         </div>
         {d.blocked && can && <p className="mt-2 rounded-control bg-orange-tint px-2.5 py-2 text-[12.5px] leading-relaxed text-orange">{d.blocked}</p>}
       </div>
@@ -230,7 +229,7 @@ function DecisionCard({ model }: { model: ChangeModel }) {
             </li>
           ))}
         </ul>
-        {d.consequence && <p className="mt-2 rounded-control bg-red-tint px-2.5 py-2 text-[12.5px] leading-relaxed text-red">{d.consequence}</p>}
+        {d.consequence && <p className="mt-2 rounded-control border-s-2 border-red bg-red-tint px-2.5 py-2 text-[13px] font-medium leading-relaxed text-red">{d.consequence}</p>}
         {d.check && (
           <div className="mt-2">
             <CheckOption checked={ticked} onChange={setTicked} disabled={busy}>
@@ -311,6 +310,7 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
   const checks: TaskRow[] = model.checked.map((row, i) => ({
     key: `c${i}`,
     label: row.text,
+    wrap: row.tone === "caution",
     status: row.tone === "caution" ? "caution" : "done",
     ...(row.files?.length
       ? { details: <FileChips files={row.files.slice(0, 24)} more={row.files.length > 24 ? `+${row.files.length - 24}` : undefined} /> }
@@ -322,19 +322,20 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
           {
             key: "one-way",
             label: model.oneWay.title,
+            wrap: true,
             status: "caution" as const,
             details: (
               <>
-                <p className="text-[12.5px] leading-relaxed text-ink-2">{model.oneWay.body}</p>
-                {model.oneWay.why && <p className="mt-1 text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
-                {model.oneWay.said && <p className="mt-1 text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
+                <p className="text-[13px] leading-relaxed text-ink">{model.oneWay.body}</p>
+                {model.oneWay.why && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.why}</p>}
+                {model.oneWay.said && <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink [overflow-wrap:anywhere]">{model.oneWay.said}</p>}
               </>
             ),
             defaultOpen: true,
           },
         ]
       : []),
-    ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: <span className="font-normal">{line}</span>, status: "caution" })),
+    ...model.why.map((line, i): TaskRow => ({ key: `w${i}`, label: line, wrap: true, status: "caution" })),
   ];
   return (
     <>
@@ -377,7 +378,7 @@ export function ChangeView({ model, onSearch }: { model: ChangeModel; onSearch: 
           <div className="grid gap-3 lg:grid-cols-2">
             <TaskRows rows={checks} />
             <div className="flex flex-col gap-1.5">
-              <p className="px-0.5 text-[11.5px] font-medium text-ink-3">{ui.why_title}</p>
+              <p className="px-0.5 text-[13px] font-semibold text-ink">{ui.why_title}</p>
               <TaskRows rows={why} />
             </div>
           </div>

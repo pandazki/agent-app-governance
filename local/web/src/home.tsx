@@ -2,7 +2,6 @@ import { useState } from "react";
 import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { buttonVariants } from "../beautifui/atoms/Button";
 import { EntityChip } from "../beautifui/atoms/EntityChip";
-import { ValuePill } from "../beautifui/atoms/ValuePill";
 import { Meter } from "../beautifui/primitives/Recommendation";
 import { badgeFor } from "../beautifui/primitives/TaskRows";
 import { Collapsible } from "../beautifui/primitives/ToolChips";
@@ -23,7 +22,7 @@ export function WaitingChange({ card, showApp = true }: { card: WaitingCard; sho
         {showApp && (
           <div className="-ml-0.5 mb-2 flex flex-wrap items-center gap-1">
             <EntityChip name={card.appTitle} monogram={card.shot.monogram} color={hue(card.app)} />
-            {card.oneWay && <ValuePill tone="red">{ui.one_way}</ValuePill>}
+            {card.oneWay && <StatePill tone="red">{ui.one_way}</StatePill>}
           </div>
         )}
         <a href={card.href} className="line-clamp-3 text-[14px] font-medium text-ink [overflow-wrap:anywhere] hover:underline hover:decoration-line-strong hover:underline-offset-2">
@@ -34,7 +33,7 @@ export function WaitingChange({ card, showApp = true }: { card: WaitingCard; sho
         </p>
         {!showApp && card.oneWay && (
           <p className="mt-2">
-            <ValuePill tone="red">{ui.one_way}</ValuePill>
+            <StatePill tone="red">{ui.one_way}</StatePill>
           </p>
         )}
       </div>
@@ -80,7 +79,7 @@ function AppTile({ app }: { app: AppCard }) {
       )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 pt-1.5">
         <div className="min-w-0 flex-1 basis-36">
-          <StatePill tone={app.tone}>{app.stateLabel}</StatePill>
+          <StatePill tone={app.unreadable ? "orange" : app.tone}>{app.stateLabel}</StatePill>
           <div className="mt-1.5 text-[12px] text-ink-3">
             <RichText rich={app.meta} />
           </div>

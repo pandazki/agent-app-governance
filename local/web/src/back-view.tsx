@@ -58,7 +58,7 @@ function BackCard({ model, changed }: { model: BackModel; changed: string | null
           </p>
         )}
         {model.declared.map((line) => (
-          <p key={line} className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3 [overflow-wrap:anywhere]">
+          <p key={line} className="mt-1.5 text-[13px] font-medium leading-relaxed text-red [overflow-wrap:anywhere]">
             {line}
           </p>
         ))}
@@ -170,7 +170,7 @@ export function UnreadableView({ model, onSearch }: { model: UnreadableModel; on
   const ui = useUi();
   return (
     <>
-      <Header crumbs={[{ text: ui.my_apps, href: model.links.home }, { text: model.appTitle }]} title={model.appTitle} pills={<StatePill tone="neutral">{model.stateLabel}</StatePill>} onSearch={onSearch} />
+      <Header crumbs={[{ text: ui.my_apps, href: model.links.home }, { text: model.appTitle }]} title={model.appTitle} pills={<StatePill tone="orange">{model.stateLabel}</StatePill>} onSearch={onSearch} />
       <div className="px-5 py-8 sm:px-8 sm:py-10">
         <Surface>
           <EmptyState title={model.body} />

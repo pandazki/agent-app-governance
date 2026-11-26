@@ -37,10 +37,10 @@ function SpinnerRing({ active, children }: { active?: boolean; children?: ReactN
 type BadgeTone = "red" | "green" | "orange" | "neutral";
 
 const BADGE: Record<BadgeTone, string> = {
-  red: "bg-red-tint text-red",
+  red: "bg-red text-white dark:text-page",
   green: "bg-green-tint text-green",
-  orange: "bg-orange-tint text-orange",
-  neutral: "bg-field text-ink-3",
+  orange: "bg-orange text-white dark:text-page",
+  neutral: "bg-field text-ink-3 shadow-hairline",
 };
 
 export function Badge({ tone, children }: { tone: BadgeTone; children: ReactNode }) {
@@ -113,8 +113,8 @@ export function badgeFor(status: TaskStatus, step?: number) {
 export function TaskPill({ tone, children }: { tone: "green" | "red" | "orange" | "neutral" | "accent"; children: ReactNode }) {
   const cls =
     tone === "green" ? "bg-green-tint text-green"
-    : tone === "red" ? "bg-red-tint text-red"
-    : tone === "orange" ? "bg-orange-tint text-orange"
+    : tone === "red" ? "bg-red text-white dark:text-page"
+    : tone === "orange" ? "bg-orange text-white dark:text-page"
     : tone === "accent" ? "bg-accent-tint text-accent-ink"
     : "bg-field text-ink-2 shadow-hairline";
   return <span className={`inline-flex h-5.5 shrink-0 items-center whitespace-nowrap rounded-full px-2 text-[11.5px] font-medium ${cls}`}>{children}</span>;
