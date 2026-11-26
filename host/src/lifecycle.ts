@@ -8,16 +8,17 @@ import type { SpaceApp } from "./space";
 //     Host (a `take_down` entry not followed by a `bring_back` or a
 //     `publish_again` one), with who did it and when;
 //   - PneumaSpace's answer, the last time it was asked: serving, removed (taken
-//     down there, its data kept), gone (no such app, or being purged), or
-//     unknown (no answer). A claim about another system, so it carries when it
-//     was made.
+//     down there, its data kept), purging (being deleted with its data, not
+//     finished: PneumaSpace keeps a purge that failed so until it is retried,
+//     and the name stays taken), gone (no such app), or unknown (no answer). A
+//     claim about another system, so it carries when it was made.
 // Every surface (status, list, the owner page, the refusals) says what the two
 // together mean, with `standingOf`, and offers the owner what `choicesFor` allows.
 // Pure: the Cloudflare edition's Worker uses it on stored facts as they are.
 // ---------------------------------------------------------------------------
 
 /** What PneumaSpace said about the app. */
-export type RuntimeState = "serving" | "removed" | "gone" | "unknown";
+export type RuntimeState = "serving" | "removed" | "purging" | "gone" | "unknown";
 
 export interface RuntimeFacts {
   readonly state: RuntimeState;
@@ -42,9 +43,12 @@ export interface DownFacts {
  *   - `down`: the owner took it down through this Host (PneumaSpace says what became of it).
  *   - `removed_elsewhere`: PneumaSpace holds it removed, with its data, but not by this Host's doing.
  *   - `vanished`: PneumaSpace has no such app any more, and this Host did not take it down: its stored data is gone.
+ *   - `purging`: PneumaSpace began purging it, with its stored data, and has not finished, whoever started it: it serves
+ *     nothing, takes no changes, and its name stays taken until the purge finishes. It leads `down`: nothing the owner
+ *     took down here is left to bring back.
  *   - `unconfirmed`: PneumaSpace did not answer; the Host knows of nothing wrong.
  */
-export type Standing = "running" | "down" | "removed_elsewhere" | "vanished" | "unconfirmed";
+export type Standing = "running" | "down" | "removed_elsewhere" | "vanished" | "purging" | "unconfirmed";
 
 /** What the owner may do about the app's being there, now. */
 export interface OwnerChoices {
@@ -67,9 +71,11 @@ export function runtimeFacts(answer: { readonly app: SpaceApp | null } | { reado
   if ("error" in answer) return { state: "unknown", checked_at, note: answer.error instanceof Error ? answer.error.message : String(answer.error) };
   const app = answer.app;
   if (!app) return { state: "gone", checked_at };
-  // An app being purged is on its way out with its data; one PneumaSpace calls anything else (registered, draft) is there.
+  // An app being purged is on its way out with its data, but not gone until PneumaSpace no longer lists it: a purge that
+  // failed stays `purging`, with the name taken, until it is tried again. One it calls anything else (registered, draft) is there.
   if (app.status === "removed") return { state: "removed", checked_at };
-  if (app.status === "purging" || app.status === "purged") return { state: "gone", checked_at };
+  if (app.status === "purging") return { state: "purging", checked_at };
+  if (app.status === "purged") return { state: "gone", checked_at };
   return { state: "serving", checked_at, ...(app.asleep ? { asleep: true as const } : {}) };
 }
 
@@ -85,6 +91,7 @@ export function downOf(history: readonly { readonly kind: string; readonly at: s
 }
 
 export function standingOf(down: DownFacts | null, runtime: RuntimeFacts): Standing {
+  if (runtime.state === "purging") return "purging";
   if (down) return "down";
   if (runtime.state === "serving") return "running";
   if (runtime.state === "removed") return "removed_elsewhere";
@@ -102,6 +109,9 @@ export function choicesFor(standing: Standing, runtime: RuntimeFacts): OwnerChoi
   if (standing === "running") return { ...none, take_down: true };
   if (standing === "removed_elsewhere") return { ...none, bring_back: true, clear: true };
   if (standing === "vanished") return { ...none, publish_again: true, clear: true };
+  // Nothing to bring back, and the name is not free to publish again: clearing asks PneumaSpace to purge it again where
+  // this Host may purge, and otherwise forgets it here, for PneumaSpace's owner to finish.
+  if (standing === "purging") return { ...none, clear: true };
   if (standing === "down") {
     // Brought back on PneumaSpace behind this Host's back: it serves, so it can be taken down again or recorded as back.
     if (runtime.state === "serving") return { ...none, take_down: true, bring_back: true };
@@ -120,10 +130,15 @@ export function newerRuntime(a: RuntimeFacts, b: RuntimeFacts | null | undefined
 export interface ClearingFacts {
   /** This Host's runtime may delete stored data for good (`SpaceRuntime.purge`): clearing purges the app on PneumaSpace. */
   readonly purges: boolean;
-  /** The data snapshots this Host's capability made for the app (refs from its history): clearing leaves them where they are. */
+  /** The data snapshots this Host's capability made for the app (refs from its history). */
   readonly snapshots: readonly string[];
   /** The capability that keeps them, by its id, or null where this Host has none. */
   readonly snapshot_capability: string | null;
+  /**
+   * The capability can be asked to let go of what it made for the app (`discardAll`): clearing asks it before the purge,
+   * so the snapshots, and what undos set aside, are deleted. Otherwise clearing leaves them where they are.
+   */
+  readonly discards_snapshots: boolean;
   /** Agents work in copies held apart (they stay); otherwise the app's directory, where agents work, is deleted with the record. */
   readonly copies_apart: boolean;
   /** The same, in plain English lines, for the CLI: what is deleted, what stays, and where to finish. */
@@ -136,7 +151,15 @@ export interface ClearingFacts {
  * (the capability the runtime declares, never the edition): the confirmation shows exactly these before the owner types
  * the name.
  */
-export function clearingWords(name: string, runtime: RuntimeFacts, purges: boolean, snapshots: readonly string[], snapshotCapability: string | null, copiesApart = false): ClearingFacts {
+export function clearingWords(
+  name: string,
+  runtime: RuntimeFacts,
+  purges: boolean,
+  snapshots: readonly string[],
+  snapshotCapability: string | null,
+  copiesApart = false,
+  discards = false,
+): ClearingFacts {
   const deletes = [
     copiesApart
       ? `this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`
@@ -149,10 +172,23 @@ export function clearingWords(name: string, runtime: RuntimeFacts, purges: boole
       `${name} on PneumaSpace, removed, with all its stored data: this Host may not purge it there. Its name, its app slot and its storage stay taken until the PneumaSpace owner purges it in PneumaSpace's console`,
     );
   }
+  if (runtime.state === "purging" && purges) {
+    deletes.push(`${name} on PneumaSpace, with what is left of its stored data: PneumaSpace began purging it and has not finished, so clearing asks it to purge again. This cannot be undone`);
+  }
+  if (runtime.state === "purging" && !purges) {
+    keeps.push(
+      `${name} on PneumaSpace, which began purging it, with its stored data, and has not finished: this Host may not purge it. Its name stays taken until PneumaSpace finishes; if it does not, the PneumaSpace owner purges it again in PneumaSpace's console`,
+    );
+  }
   if (runtime.state === "gone") keeps.push(`nothing on PneumaSpace: it has no app named ${name} any more`);
-  if (snapshots.length) keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${snapshotCapability ?? "the snapshot capability"} keeps them: clearing does not delete them`);
+  const holder = snapshotCapability ?? "the snapshot capability";
+  if (snapshots.length && discards) {
+    deletes.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), with the data its undos set aside, where ${holder} keeps them: ${holder} lets go of them first`);
+  } else if (snapshots.length) {
+    keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${holder} keeps them: clearing does not delete them`);
+  }
   if (copiesApart) keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
-  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, copies_apart: copiesApart, deletes, keeps };
+  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, discards_snapshots: discards, copies_apart: copiesApart, deletes, keeps };
 }
 
 /**
@@ -201,7 +237,15 @@ export function restated<T extends Presence>(fields: T, name: string, listing: R
   if (fields.choices !== undefined || status) out.choices = choicesFor(standing, runtime);
   const clearing = fields.clearing as ClearingFacts | undefined;
   if (clearing && Array.isArray(clearing.snapshots)) {
-    out.clearing = clearingWords(name, runtime, Boolean(clearing.purges), clearing.snapshots, typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null, clearing.copies_apart === true);
+    out.clearing = clearingWords(
+      name,
+      runtime,
+      Boolean(clearing.purges),
+      clearing.snapshots,
+      typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null,
+      clearing.copies_apart === true,
+      clearing.discards_snapshots === true,
+    );
   }
   return out as T;
 }

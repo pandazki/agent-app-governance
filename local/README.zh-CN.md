@@ -160,7 +160,7 @@ node bin/appgov.mjs publish-again todo      # 重新发布：只在 PneumaSpace 
 node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不提供服务时可用
 ```
 
-应用被收起期间，agent 的 `submit` 会被拒绝，并用一句话说明是你收起了它。`clear` 只对不提供服务的应用有效，所以正在服务的应用要先收起。它会删掉应用目录 `apps/<name>/`（源码、每一个版本、历史和等待中的改动）；在这个版本上，它还会在 PneumaSpace 上彻底删除（purge）这个应用和它存储的全部数据。这无法撤销。PostgreSQL 那项设置做的数据快照不会被删掉，确认时会列出它们的名字。
+应用被收起期间，agent 的 `submit` 会被拒绝，并用一句话说明是你收起了它。`clear` 只对不提供服务的应用有效，所以正在服务的应用要先收起。它会删掉应用目录 `apps/<name>/`（源码、每一个版本、历史和等待中的改动）；在这个版本上，它还会在 PneumaSpace 上彻底删除（purge）这个应用和它存储的全部数据。这无法撤销。用 PostgreSQL 那项设置时，这个应用的数据快照和回退时被换下来的数据库会先被删掉，彻底删除才能完成；确认时会写出快照的数量，名字在“详细信息”里。只有 PneumaSpace 上已经没有这个应用，Host 才会忘掉它：如果彻底删除失败了，或者三分钟后还没有完成，`clear` 会说 PneumaSpace 还没有删完这个应用，在删完之前它的名字一直被占用；这个应用会继续以“正在彻底删除”出现在 `status`、`list` 和页面上。再运行一次 `clear`，就会让 PneumaSpace 再彻底删除一次。
 
 如果一个应用在 Host 不知情的情况下在 PneumaSpace 上被移除并彻底删除，`status` 和页面会说它不在 PneumaSpace 上，它存储的数据已经不在了。由你选择：重新发布（没有任何存储的数据），或者清除。
 
@@ -175,7 +175,7 @@ node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不�
 | `recorded vN, but it did not go live`，或 `status` 显示 `the address serves vM, not vN` | `record` 模式：第 N 版已经记录，地址上跑的仍是第 M 版。 | 修好原因再提交（没有新编辑时，第 N 版会原样发布），或者回退。 |
 | `the Host cannot vouch for what the address serves` | Host 不知道地址上跑的是哪个版本：要么发布或回退失败后，没能把地址放回去；要么回退已经发出去，却没能记进历史。 | 照那一行说的做。第一种情况，下一次有应答的发布或回退就会把它理清。第二种情况，在你运行 `undo` 之前，提交和批准都会被拒绝。 |
 | `undo` 拒绝执行，提示往回退会越过一个 "that putting files back cannot undo" 的改动 | 中间隔着一个单向改动。 | 由你决定：在终端里运行 `undo --accept-one-way "原因"`，或者在页面上回退。 |
-| `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere` 或 `app_vanished` | 应用被收起了（被你，或者在 PneumaSpace 上），或者 PneumaSpace 上已经没有它了。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
+| `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere`、`app_vanished` 或 `app_purging` | 应用被收起了（被你，或者在 PneumaSpace 上），PneumaSpace 上已经没有它了，或者 PneumaSpace 还没有彻底删除完它。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除；如果还没有彻底删除完，就清除它。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
 | `cannot reach the Host at ...` | Host 没在运行，或者在另一个地址上。 | 在 `local/` 里运行 `docker compose ps`。要连的 Host 不是这个克隆启动的，就加上 `--host <url>`。 |
 
 ## 东西存在哪里
@@ -200,6 +200,6 @@ Docker 会在每个卷名前面加上 compose 项目名，比如 `agent-app-gove
 - 规则只读 SQL 文本和 `pneuma-space.json`。一个删除或改写文件、键值数据或对象的改动，在规则看来就是普通的代码改动，在 `personal` 下常设规则会直接放行；对这些存储，Host 依靠 agent 用 `--one-way` 自己声明。
 - 预览启动时存储是空的。Host 请求它的首页，并以主人的身份发出应用在 `src/preview.json` 里声明的请求，所以这项检查说明的是应用在这些请求自己存进去的数据上是否正常，而不是在你的数据上；没有这个文件时，它只能说明应用能启动。一个改动可能在应用自己的测试一个都没跑的情况下通过，这时 `submit` 和 `history` 会如实说明。
 - `screenshot` 服务给应用拍截图时，应用的脚本（包括预览的脚本）仍然能向 compose 网络里的其他服务发请求。要关掉截图，在 `.env` 里写上 `APPGOV_SCREENSHOT_CDP=`。
-- 实际跑过的：在这份代码较早的一个版本上，在 macOS 上用 colima 和 Docker Desktop 跑过真实的 Claude Code 和 Codex 会话（改应用并提交）、等主人决定后被批准或拒绝的改动、越过单向改动的回退，以及 PostgreSQL 数据快照。在这份代码上：跑过离线测试，以及在 macOS 上用 colima 完成的一次创建、一次脚本化改动和一次回退。2026-11-26，一个 Codex 会话照仓库总览“从这里开始”里的那句话，在默认端口已被占用的机器上装好了这个版本（它换用了别的端口，没有碰任何别的东西），第二个会话照它的交接说明做出了一个能用的应用（reading-list）。没跑过的：整台 Linux 机器、多用户、托管运行。
+- 实际跑过的：在这份代码较早的一个版本上，在 macOS 上用 colima 和 Docker Desktop 跑过真实的 Claude Code 和 Codex 会话（改应用并提交）、等主人决定后被批准或拒绝的改动、越过单向改动的回退，以及 PostgreSQL 数据快照。在这份代码上：跑过离线测试，以及在 macOS 上用 colima 完成的一次创建、一次脚本化改动和一次回退。2026-11-26，一个 Codex 会话照仓库总览“从这里开始”里的那句话，在默认端口已被占用的机器上装好了这个版本（它换用了别的端口，没有碰任何别的东西），第二个会话照它的交接说明做出了一个能用的应用（reading-list）。同样在 2026-11-26，在 colima 上开着 PostgreSQL 那项设置：一个数据在 PostgreSQL 上的应用做了两次单向改动，每次都先批准、再经主人确认回退，然后收起并清除；这项实践先删掉了它的两份快照和两个被换下来的数据库，PneumaSpace 的彻底删除随之完成。一个数据在 SQLite 上的应用，在批准前看到的是数据回不来，批准后改动在没有快照的情况下上线。一个应用的彻底删除因为它的数据库角色还拥有一个数据库而失败，它在 Host 上仍以“正在彻底删除”显示；那个数据库删掉之后，再清除一次就完成了。没跑过的：整台 Linux 机器、多用户、托管运行。
 
 [docs/reference.zh-CN.md](./docs/reference.zh-CN.md) 里有 CLI、各模式和每项记录下来的保证是什么意思、风险规则、单向改动与回退、收起和清除应用、PostgreSQL 那项设置、由 Host 启动 Claude Code 或 Codex（`bun run drive`）、和其他服务并排运行，以及测试。

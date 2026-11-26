@@ -10,7 +10,7 @@
 
 | 命令 | 作用 |
 | --- | --- |
-| `status [<name>]` | 应用在不在（不在时最先说明）、当前版本、地址、回退会回到的版本、主人、模式、是否开启了数据快照能力、PneumaSpace 上由谁管理这个应用、还没提交的文件，以及等待中的改动和各自的预览 |
+| `status [<name>]` | 应用在不在（不在时最先说明）、当前版本、地址、回退会回到的版本、主人、模式、是否开启了数据快照能力以及它是否覆盖这个应用、PneumaSpace 上由谁管理这个应用、还没提交的文件，以及等待中的改动和各自的预览 |
 | `history [<name>]` | 每一次尝试，从早到晚，附带每次成立的保证 |
 | `list` | 所有应用：版本、地址、在不在、最近一次改动、等待中的改动、还没提交的文件 |
 | `submit "<intent>"` | 把工作目录交给 Host 走一遍流程。`--one-way "<会丢失什么>"` 声明这个改动会删除或改写已存的数据，任何模式都可用（见[单向改动与回退](#单向改动与回退)） |
@@ -126,30 +126,31 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 
 ## 收起和清除应用
 
-应用在不在，来自两个地方：Host 自己的记录（主人有没有通过这个 Host 收起它，也就是历史里有一条 `take_down`，后面没有跟着 `bring_back` 或 `publish_again`），以及 PneumaSpace 对这个应用的说法。每次 `status`、`list` 和页面上的每个应用，以及每次提交、批准和回退之前，Host 都会问 PneumaSpace；在这个版本上，每次读取都是当场去问。`status` 和 `list` 把 PneumaSpace 的回答放在 `runtime` 里（`serving`、`removed`、`gone` 或 `unknown`，带 `checked_at`；PneumaSpace 让一个在提供服务的应用因闲置而休眠时还带 `asleep: true`，`status` 会说明这很正常），把主人的收起放在 `taken_down` 里（谁、什么时候、通过什么），把两者合起来的结论放在 `standing` 里。`status` 还带有 `choices`（主人现在能做什么）和 `clearing`（清除会删掉什么、留下什么）。
+应用在不在，来自两个地方：Host 自己的记录（主人有没有通过这个 Host 收起它，也就是历史里有一条 `take_down`，后面没有跟着 `bring_back` 或 `publish_again`），以及 PneumaSpace 对这个应用的说法。每次 `status`、`list` 和页面上的每个应用，以及每次提交、批准和回退之前，Host 都会问 PneumaSpace；在这个版本上，每次读取都是当场去问。`status` 和 `list` 把 PneumaSpace 的回答放在 `runtime` 里（`serving`、`removed`、`purging`、`gone` 或 `unknown`，带 `checked_at`；PneumaSpace 让一个在提供服务的应用因闲置而休眠时还带 `asleep: true`，`status` 会说明这很正常），把主人的收起放在 `taken_down` 里（谁、什么时候、通过什么），把两者合起来的结论放在 `standing` 里。`status` 还带有 `choices`（主人现在能做什么）和 `clearing`（清除会删掉什么、留下什么）。
 
 | `standing` | 意思 | 主人能做什么 |
 | --- | --- | --- |
 | `running` | PneumaSpace 在提供它的服务，这里也没人收起它 | 收起 |
 | `down` | 主人通过这个 Host 收起了它。PneumaSpace 把它保留为已移除，带着数据，或者已经没有它了 | 恢复；PneumaSpace 上已经没有它时重新发布；清除 |
 | `removed_elsewhere` | PneumaSpace 把它保留为已移除，带着数据，但不是通过这个 Host | 恢复，或清除 |
-| `vanished` | PneumaSpace 上已经没有这个应用（或正在彻底删除它），而这个 Host 没有收起它，所以它存储的数据已经不在了 | 重新发布，或清除 |
+| `vanished` | PneumaSpace 上已经没有这个应用，而这个 Host 没有收起它，所以它存储的数据已经不在了 | 重新发布，或清除 |
+| `purging` | PneumaSpace 已经开始彻底删除这个应用和它存储的数据，但还没有完成，不论是谁发起的。它仍列出这个应用，在彻底删除完成之前名字一直被占用；失败的彻底删除会一直停在这里，直到再试一次 | 清除 |
 | `unconfirmed` | PneumaSpace 没有回应 | 在它回应之前，什么都不能做 |
 
-Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台里被恢复了），仍然是 `down`。主人可以再次收起它，或者恢复它；恢复这时只是把它记为已恢复，不动 PneumaSpace。
+Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台里被恢复了），仍然是 `down`。PneumaSpace 列为 `purging` 的应用就是 `purging`，不论是谁收起的：已经没有可以恢复的东西，名字也还不能拿来重新发布。主人可以再次收起它，或者恢复它；恢复这时只是把它记为已恢复，不动 PneumaSpace。
 
 每个操作做什么：
 
 - **收起**调用 PneumaSpace 的 `remove`，带上 Host 的管理者名字。地址不再应答；PneumaSpace 保留应用存储的数据，Host 保留目录、各个版本和历史。历史里会多一条 `take_down`，写明是谁、通过什么做的（从页面上做时是 `"channel": "owner-page"`），主人给的理由写在它的意图里。等待中的改动留着：在应用恢复之前，批准会被拒绝，拒绝改动仍然可以。
 - **恢复**带着 PneumaSpace 保留的数据，重新提供当前版本的服务。本地的 gateway 没有恢复这个操作，所以 Host 把当前版本发布到那个已移除的应用上，gateway 会以同一个 id、同样的数据重新登记它。之后 Host 访问一次首页；没有应答时，`bring_back` 条目会写明。
 - **重新发布**只用于 PneumaSpace 上已经没有的应用。它把当前版本发布成一个新应用，存储是空的，`publish_again` 条目会写明应用以前存储的数据已经不在了。
-- **清除**先检查 `confirm` 是不是应用名，再检查 PneumaSpace 是否不在提供它的服务：它从不一步从 `running` 走到清除。它丢弃等待中的改动的预览；如果 PneumaSpace 把应用保留为已移除，就在那里彻底删除它和它存储的全部数据；然后删掉应用目录 `apps/<name>/`：源码、每一个版本、历史和等待中的改动。这个目录也是你的 agent 工作的地方。没有历史可以写了；Host 的日志里会留下一行，写明是谁清除的。PneumaSpace 拒绝彻底删除时，什么都不清除。PostgreSQL 那项设置做的数据快照（历史里写着名字的那些数据库）不会被删掉：`status` 在 `clearing.keeps` 里列出它们，CLI 和页面会在你输入应用名之前显示这几行。
+- **清除**先检查 `confirm` 是不是应用名，再检查 PneumaSpace 是否不在提供它的服务：它从不一步从 `running` 走到清除。它丢弃等待中的改动的预览；如果 PneumaSpace 把应用保留为已移除，或者还没有彻底删除完它，就在那里彻底删除它和它存储的全部数据；然后删掉应用目录 `apps/<name>/`：源码、每一个版本、历史和等待中的改动。这个目录也是你的 agent 工作的地方。没有历史可以写了；Host 的日志里会留下一行，写明是谁清除的。彻底删除之前，如果数据快照能力可以被要求放手，Host 会先请它放手（`discardAll`，带上历史里写着名字的每一份快照）：用 PostgreSQL 那项设置时，这个应用的每一个快照数据库、每一个回退时被换下来的数据库都会被删掉，历史里没写名字的也一样，这样 PneumaSpace 彻底删除时才能删掉应用的角色。不管这个 Host 能不能彻底删除，都会先这样请它。它放不了手时，其余什么都不清除（`data_snapshot_discard_failed`），再清除一次会再请一次；之后 PneumaSpace 拒绝彻底删除时，其余也什么都不清除，拒绝的说明里会写出已经删掉了什么。只有 PneumaSpace 不再列出这个应用，它才算清除了：彻底删除没有完成（失败了，或者 Host 等了 180 秒还没完成），PneumaSpace 仍把应用列为 `purging` 时，Host 会留着应用目录，返回 `space_purge_unfinished`。这时 `status`、`list` 和页面会显示它为 `purging`，再清除一次会让 PneumaSpace 再彻底删除一次。`status` 在 `clearing.deletes` 里列出这些快照，CLI 和页面会在你输入应用名之前显示这一行。不能被要求放手的能力会留着它的快照，这时它们列在 `clearing.keeps` 里。
 
-清除会不会彻底删除，取决于 Host 的 PneumaSpace 运行时有没有这项能力（`SpaceRuntime.purge`），不是一项设置。本地的 gateway 允许 Host 彻底删除一个已移除的应用。Cloudflare 版的平台不给 Host 彻底删除的权限，所以在那里，清除会把应用留在 PneumaSpace 上（已移除，带着数据），由 PneumaSpace 的主人去彻底删除。
+清除会不会彻底删除，取决于 Host 的 PneumaSpace 运行时有没有这项能力（`SpaceRuntime.purge`），不是一项设置。本地的 gateway 允许 Host 彻底删除一个已移除的应用。Cloudflare 版的平台不给 Host 彻底删除的权限，所以在那里，清除会把应用留在 PneumaSpace 上（已移除，带着数据），由 PneumaSpace 的主人去彻底删除；PneumaSpace 还在彻底删除的应用保持原样，如果一直没有完成，由 PneumaSpace 的主人再彻底删除一次。
 
 **CLI。** `take-down`、`bring-back`、`publish-again` 和 `clear` 在应用目录之外可以把应用名直接写在后面；其余的话是主人的理由。每条命令没有终端就拒绝运行，先显示应用的状态和这个操作会做什么（`clear` 会显示会删除什么、会保留什么），再要你输入命令名，`clear` 要输入应用名。它以 `APPGOV_OWNER`（默认 `user:me`）作为身份发出。
 
-**路由。** 前三个返回 `standing`、`runtime`、`taken_down`，以及一句说明发生了什么的 `note`。`clear` 返回 `deleted`、`kept` 和 `space_holds`（PneumaSpace 是否还留着这个应用）。JSON API 对写操作的规则同样适用：不能带 `Origin` 或 `Sec-Fetch-Site`，必须声明 `content-type: application/json`。
+**路由。** 前三个返回 `standing`、`runtime`、`taken_down`，以及一句说明发生了什么的 `note`。`clear` 返回 `deleted`、`kept`、`data_discarded`（请了数据快照能力放手时，它先删掉了什么）`space_holds`（PneumaSpace 是否还留着这个应用）和 `runtime_state`（清除开始时 PneumaSpace 怎么说这个应用：`removed`、`purging` 或 `gone`）。JSON API 对写操作的规则同样适用：不能带 `Origin` 或 `Sec-Fetch-Site`，必须声明 `content-type: application/json`。
 
 | 路由 | 请求体 |
 | --- | --- |
@@ -164,12 +165,14 @@ Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台
 | `app_down` | 409 | 主人收起了应用时的提交、批准或回退。提示会写明是谁、什么时候收起的，并说明要由主人恢复 |
 | `app_removed_elsewhere` | 409 | 同上，应用是在 PneumaSpace 上收起的，不是通过这个 Host |
 | `app_vanished` | 409 | 同上，PneumaSpace 上已经没有这个应用：发布只会把它重新建成一个空应用。由主人重新发布或清除 |
+| `app_purging` | 409 | 同上，PneumaSpace 正在彻底删除这个应用，还没有完成。由主人清除 |
 | `owner_required` | 403 | 应用主人以外的人要求收起、恢复、重新发布或清除 |
 | `confirm_name` | 400 | 清除时 `confirm` 里不是一字不差的应用名 |
 | `clear_running` | 409 | PneumaSpace 正在提供这个应用的服务时要求清除：先收起 |
 | `cannot_take_down`、`cannot_bring_back`、`cannot_publish_again` | 409 | 这个操作不符合应用现在的状态：比如恢复一个 PneumaSpace 上已经没有的应用，或者重新发布一个它还留着的应用 |
 | `space_unknown` | 502 | PneumaSpace 没有回应，无法知道应用在不在 |
 | `space_refused` | 502 | PneumaSpace 拒绝了移除、发布或彻底删除，或者没有回应 |
+| `space_purge_unfinished` | 502 | 清除时：PneumaSpace 开始了彻底删除，但仍把应用列为正在彻底删除。Host 留着它的记录；再清除一次会再请它彻底删除 |
 
 ## PostgreSQL 数据快照
 
@@ -194,7 +197,7 @@ Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台
 
    再运行一次 `docker compose --profile postgres up -d`，让 Host 带着这两项重启。之后 `status` 会显示 `data snapshot: postgres-template`。只写了名字没写 URL，或者写了别的名字，Host 会在启动时停下并说明原因。
 
-**快照。** 一个发布第一次让单向改动上线之前，Host 先问 PneumaSpace 这个应用用的是哪个 PostgreSQL 数据库，停下应用，把数据库复制为 `snap_<app>_<version>_<time>`。这份副本只对超级用户开放，并加上一条注释，写明应用、版本、来源数据库和时间。应用在 SQLite 上或没有数据库时会被拒绝，改动不会上线（`data_snapshot_failed`）。如果一次单向发布已经发出去却没有应答，下一次尝试会沿用第一份快照，而不是复制那次失败的尝试可能已经改过的数据。
+**快照。** 一个发布第一次让单向改动上线之前，Host 先问 PneumaSpace 这个应用用的是哪个 PostgreSQL 数据库，停下应用，把数据库复制为 `snap_<app>_<version>_<time>`。这份副本只对超级用户开放，并加上一条注释，写明应用、版本、来源数据库和时间。Host 在做出任何承诺之前，先问这项实践是否覆盖这个应用：PneumaSpace 把数据库放在 PostgreSQL 上的应用才被覆盖。对 SQLite 上或没有数据库的应用，主人在批准之前看到的是：不会取快照，存储的数据回不来；批准之后，改动在没有快照的情况下上线，记录里写明原因。`status` 也这样说（`data_snapshot_coverage`）。如果主人被告知数据会被保存，而到批准时应用已经不在 PostgreSQL 上，就什么都不上线（`data_snapshot_failed`），改动需要重新提交。如果一次单向发布已经发出去却没有应答，下一次尝试会沿用第一份快照，而不是复制那次失败的尝试可能已经改过的数据。
 
 **恢复。** 快照的名字来自应用的历史，而 agent 能写这份历史，所以 Host 先检查：名字带着这个应用的前缀，数据库归超级用户所有，并带有这个应用的标记。通不过检查的名字以 `data_snapshot_refused` 拒绝，此时什么都还没变。然后旧代码先发出去并且要有应答，应用的数据库改名为 `<database>_replaced_<time>`（什么都不删），快照的一份新副本顶上这个名字，应用要再应答一次，历史才会更新。先放代码，是因为删掉数据的那个版本通常一启动就会再删一遍。
 
@@ -205,7 +208,7 @@ Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台
 - 每次快照和恢复都是完整复制，耗时和占用的磁盘随数据库增长。复制或替换数据库时应用会停下。
 - 从旧代码发出去到数据放回之间，旧代码跑在新数据上，可能返回错误。
 - `APPGOV_DATA_SNAPSHOT_URL` 是对那台服务器上所有应用数据库的超级用户权限。
-- 快照和被替换的数据库会一直留着，直到有人删掉，清除应用也不会删掉它们。被替换的数据库仍归应用的 PostgreSQL 角色所有，所以只要还留着一个，PneumaSpace 彻底删除（purge）这个应用就会失败，清除这个应用也会以 `space_refused` 被拒绝；先删掉被替换的数据库。
+- 快照和被替换的数据库在应用存在期间一直留着：每一个记录下来的版本都可能是回退的目标，应用还在时没有任何东西删掉它们。清除应用时，它们会在 PneumaSpace 彻底删除（purge）这个应用之前被删掉，包括更早的 Host 留下的那些（它们里面的表归应用的 PostgreSQL 角色所有，只要还留着一个，彻底删除就会失败）。
 
 ## 由 Host 启动 agent（`bun run drive`）
 

@@ -58,9 +58,18 @@ class ScriptedPostgres {
     }
     if (sql.startsWith("SELECT pg_terminate_backend")) return [];
     if (sql.startsWith("SELECT d.datname, shobj_description")) {
+      const row = (name: string, owner: string) => ({ datname: name, marker: this.comments.get(name) ?? null, superuser_owner: this.superusers.has(owner) });
+      // Without a WHERE: every database on the server, as discardAll reads them.
+      if (!sql.includes(" WHERE ")) return [...this.databases].map(([name, owner]) => row(name, owner));
       const name = /d\.datname = '((?:[^']|'')*)'/.exec(sql)![1]!.replaceAll("''", "'");
       const owner = this.databases.get(name);
-      return owner === undefined ? [] : [{ datname: name, marker: this.comments.get(name) ?? null, superuser_owner: this.superusers.has(owner) }];
+      return owner === undefined ? [] : [row(name, owner)];
+    }
+    if (sql.startsWith("DROP DATABASE IF EXISTS")) {
+      const [name] = ids(sql);
+      this.databases.delete(name!);
+      this.comments.delete(name!);
+      return [];
     }
     if (sql.startsWith("COMMENT ON DATABASE")) {
       const [name] = ids(sql);
@@ -460,9 +469,152 @@ describe("postgres-template: restore", () => {
   });
 });
 
+describe("postgres-template: covers", () => {
+  test("covers an app whose database PneumaSpace put on PostgreSQL, and only reads", async () => {
+    space.bindings.set("todo", [sqlite("suspended"), pg(DB)]);
+    expect(await capability().covers!({ appRoot: appRoot() })).toEqual({ covered: true });
+    expect(server.opened).toBe(0);
+    expect(space.log).toEqual([]);
+  });
+
+  test("covers an app on PostgreSQL that PneumaSpace does not serve now, whose bindings it holds suspended (taken down, or being purged)", async () => {
+    space.bindings.set("todo", [pg(DB, "suspended")]);
+    expect(await capability().covers!({ appRoot: appRoot() })).toEqual({ covered: true });
+    expect(server.opened).toBe(0);
+  });
+
+  test("does not cover an app on SQLite, one switched back to SQLite, or one with no database, and says why in a sentence for the owner", async () => {
+    space.bindings.set("todo", [sqlite()]);
+    const onSqlite = await capability().covers!({ appRoot: appRoot() });
+    expect(onSqlite).toEqual({
+      covered: false,
+      reason: "todo keeps its data in SQLite, PneumaSpace's default database engine. This Host's data snapshot capability (postgres-template) handles PostgreSQL databases only, so it cannot save todo's data.",
+    });
+    space.bindings.set("todo", [pg(DB, "suspended"), sqlite()]);
+    expect(await capability().covers!({ appRoot: appRoot() })).toMatchObject({ covered: false, reason: expect.stringContaining("keeps its data in SQLite") });
+    space.bindings.set("todo", []);
+    expect(await capability().covers!({ appRoot: appRoot() })).toMatchObject({ covered: false, reason: expect.stringContaining('todo declares no database ("db" in pneuma-space.json)') });
+    expect(server.opened).toBe(0);
+    expect(space.log).toEqual([]);
+  });
+
+  test("throws when PneumaSpace does not answer: then nobody can tell yet", async () => {
+    expect((await failure(capability().covers!({ appRoot: appRoot("ghost") }))).message).toBe("cannot ask PneumaSpace where ghost keeps its data (PneumaSpace has no app named ghost)");
+  });
+});
+
+describe("postgres-template: discardAll", () => {
+  const SNAP1 = `snap_todo_v1_${STAMP}`;
+  const SNAP2 = "snap_todo_v3_20261124t090000";
+  const ASIDE1 = `${DB}_replaced_20261123t230000`;
+  const ASIDE2 = `${DB}_replaced_20261124t100000_2`;
+  /** The database the app had before it switched engines and back, and what an undo set aside from it then. */
+  const OLD_DB = "app_99aa88bb77cc";
+  const OLD_SNAP = "snap_todo_v1_20261101t000000";
+  const OLD_ASIDE = `${OLD_DB}_replaced_20261102t000000`;
+  const OTHER = "app_ffeeddccbbaa";
+  const all = (sql: string) => sql.startsWith("sql SELECT d.datname") && !sql.includes(" WHERE ");
+
+  beforeEach(() => {
+    space.bindings.set("todo", [pg(DB, "suspended")]);
+    server.superusers.add("admin");
+    for (const [name, owner] of [
+      [DB, DB],
+      [SNAP1, "postgres"],
+      [SNAP2, "admin"],
+      [ASIDE1, DB],
+      [ASIDE2, DB],
+      [OLD_SNAP, "postgres"],
+      [OLD_ASIDE, OLD_DB],
+      [OTHER, OTHER],
+    ] as const) server.databases.set(name, owner);
+    server.comments.set(SNAP1, mark("todo", "v1", DB));
+    server.comments.set(SNAP2, mark("todo", "v3", DB));
+    server.comments.set(OLD_SNAP, mark("todo", "v1", OLD_DB));
+  });
+
+  test("drops every snapshot marked as this app's and every database an undo set aside, and nothing else", async () => {
+    // Another app's snapshot; one with this app's prefix but no mark; one marked as this app's by a role that is not a
+    // superuser; a lookalike of a set-aside that a superuser owns; and a set-aside of another app's database.
+    server.databases.set("snap_todo_v2_20261123t235900", "postgres");
+    server.databases.set("snap_todo_v2_20261123t235901", OTHER);
+    server.comments.set("snap_todo_v2_20261123t235901", mark("todo", "v2", DB));
+    server.databases.set("snap_todo_list_v1_20261123t000000", "postgres");
+    server.comments.set("snap_todo_list_v1_20261123t000000", mark("todo-list", "v1", "app_111111111111"));
+    server.databases.set(`${DB}_replaced_20261125t000000`, "postgres");
+    server.databases.set(`${OTHER}_replaced_20261125t000000`, OTHER);
+    server.databases.set(`${DB}_replaced_by_hand`, DB);
+
+    const result = await capability().discardAll!({ appRoot: appRoot(), refs: [SNAP1, SNAP2] });
+
+    expect([...result.discarded].sort()).toEqual([SNAP1, SNAP2, OLD_SNAP, ASIDE1, ASIDE2, OLD_ASIDE].sort());
+    expect(result.refused).toEqual([]);
+    for (const gone of result.discarded) expect(space.log).toContain(`sql DROP DATABASE IF EXISTS "${gone}" WITH (FORCE)`);
+    expect([...server.databases.keys()].sort()).toEqual(
+      [
+        DB,
+        OTHER,
+        "snap_todo_v2_20261123t235900",
+        "snap_todo_v2_20261123t235901",
+        "snap_todo_list_v1_20261123t000000",
+        `${DB}_replaced_20261125t000000`,
+        `${OTHER}_replaced_20261125t000000`,
+        `${DB}_replaced_by_hand`,
+      ].sort(),
+    );
+    // It neither stops the app nor touches its database: PneumaSpace's purge drops that.
+    expect(space.log.filter((line) => !line.startsWith("sql DROP") && !all(line))).toEqual([]);
+    expect([server.opened, server.closed]).toEqual([1, 1]);
+  });
+
+  test("a ref from the record that it did not make for this app is left as it is and listed; one already gone is not", async () => {
+    const result = await capability().discardAll!({ appRoot: appRoot(), refs: [SNAP1, OTHER, "snap_todo_v9_20261101t000000"] });
+    expect(result.refused).toEqual([`${OTHER}: this capability did not make it for todo (no mark of todo's, and not renamed aside from todo's database), so it is left as it is`]);
+    expect(server.databases.has(OTHER)).toBe(true);
+    expect(result.discarded).toContain(SNAP1);
+  });
+
+  test("when PneumaSpace no longer knows the app, the marks still say what is its", async () => {
+    space.bindings.delete("todo");
+    const result = await capability().discardAll!({ appRoot: appRoot(), refs: [] });
+    expect([...result.discarded].sort()).toEqual([SNAP1, SNAP2, OLD_SNAP, ASIDE1, ASIDE2, OLD_ASIDE].sort());
+  });
+
+  test("asked again, it finds nothing left and answers the same way", async () => {
+    const cap = capability();
+    await cap.discardAll!({ appRoot: appRoot(), refs: [SNAP1] });
+    space.log.length = 0;
+    expect(await cap.discardAll!({ appRoot: appRoot(), refs: [SNAP1] })).toEqual({ discarded: [], refused: [] });
+    expect(space.log.filter((line) => !all(line))).toEqual([]);
+  });
+
+  test("an app that had nothing saved, or is on SQLite, has nothing to drop", async () => {
+    space.bindings.set("notes", [sqlite()]);
+    expect(await capability().discardAll!({ appRoot: appRoot("notes"), refs: [] })).toEqual({ discarded: [], refused: [] });
+    expect(server.databases.size).toBe(8);
+  });
+
+  test("a database it cannot drop: it drops the rest, then says what it dropped, what is left, and why that matters", async () => {
+    server.fail = (sql) => (sql.includes(`DROP DATABASE IF EXISTS "${ASIDE1}"`) ? new Error("out of shared memory") : undefined);
+    const err = await failure(capability().discardAll!({ appRoot: appRoot(), refs: [] }));
+    expect(err.message).toContain(`could not drop ${ASIDE1} (out of shared memory) on postgres:5432`);
+    expect(err.message).toContain("PneumaSpace cannot drop todo's role, so its purge fails");
+    expect(err.message).toMatch(/^dropped /);
+    expect(server.databases.has(ASIDE1)).toBe(true);
+    expect(server.databases.has(SNAP1)).toBe(false);
+    expect([server.opened, server.closed]).toEqual([1, 1]);
+  });
+
+  test("an unreachable server is an error before anything is dropped", async () => {
+    server.refuseConnect = new Error("Failed to connect");
+    expect((await failure(capability().discardAll!({ appRoot: appRoot(), refs: [SNAP1] }))).message).toContain("cannot reach the PostgreSQL server at postgres:5432");
+    expect(server.databases.has(SNAP1)).toBe(true);
+  });
+});
+
 describe("postgres-template through the Host", () => {
-  test("an app on SQLite: the one-way change is not released, and the owner reads why", async () => {
-    const host = new AppHost({
+  function host(): AppHost {
+    return new AppHost({
       appsDir: join(work, "apps"),
       space,
       overlayDir: join(EXAMPLE, "overlay"),
@@ -472,19 +624,136 @@ describe("postgres-template through the Host", () => {
       runVerify: async () => ({ ok: true, output: "tests passed" }),
       dataSnapshot: capability(),
     });
-    await host.create("todo");
-    space.bindings.set("todo", [sqlite()]);
-    await Bun.write(join(work, "apps", "todo", "src", "server.ts"), "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n");
-    const pending = await host.submit({ name: "todo", intent: "remove notes", agent: "codex" });
-    if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
-    expect(pending.disclosure.join(" ")).toContain("This Host declares a data snapshot capability (postgres-template)");
+  }
+  const DROP_NOTE = "export const sql = `ALTER TABLE todos DROP COLUMN note`;\n";
 
-    const result = await host.resolve("todo", pending.change_id, "approved", "user:me");
+  test("an app on SQLite: the owner is told the data cannot come back, and the approved change goes live with no snapshot", async () => {
+    const h = host();
+    await h.create("todo");
+    space.bindings.set("todo", [sqlite()]);
+    expect((await h.status("todo")).data_snapshot_coverage).toEqual({
+      state: "not_covered",
+      reason: "todo keeps its data in SQLite, PneumaSpace's default database engine. This Host's data snapshot capability (postgres-template) handles PostgreSQL databases only, so it cannot save todo's data.",
+    });
+    await Bun.write(join(work, "apps", "todo", "src", "server.ts"), DROP_NOTE);
+    const pending = await h.submit({ name: "todo", intent: "remove notes", agent: "codex" });
+    if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
+    const said = pending.disclosure.join(" ");
+    expect(said).toContain("This Host declares a data snapshot capability (postgres-template), but it does not cover todo: todo keeps its data in SQLite");
+    expect(said).toContain("So no snapshot is taken, the stored data cannot come back, and a confirmed undo puts back only the code.");
+    expect(said).not.toContain("saves the stored data");
+    expect((await h.status("todo")).pending[0]).toMatchObject({ data_snapshot_coverage: "not_covered" });
+
+    const result = await h.resolve("todo", pending.change_id, "approved", "user:me");
+    expect(result).toMatchObject({ status: "published", version: "v2", one_way: expect.any(String) });
+    if (result.status !== "published") return;
+    expect(result.note).toContain("the stored data was not saved before this one-way change went live, because postgres-template does not cover todo: todo keeps its data in SQLite");
+    expect(h.history("todo").some((entry) => entry.kind === "snapshot")).toBe(false);
+    expect(space.log).not.toContain("stop todo");
+    expect(server.opened).toBe(0);
+
+    // Going back past it is the code-only case, and says so.
+    const plan = h.undoPlan("todo", "v1");
+    expect(plan.crossing).toMatchObject({ data_restore: "none" });
+    expect(plan.crossing!.text).toContain("but no snapshot was taken before v2, so it cannot put this data back");
+  });
+
+  test("an app on PostgreSQL: the owner is promised the snapshot, and the release takes it", async () => {
+    const h = host();
+    await h.create("todo");
+    space.bindings.set("todo", [pg(DB)]);
+    server.databases.set(DB, DB);
+    await Bun.write(join(work, "apps", "todo", "src", "server.ts"), DROP_NOTE);
+    const pending = await h.submit({ name: "todo", intent: "remove notes", agent: "codex" });
+    if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
+    expect(pending.disclosure.join(" ")).toContain("This Host declares a data snapshot capability (postgres-template), and it covers todo: it saves the stored data just before the release");
+    expect(pending.disclosure.join(" ")).toContain("If the data cannot be saved, the change does not go live.");
+    expect(await h.resolve("todo", pending.change_id, "approved", "user:me")).toMatchObject({ status: "published", version: "v2" });
+    expect(h.history("todo").find((entry) => entry.kind === "snapshot")?.data_ref).toEqual({ capability: "postgres-template", ref: `snap_todo_v1_${STAMP}` });
+  });
+
+  test("when the capability cannot tell, the owner is promised only an attempt, and the release still takes the snapshot first", async () => {
+    const cap = capability();
+    const h = new AppHost({
+      appsDir: join(work, "apps"),
+      space,
+      overlayDir: join(EXAMPLE, "overlay"),
+      cliSource: join(EXAMPLE, "bin", "appgov.mjs"),
+      owner: "user:me",
+      policy: loadRiskPolicy(join(EXAMPLE, "policy", "personal.json")),
+      runVerify: async () => ({ ok: true, output: "tests passed" }),
+      dataSnapshot: {
+        ...cap,
+        covers: async () => {
+          throw new Error("PneumaSpace did not answer");
+        },
+      },
+    });
+    await h.create("todo");
+    space.bindings.set("todo", [pg(DB)]);
+    server.databases.set(DB, DB);
+    await Bun.write(join(work, "apps", "todo", "src", "server.ts"), DROP_NOTE);
+    const pending = await h.submit({ name: "todo", intent: "remove notes", agent: "codex" });
+    if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
+    expect(pending.disclosure.join(" ")).toContain(
+      "This Host declares a data snapshot capability (postgres-template), but could not tell whether it covers todo (PneumaSpace did not answer). It tries to save the stored data just before the release",
+    );
+    expect(pending.disclosure.join(" ")).toContain("if it cannot, the change does not go live.");
+    expect(await h.resolve("todo", pending.change_id, "approved", "user:me")).toMatchObject({ status: "published", version: "v2" });
+    expect(h.history("todo").some((entry) => entry.kind === "snapshot")).toBe(true);
+  });
+
+  test("promised a snapshot, but the app left PostgreSQL before the approval: nothing goes live, and the owner reads why", async () => {
+    const h = host();
+    await h.create("todo");
+    space.bindings.set("todo", [pg(DB)]);
+    server.databases.set(DB, DB);
+    await Bun.write(join(work, "apps", "todo", "src", "server.ts"), DROP_NOTE);
+    const pending = await h.submit({ name: "todo", intent: "remove notes", agent: "codex" });
+    if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
+    space.bindings.set("todo", [pg(DB, "suspended"), sqlite()]);
+
+    const result = await h.resolve("todo", pending.change_id, "approved", "user:me");
     expect(result).toMatchObject({ status: "rejected", reason: "data_snapshot_failed" });
     if (result.status !== "rejected") return;
-    expect(result.detail).toContain("todo keeps its data in SQLite");
-    expect((await host.status("todo")).active_version).toBe("v1");
+    expect(result.detail).toContain("the owner was told the stored data would be saved before this one-way change went live, but postgres-template does not cover todo now: todo keeps its data in SQLite");
+    expect(result.detail).toContain("Submit the change again, so the owner reads what approving costs now");
+    expect((await h.status("todo")).active_version).toBe("v1");
     expect(space.log).not.toContain("stop todo");
+  });
+
+  test("clearing: the snapshots and what the undos set aside are dropped before PneumaSpace purges the app", async () => {
+    const h = host();
+    await h.create("todo");
+    space.bindings.set("todo", [pg(DB)]);
+    server.databases.set(DB, DB);
+    // Two one-way releases, each undone with the owner's confirmation.
+    for (const round of [1, 2]) {
+      await Bun.write(join(work, "apps", "todo", "src", "server.ts"), `export const sql = \`ALTER TABLE todos DROP COLUMN note${round}\`;\n`);
+      const pending = await h.submit({ name: "todo", intent: `remove note ${round}`, agent: "codex" });
+      if (pending.status !== "needs_approval") throw new Error(`expected needs_approval, got ${pending.status}`);
+      expect(await h.resolve("todo", pending.change_id, "approved", "user:me")).toMatchObject({ status: "published" });
+      expect(await h.undo("todo", "back", { acceptOneWay: true, subject: "user:me" })).toMatchObject({ data_restored: true });
+    }
+    const leftovers = [...server.databases.keys()].filter((name) => name !== DB).sort();
+    expect(leftovers.filter((name) => name.startsWith("snap_todo_"))).toHaveLength(2);
+    expect(leftovers.filter((name) => name.startsWith(`${DB}_replaced_`))).toHaveLength(2);
+
+    await h.takeDown("todo", { subject: "user:me" });
+    const status = await h.status("todo");
+    expect(status.clearing).toMatchObject({ discards_snapshots: true, snapshot_capability: "postgres-template" });
+    space.log.length = 0;
+    const cleared = await h.clear("todo", { subject: "user:me", confirm: "todo" });
+
+    expect([...(cleared.data_discarded ?? [])].sort()).toEqual(leftovers);
+    expect([...server.databases.keys()]).toEqual([DB]);
+    // Every drop comes before the purge, which then drops the app's own database and role.
+    const purgeAt = space.log.indexOf("purge todo");
+    expect(purgeAt).toBeGreaterThan(-1);
+    const drops = space.log.flatMap((line, at) => (line.startsWith("sql DROP DATABASE") ? [at] : []));
+    expect(drops).toHaveLength(4);
+    expect(Math.max(...drops)).toBeLessThan(purgeAt);
+    expect(cleared).toMatchObject({ cleared: true, space_holds: false });
   });
 });
 
@@ -671,5 +940,50 @@ describe.skipIf(!ADMIN_URL)("postgres-template against a real PostgreSQL", () =>
     await cap.restore({ appRoot: appDir, ref });
     expect(await asApp(role, "SELECT id FROM notes ORDER BY id")).toEqual([{ id: 1 }]);
     expect(await admin(`SELECT datname FROM pg_database WHERE datname LIKE ${literal(`${role}_replaced_%`)}`)).toHaveLength(2);
+  }
+
+  test("what the practice left keeps PneumaSpace's purge from dropping the app's role until discardAll lets go of it", async () => {
+    try {
+      await purgeAfterDiscard();
+    } finally {
+      await cleanUp();
+    }
+  });
+
+  async function purgeAfterDiscard(): Promise<void> {
+    await admin(`CREATE ROLE ${ident(role)}`, `ALTER ROLE ${ident(role)} LOGIN PASSWORD ${literal(password)}`, `CREATE DATABASE ${ident(role)} OWNER ${ident(role)}`, `REVOKE CONNECT ON DATABASE ${ident(role)} FROM PUBLIC`);
+    await asApp(role, "CREATE TABLE notes (id integer PRIMARY KEY, body text NOT NULL)", "INSERT INTO notes VALUES (1, 'first')");
+    const appDir = join(work, "it-apps", `it${id}`);
+    mkdirSync(appDir, { recursive: true });
+    const itSpace = new FakeSpace();
+    itSpace.bindings.set(`it${id}`, [pg(role)]);
+    let clock = Date.parse("2026-11-26T10:00:00.000Z");
+    const cap = postgresTemplateSnapshot({ space: itSpace, connect: () => openBunSql(ADMIN_URL!), server: serverOf(ADMIN_URL!), now: () => new Date((clock += 60_000)) });
+    // Two snapshots, each put back once: two snapshot databases and two set aside.
+    const refs: string[] = [];
+    for (const version of ["v2", "v4"]) {
+      const { ref } = await cap.snapshot({ appRoot: appDir, version });
+      refs.push(ref);
+      await asApp(role, "INSERT INTO notes VALUES ((SELECT max(id) + 1 FROM notes), 'later')");
+      await cap.restore({ appRoot: appDir, ref });
+    }
+    const left = async () => (await admin<{ datname: string }>(`SELECT datname FROM pg_database WHERE datname LIKE ${literal(`%${id}%`)} AND datname <> ${literal(role)} ORDER BY datname`)).map((row) => row.datname);
+    const before = await left();
+    expect(before).toHaveLength(4);
+    // PneumaSpace's purge, as its postgres provider runs it (gateway/src/providers.ts), on a copy of the role: it fails.
+    const purge = async () => admin(`DROP DATABASE IF EXISTS ${ident(role)} WITH (FORCE)`, `DROP ROLE IF EXISTS ${ident(role)}`);
+    const blocked = await purge().then(
+      () => null,
+      (err: Error) => err,
+    );
+    expect(blocked?.message).toContain("cannot be dropped because some objects depend on it");
+    // The issue's state: the app's database is gone already, the role is not. The marks still say what is the app's.
+    itSpace.bindings.delete(`it${id}`);
+    const result = await cap.discardAll!({ appRoot: appDir, refs });
+    expect([...result.discarded].sort()).toEqual(before);
+    expect(result.refused).toEqual([]);
+    expect(await left()).toEqual([]);
+    await purge();
+    expect(await admin(`SELECT 1 FROM pg_roles WHERE rolname = ${literal(role)}`)).toEqual([]);
   }
 });

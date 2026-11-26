@@ -262,6 +262,13 @@ export class FakeSpace implements SpaceRuntime {
         this.log.push(`purge ${name} refused`);
         return false;
       }
+      // As the gateway does when it cannot destroy the app's storage: the app stays listed `purging`, the purge answers
+      // an error, and a later purge tries again.
+      if (this.purgeStops?.(name)) {
+        app.status = "purging";
+        this.log.push(`purge ${name} stopped (purging)`);
+        return false;
+      }
       this.live.delete(name);
       this.log.push(`purge ${name}`);
       // As the gateway does when destroying the storage takes longer than the Host waits: it goes through, unanswered.
@@ -272,6 +279,11 @@ export class FakeSpace implements SpaceRuntime {
   purgeUnanswered = false;
   /** The purge is refused, and the app stays removed. */
   purgeRefuses = false;
+  /**
+   * When set, a purge it returns true for begins and stops half-way, as PneumaSpace's does when an app's storage cannot
+   * be destroyed (a database left owned by the app's role keeps the role from being dropped): the app stays `purging`.
+   */
+  purgeStops: ((name: string) => boolean) | null = null;
 
   /** What someone at PneumaSpace's console would do behind the Host's back: remove and purge the app, data and all. */
   vanish(name: string): void {

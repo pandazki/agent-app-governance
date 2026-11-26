@@ -1498,6 +1498,32 @@ describe("the owner's take-down, bring-back, publish-again and clear in a termin
     expect(space.live.has("shelf")).toBe(false);
   });
 
+  test("a purge PneumaSpace does not finish: clear says so and keeps the app, status and list say it is being purged, and clearing again finishes", async () => {
+    await host.create("shelf");
+    const appDir = join(work, "apps", "shelf");
+    expect((await asOwner(appDir, ["take-down"], ["take-down"])).code).toBe(0);
+    space.purgeStops = () => true;
+    const stopped = await asOwner(work, ["clear", "shelf"], ["shelf"]);
+    expect(stopped.code).not.toBe(0);
+    expect(stopped.out).toContain("PneumaSpace has not finished removing shelf: it began purging it, with its stored data, and still lists it as being purged");
+    expect(stopped.out).toContain("Its name stays taken until the purge finishes. This Host keeps its record");
+    expect(stopped.out).not.toContain("cleared: this Host no longer has shelf.");
+    expect(existsSync(appDir)).toBe(true);
+
+    const status = (await cli(appDir, "status")).output;
+    expect(status).toContain("BEING PURGED ON PNEUMASPACE: PneumaSpace has not finished removing shelf.");
+    expect(status).toContain("The owner clears it (node .appgov/appgov.mjs clear), which asks PneumaSpace to purge it again");
+    expect((await cli(work, "list")).output).toMatch(/shelf +v1 {2}not serving\n {2}BEING PURGED ON PNEUMASPACE/);
+
+    space.purgeStops = null;
+    const cleared = await asOwner(work, ["clear", "shelf"], ["shelf"]);
+    expect(cleared.code).toBe(0);
+    expect(cleared.out).toContain("shelf on PneumaSpace, with what is left of its stored data: PneumaSpace began purging it and has not finished, so clearing asks it to purge again");
+    expect(cleared.out).toContain("cleared: this Host no longer has shelf.");
+    expect(space.live.has("shelf")).toBe(false);
+    expect(existsSync(appDir)).toBe(false);
+  });
+
   test("an app that vanished: status says so, a submit is refused, and the owner publishes it again", async () => {
     await host.create("ghost");
     const appDir = join(work, "apps", "ghost");

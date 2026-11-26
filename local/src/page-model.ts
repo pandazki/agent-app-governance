@@ -33,7 +33,7 @@ export type Tone = "neutral" | "green" | "orange" | "red" | "accent";
  */
 export type OwnerAccess = { readonly kind: "owner-link" } | { readonly kind: "session"; readonly csrf: string };
 /** `down`: the owner took it down here; `removed`: taken down on PneumaSpace, not here; `gone`: PneumaSpace no longer has it; `unconfirmed`: PneumaSpace did not answer. */
-export type AppState = "normal" | "waiting" | "not_live" | "uncertain" | "unpublished" | "unreadable" | "down" | "removed" | "gone" | "unconfirmed";
+export type AppState = "normal" | "waiting" | "not_live" | "uncertain" | "unpublished" | "unreadable" | "down" | "removed" | "gone" | "purging" | "unconfirmed";
 
 /** A moment, shown relative ("5 minutes ago") or absolute; the page keeps it current in the reader's time zone. */
 export interface Stamp {
@@ -269,6 +269,8 @@ export interface LifeAction {
   /** Clearing: what it deletes and what stays, exactly, and the name to type. */
   readonly deletes?: readonly string[];
   readonly keeps?: readonly string[];
+  /** Clearing: the data snapshots' names, behind Details under the list (`in`) whose line counts them. */
+  readonly names?: { readonly in: "deletes" | "keeps"; readonly names: readonly string[] };
   readonly typeName?: string;
   /** "Type the app's name, <name>, to clear it". */
   readonly typeLabel?: string;

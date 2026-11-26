@@ -1329,7 +1329,7 @@ describe("one-way changes", () => {
     const late = makeHost(join(work, "apps"), space, { dataSnapshot: fakeSnapshots([]) });
     const err = await hostError(late.undo("todo", "back"));
     expect(err).toMatchObject({ status: 409, fields: { data_restore: "none" } });
-    expect(err.message).toContain("This Host can put stored data back (fake-snapshot), but it took no snapshot before v2, so it cannot put this data back.");
+    expect(err.message).toContain("This Host has a data snapshot capability (fake-snapshot), but no snapshot was taken before v2, so it cannot put this data back.");
     expect(err.message).toContain("Only the code of v1 would come back.");
     expect(await late.undo("todo", "back", { acceptOneWay: true, subject: OWNER })).toMatchObject({ data_restored: false, confirmed_by: OWNER });
   });
@@ -1956,7 +1956,7 @@ describe("what the second review found", () => {
     const first = await withData.submit({ name: "todo", intent: "remove notes", agent: "claude-code" });
     if (first.status !== "needs_approval") throw new Error(`expected needs_approval, got ${first.status}`);
     // What the owner reads is true for both attempts: a fresh snapshot now, the kept one on a retry.
-    expect(first.disclosure.join(" ")).toContain("it saves the stored data just before the release, unless it kept a snapshot from before an earlier attempt");
+    expect(first.disclosure.join(" ")).toContain("the stored data just before the release, unless it kept a snapshot from before an earlier attempt");
     expect(await withData.resolve("todo", first.change_id, "approved", OWNER)).toMatchObject({ status: "rejected", reason: "published_unhealthy" });
     expect(cap.taken).toEqual(["v1"]);
     expect((await withData.status("todo")).active_version).toBe("v1");

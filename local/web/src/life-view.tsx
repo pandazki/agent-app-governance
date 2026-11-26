@@ -6,6 +6,7 @@ import { act, useNow, useOwner, usePage, useUi } from "./lib";
 import type { Checked, LifeCard, LifeVerb } from "./model";
 import { ContextNote } from "../beautifui/primitives/ContextNote";
 import { RetryIcon } from "../beautifui/primitives/TaskRows";
+import { Collapsible } from "../beautifui/primitives/ToolChips";
 import { Failure, refusalText } from "./change-view";
 import { RichText, TextField } from "./parts";
 
@@ -19,6 +20,20 @@ function Bullets({ lines, tone = "text-ink-2" }: { lines: readonly string[]; ton
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The data snapshots' names, behind Details right under the line that counts them. */
+function Names({ names }: { names: readonly string[] }) {
+  const ui = useUi();
+  return (
+    <Collapsible label={ui.details} className="pt-0.5 pl-3">
+      <ul className="flex flex-col gap-0.5 font-mono text-[11.5px] leading-[1.6] text-ink-2 [overflow-wrap:anywhere]">
+        {names.map((name) => (
+          <li key={name}>{name}</li>
+        ))}
+      </ul>
+    </Collapsible>
   );
 }
 
@@ -74,12 +89,14 @@ export function LifeBlock({ life }: { life: LifeCard }) {
             <>
               <p className="pb-1 text-[11px] font-medium text-red">{ui.clear_deletes}</p>
               <Bullets lines={action.deletes} tone="text-red" />
+              {action.names?.in === "deletes" && <Names names={action.names.names} />}
             </>
           )}
           {action.keeps && action.keeps.length > 0 && (
             <>
               <p className="pt-2 pb-1 text-[11px] font-medium text-ink-3">{ui.clear_keeps}</p>
               <Bullets lines={action.keeps} />
+              {action.names?.in === "keeps" && <Names names={action.names.names} />}
             </>
           )}
           {action.typeName && (

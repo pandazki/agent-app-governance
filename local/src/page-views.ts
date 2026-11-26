@@ -160,7 +160,7 @@ export interface PageContext {
   /** Every app, for search and for each app's plain state. */
   readonly apps: readonly AppSummary[];
   /** Set after one of the page's own decisions went through: the view says so once. `_marked`: it also made this Host the app's manager on PneumaSpace. */
-  readonly done?: "live" | "live_marked" | "no" | "back" | "back_marked" | "down" | "up" | "again" | "cleared" | "cleared_kept";
+  readonly done?: "live" | "live_marked" | "no" | "back" | "back_marked" | "down" | "up" | "again" | "cleared" | "cleared_kept" | "cleared_purging";
   readonly governance?: string;
   readonly governanceNote?: string;
   readonly dataSnapshot?: string | null;
@@ -281,6 +281,7 @@ export function appState(summary: AppSummary): AppState {
   if ("error" in summary) return "unreadable";
   // Whether the app is there leads: a change waiting for an app that is not there cannot go live anyway.
   const standing = str((summary as { standing?: unknown }).standing);
+  if (standing === "purging") return "purging";
   if (standing === "down") return "down";
   if (standing === "removed_elsewhere") return "removed";
   if (standing === "vanished") return "gone";
@@ -304,6 +305,7 @@ const STATE_TONE: Record<AppState, Tone> = {
   down: "neutral",
   removed: "orange",
   gone: "red",
+  purging: "orange",
   unconfirmed: "neutral",
 };
 
@@ -312,14 +314,14 @@ const STATE_TONE: Record<AppState, Tone> = {
 /** What status or a summary says about the app's being there (host/src/lifecycle.ts), as far as the page reads it. */
 interface Presence {
   /** Null from a Host from before these fields: the page says nothing about it, as before. */
-  readonly standing: "running" | "down" | "removed_elsewhere" | "vanished" | "unconfirmed" | null;
+  readonly standing: "running" | "down" | "removed_elsewhere" | "vanished" | "purging" | "unconfirmed" | null;
   readonly runtime: { readonly state: string; readonly checked_at: string; readonly note: string } | null;
   readonly down: { readonly at: string; readonly by: string } | null;
   readonly choices: { readonly take_down: boolean; readonly bring_back: boolean; readonly publish_again: boolean; readonly clear: boolean } | null;
-  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[]; readonly copiesApart: boolean } | null;
+  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[]; readonly discards: boolean; readonly copiesApart: boolean } | null;
 }
 
-const STANDINGS = ["running", "down", "removed_elsewhere", "vanished", "unconfirmed"] as const;
+const STANDINGS = ["running", "down", "removed_elsewhere", "vanished", "purging", "unconfirmed"] as const;
 
 function presenceOf(status: unknown): Presence {
   const s = (typeof status === "object" && status !== null ? status : {}) as Record<string, unknown>;
@@ -333,7 +335,9 @@ function presenceOf(status: unknown): Presence {
     runtime: runtime && typeof runtime.state === "string" ? { state: runtime.state, checked_at: str(runtime.checked_at), note: str(runtime.note) } : null,
     down: down ? { at: str(down.at), by: str(down.by) } : null,
     choices: choices ? { take_down: choices.take_down === true, bring_back: choices.bring_back === true, publish_again: choices.publish_again === true, clear: choices.clear === true } : null,
-    clearing: clearing ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean), copiesApart: clearing.copies_apart === true } : null,
+    clearing: clearing
+      ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean), discards: clearing.discards_snapshots === true, copiesApart: clearing.copies_apart === true }
+      : null,
   };
 }
 
@@ -353,6 +357,8 @@ function presenceNotice(ctx: PageContext, status: AppStatus): Notice | null {
   }
   if (p.standing === "removed_elsewhere") return { tone: "orange", text: w.life_notice_removed };
   if (p.standing === "vanished") return { tone: "red", text: w.life_notice_gone };
+  // Where this Host may not purge, clearing forgets the app here and PneumaSpace's owner finishes the purge there.
+  if (p.standing === "purging") return { tone: "orange", text: p.clearing && !p.clearing.purges ? w.life_notice_purging_kept : w.life_notice_purging };
   if (p.standing === "unconfirmed") return { tone: "neutral", text: w.life_notice_unconfirmed };
   return null;
 }
@@ -360,7 +366,7 @@ function presenceNotice(ctx: PageContext, status: AppStatus): Notice | null {
 /** What blocks letting a change go live (`decide`) or going back (`back`) while the app is not there; null otherwise. */
 function presenceBlock(w: Words, status: AppStatus, what: "decide" | "back"): string | null {
   const standing = presenceOf(status).standing;
-  const key = standing === "down" ? "down" : standing === "removed_elsewhere" ? "removed" : standing === "vanished" ? "gone" : null;
+  const key = standing === "down" ? "down" : standing === "removed_elsewhere" ? "removed" : standing === "vanished" ? "gone" : standing === "purging" ? "purging" : null;
   if (!key) return null;
   return w[what === "decide" ? (`blocked_${key}` as const) : (`back_blocked_${key}` as const)];
 }
@@ -377,7 +383,16 @@ function presenceFact(ctx: PageContext, p: Presence): Fact | null {
   if (!p.runtime) return null;
   const w = wordsFor(ctx.lang, ctx.access);
   const when = absoluteTime(ctx.lang, p.runtime.checked_at);
-  const template = p.runtime.state === "serving" ? w.d_presence_serving : p.runtime.state === "removed" ? w.d_presence_removed : p.runtime.state === "gone" ? w.d_presence_gone : w.d_presence_unknown;
+  const template =
+    p.runtime.state === "serving"
+      ? w.d_presence_serving
+      : p.runtime.state === "removed"
+        ? w.d_presence_removed
+        : p.runtime.state === "purging"
+          ? w.d_presence_purging
+          : p.runtime.state === "gone"
+            ? w.d_presence_gone
+            : w.d_presence_unknown;
   return { label: w.d_presence, value: fill(template, { when, why: p.runtime.note }) };
 }
 
@@ -390,18 +405,46 @@ function lifeCard(ctx: PageContext, name: string, status: AppStatus): LifeCard |
   const url = (verb: string) => `/owner/apps/${name}/${verb}`;
   const back = (done: string) => link(`/app/${name}?done=${done}`, ctx.lang);
   const removed = p.runtime?.state === "removed";
+  const purging = p.runtime?.state === "purging";
   const gone = p.runtime?.state === "gone";
   const actions: LifeAction[] = [];
   // Clearing is offered only with what it would delete and keep, which a Host from before these fields does not say.
   if (p.choices.clear && p.clearing) {
-    const deletes = [fill(p.clearing.copiesApart ? w.clear_del_record : w.clear_del_folder, { name }), ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : [])];
+    // The snapshots go with the app when the Host's capability can be asked to let go of them; otherwise they stay. The
+    // line says how many; their names wait behind Details, so a long run of them does not crowd the confirmation.
+    const count = p.clearing.snapshots.length;
+    const snapshotsIn = count ? (p.clearing.discards ? "deletes" : "keeps") : null;
+    const snapshots = count
+      ? fill(p.clearing.discards ? (count === 1 ? w.clear_del_snapshots_one : w.clear_del_snapshots_other) : count === 1 ? w.clear_keep_snapshots_one : w.clear_keep_snapshots_other, { name, n: count })
+      : null;
+    const deletes = [
+      fill(p.clearing.copiesApart ? w.clear_del_record : w.clear_del_folder, { name }),
+      ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : []),
+      ...(purging && p.clearing.purges ? [fill(w.clear_del_purging, { name })] : []),
+      ...(snapshots && snapshotsIn === "deletes" ? [snapshots] : []),
+    ];
     const keeps = [
       ...(removed && !p.clearing.purges ? [fill(w.clear_keep_space, { name })] : []),
+      ...(purging && !p.clearing.purges ? [fill(w.clear_keep_purging, { name })] : []),
       ...(gone ? [fill(w.clear_keep_none, { name })] : []),
-      ...(p.clearing.snapshots.length ? [fill(w.clear_keep_snapshots, { name, refs: p.clearing.snapshots.join(", ") })] : []),
       ...(p.clearing.copiesApart ? [w.clear_keep_copies] : []),
+      // Last, so the names behind Details sit right under it.
+      ...(snapshots && snapshotsIn === "keeps" ? [snapshots] : []),
     ];
-    actions.push({ verb: "clear", label: w.clear, url: url("clear"), done: link(`/?done=${removed && !p.clearing.purges ? "cleared_kept" : "cleared"}`, ctx.lang), lines: [], deletes, keeps, typeName: name, typeLabel: fill(w.clear_type, { name }), variant: "secondary" });
+    const done = p.clearing.purges ? "cleared" : removed ? "cleared_kept" : purging ? "cleared_purging" : "cleared";
+    actions.push({
+      verb: "clear",
+      label: w.clear,
+      url: url("clear"),
+      done: link(`/?done=${done}`, ctx.lang),
+      lines: [],
+      deletes,
+      keeps,
+      ...(snapshotsIn ? { names: { in: snapshotsIn, names: p.clearing.snapshots } } : {}),
+      typeName: name,
+      typeLabel: fill(w.clear_type, { name }),
+      variant: "secondary",
+    });
   }
   if (p.choices.take_down) actions.push({ verb: "take-down", label: w.take_down, url: url("take-down"), done: back("down"), lines: [w.life_take_down_1, w.life_take_down_2, w.life_take_down_3], variant: "secondary" });
   if (p.choices.publish_again) actions.push({ verb: "publish-again", label: w.publish_again, url: url("publish-again"), done: back("again"), lines: [fill(w.life_publish_again_1, { version }), w.life_publish_again_2], variant: "accent" });
@@ -413,7 +456,11 @@ function lifeCard(ctx: PageContext, name: string, status: AppStatus): LifeCard |
         ? w.life_body_running
         : p.standing === "down" && p.runtime?.state === "serving"
           ? w.life_body_back_elsewhere
-          : gone
+          : purging
+            ? p.clearing && !p.clearing.purges
+              ? w.life_body_purging_kept
+              : w.life_body_purging
+            : gone
             ? fill(w.life_body_gone, { version })
             : w.life_body_kept;
   return { body, actions, open: !servesNow(p) };
@@ -537,13 +584,14 @@ function uiWords(w: Words): Ui {
 /** The Host's refusals a write from the page can meet, each with its sentence (refuse_<code>). */
 const REFUSAL_CODES = [
   "preview_gone", "preview_unknown", "managed_elsewhere", "serving_uncertain", "malformed_pending", "previews_off", "preview_failed", "preview_refused", "draft_changed_after_check", "crosses_one_way_change", "plan_changed",
-  "app_down", "app_removed_elsewhere", "app_vanished", "clear_running", "confirm_name", "owner_required", "space_unknown", "space_refused",
+  "app_down", "app_removed_elsewhere", "app_vanished", "app_purging", "clear_running", "confirm_name", "owner_required", "space_unknown", "space_refused",
+  "space_purge_unfinished", "data_snapshot_discard_failed",
 ] as const;
 /** The Host's refusal of an act on whether the app is there that no longer fits where it is: one sentence for all. */
 const CANNOT_CODES = ["cannot_take_down", "cannot_bring_back", "cannot_publish_again", "cannot_clear"] as const;
 
 /** What `?done=` may say after one of the page's own writes: the same set for both editions' pages. */
-export const DONE_KEYS: ReadonlySet<string> = new Set(["live", "live_marked", "no", "back", "back_marked", "down", "up", "again", "cleared", "cleared_kept"]);
+export const DONE_KEYS: ReadonlySet<string> = new Set(["live", "live_marked", "no", "back", "back_marked", "down", "up", "again", "cleared", "cleared_kept", "cleared_purging"]);
 
 const DONE_WORDS = {
   live: "done_live",
@@ -556,6 +604,7 @@ const DONE_WORDS = {
   again: "done_again",
   cleared: "done_cleared",
   cleared_kept: "done_cleared_kept",
+  cleared_purging: "done_cleared_purging",
 } as const;
 
 const REASON_CODES = ["verify_failed", "preview_refused", "protected_file_changed", "outside_writable_roots", "no_change", "draft_changed_after_check", "base_changed", "invalid_manifest", "publish_failed", "published_unhealthy", "data_snapshot_failed", "record_failed", "agent_failed", "data_snapshot_refused", "data_restore_failed", "unhealthy_after_data_restore"];
@@ -1142,7 +1191,7 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
     ...(ctx.historyMore ? { earlier: { label: w.show_whole_history, href: link(`/app/${name}/history`, ctx.lang) } } : {}),
     ...(ctx.historyAll ? { historyAll: true } : {}),
     // No invitation the Host would refuse: while the app is taken down or gone, the notice above says changes are not taken.
-    hint: presence.standing === "down" || presence.standing === "removed_elsewhere" || presence.standing === "vanished" ? null : { body: w.hint_app_body, example: fill(w.hint_app, { name }) },
+    hint: presence.standing === "down" || presence.standing === "removed_elsewhere" || presence.standing === "vanished" || presence.standing === "purging" ? null : { body: w.hint_app_body, example: fill(w.hint_app, { name }) },
     facts: facts([
       { label: w.d_current, value: str(status.active_version ?? w.d_none), mono: true },
       { label: w.d_serving, value: status.serving_uncertain ? str(status.serving_uncertain) : str(status.serving_version ?? w.d_none), mono: !status.serving_uncertain },
@@ -1153,7 +1202,9 @@ export function appModel(name: string, status: AppStatus, entries: readonly Hist
       { label: w.d_governance, value: `${str(status.governance)}: ${str(status.governance_note)}` },
       { label: w.d_manager, value: managerOf(status).note },
       presenceFact(ctx, presence),
-      presence.clearing ? { label: w.d_clearing, value: presence.clearing.purges ? w.d_clearing_purges : w.d_clearing_keeps } : null,
+      presence.clearing
+        ? { label: w.d_clearing, value: presence.clearing.purges ? w.d_clearing_purges : presence.runtime?.state === "purging" ? w.d_clearing_keeps_purging : w.d_clearing_keeps }
+        : null,
       ...malformed.map((line, i) => ({ label: i === 0 ? w.d_malformed : "", value: line })),
       { label: w.d_terminal, value: `${cli(`status ${name}`)} · ${cli(`history ${name}`)}`, mono: true },
     ]),
@@ -1231,7 +1282,8 @@ export function changeModel(name: string, status: AppStatus, changeId: string, c
   const declared = typeof pending.declared_one_way === "string" && pending.declared_one_way.trim() ? pending.declared_one_way : null;
   const found = oneWay ? foundOneWay(oneWay, declared) : null;
   const submitter = agentWords(w, pending.agent, status.owner);
-  const snapshotHost = Boolean(status.data_snapshot);
+  // The Host saves the data first only where its capability covers the app; the change says what the owner was told.
+  const snapshotHost = Boolean(status.data_snapshot) && pending.data_snapshot_coverage !== "not_covered";
 
   const checked: CheckRow[] = [];
   if (tests?.status === "passed") {

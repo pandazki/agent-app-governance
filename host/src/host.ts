@@ -8,6 +8,7 @@ import { createReleaseInstance, promoteReleaseCandidate, stageReleaseCandidate }
 import { FileReleaseRolloutStore } from "@pneuma-framework/core/release-rollout-store";
 import {
   ChangeRecordRefused,
+  discardData,
   GUARANTEES,
   restoreWithData,
   type ChangeRecord,
@@ -86,6 +87,8 @@ type Check = NonNullable<HistoryEntry["checks"]>[number];
 /**
  * The framework's `DataSnapshotCapability`, plus two optional things this Host can tell a person when a
  * capability offers them. The framework knows neither; a plain `DataSnapshotCapability` works as it is.
+ * The framework's own optional members are used when present: `covers` before the Host promises anything
+ * about an app's data, and `discardAll` when the owner clears an app, before PneumaSpace purges it.
  */
 export interface HostDataSnapshot extends DataSnapshotCapability {
   /** One sentence, read before a restore: where the stored data in use now will be kept. */
@@ -356,7 +359,21 @@ interface PendingChange {
    * not discard it, and it ends itself. A wrong id makes PneumaSpace refuse the discard, nothing more.
    */
   readonly preview_app_id?: string;
+  /**
+   * A one-way change on a Host with a data snapshot capability: whether the capability said it covers the app when the
+   * owner was told what approving costs. `not_covered`: the owner read that the data cannot come back, so the release
+   * takes no snapshot. `covered` or `unknown`: the owner read that the data is saved first (or that the Host tries), so
+   * the release goes out only with a snapshot. Absent in a file an earlier Host wrote, whose text promised a snapshot.
+   */
+  readonly data_snapshot_coverage?: SnapshotCoverage["state"];
 }
+
+/** What a data snapshot capability said about one app, as the Host words its promises on it. */
+type SnapshotCoverage =
+  | { readonly state: "covered" }
+  | { readonly state: "not_covered"; readonly reason: string }
+  /** The capability has no `covers`, or could not tell (`why`): the Host promises nothing and finds out at the snapshot. */
+  | { readonly state: "unknown"; readonly why?: string };
 
 export interface AppStatus {
   readonly app_id: string;
@@ -381,6 +398,11 @@ export interface AppStatus {
   readonly governance_note: string;
   /** The id of the Host's data snapshot capability, or null when it has none. */
   readonly data_snapshot: string | null;
+  /**
+   * Whether that capability covers this app, as it says now: `covered`, `not_covered` (with `reason`: undo past a
+   * one-way change puts back only the code), or `unknown`. Null when the Host has no capability.
+   */
+  readonly data_snapshot_coverage: { readonly state: SnapshotCoverage["state"]; readonly reason?: string } | null;
   /** Files in the working tree that differ from the active version. */
   readonly uncommitted: readonly string[];
   /** With previews on, each with its preview as PneumaSpace answers for it now. */
@@ -398,7 +420,7 @@ export interface AppStatus {
   readonly runtime: RuntimeFacts;
   /** The owner took the app down through this Host, or null. */
   readonly taken_down: DownFacts | null;
-  /** What the two mean together (lifecycle.ts): `running`, `down`, `removed_elsewhere`, `vanished` or `unconfirmed`. */
+  /** What the two mean together (lifecycle.ts): `running`, `down`, `removed_elsewhere`, `vanished`, `purging` or `unconfirmed`. */
   readonly standing: Standing;
   /** What the owner may do about the app's being there, now. */
   readonly choices: OwnerChoices;
@@ -437,8 +459,15 @@ export interface ClearResult {
   readonly cleared: true;
   readonly deleted: readonly string[];
   readonly kept: readonly string[];
-  /** Whether PneumaSpace still holds the app (removed, with its data), and so its name, slot and storage. */
+  /** What the data snapshot capability let go of before the purge, by name: its snapshots and what undos set aside. */
+  readonly data_discarded?: readonly string[];
+  /**
+   * Whether PneumaSpace still holds the app, and so its name: removed, with its data (and its slot and storage), or, where
+   * this Host may not purge, still being purged by PneumaSpace (`runtime_state` says which).
+   */
   readonly space_holds: boolean;
+  /** What PneumaSpace said of the app when clearing began: `removed`, `purging` or `gone`. */
+  readonly runtime_state?: RuntimeFacts["state"];
 }
 
 /** A change waiting for the owner, as a list of apps shows it. */
@@ -578,7 +607,8 @@ function errText(err: unknown): string {
 }
 
 type PublishOutcome =
-  | { readonly ok: true; readonly address: string; readonly probe: ProbeResult }
+  /** `data_note`: the release went live with no snapshot, because the capability does not cover the app; it says so. */
+  | { readonly ok: true; readonly address: string; readonly probe: ProbeResult; readonly data_note?: string }
   | { readonly ok: false; readonly reason: string; readonly detail: string; readonly address_note?: string };
 
 const NOT_PROBED = { ok: false, status: 0, detail: "" } as const;
@@ -900,20 +930,45 @@ export class AppHost {
       return { ...pending, one_way: null };
     }
     if (!oneWay.length) return { ...pending, one_way: null };
-    return { ...pending, one_way: oneWay.join("; "), disclosure: [...(Array.isArray(pending.disclosure) ? pending.disclosure : []), this.oneWayCost()] };
+    // Asked of nobody here: the file is read synchronously, so the line promises only what any release keeps (it tries).
+    return { ...pending, one_way: oneWay.join("; "), disclosure: [...(Array.isArray(pending.disclosure) ? pending.disclosure : []), this.oneWayCost(basename(paths.root), { state: "unknown" })] };
   }
 
   private verifyCommand(draftRoot: string, command: string): Promise<CheckRun> {
     return this.opts.runVerify ? this.opts.runVerify(draftRoot, command) : runCheckCommand(draftRoot, command);
   }
 
-  /** The line the owner reads before approving a one-way change: what approving costs, and whether this Host can put data back. */
-  private oneWayCost(): string {
+  /**
+   * The line the owner reads before approving a one-way change: what approving costs, and whether this Host can put
+   * `name`'s data back, as its capability said (`snapshotCoverage`). It promises a snapshot only where the capability
+   * said it covers the app; where it said it does not, the app is treated as having none.
+   */
+  private oneWayCost(name: string, coverage: SnapshotCoverage): string {
     const cap = this.opts.dataSnapshot;
     const cost = "What approving costs: after this change, going back to an earlier version is refused unless the owner confirms it.";
-    return cap
-      ? `${cost} This Host declares a data snapshot capability (${cap.id}): it saves the stored data just before the release, unless it kept a snapshot from before an earlier attempt at a one-way release on the same version, and a confirmed undo puts that data back. Everything stored after the snapshot is then set aside and is not in the app.`
-      : `${cost} This Host declares no data snapshot capability, so a confirmed undo puts back only the code. The older version may fail on the data stored by then.`;
+    const codeOnly = "a confirmed undo puts back only the code. The older version may fail on the data stored by then.";
+    if (!cap) return `${cost} This Host declares no data snapshot capability, so ${codeOnly}`;
+    const putBack = "a confirmed undo puts that data back. Everything stored after the snapshot is then set aside and is not in the app.";
+    switch (coverage.state) {
+      case "covered":
+        return `${cost} This Host declares a data snapshot capability (${cap.id}), and it covers ${name}: it saves the stored data just before the release, unless it kept a snapshot from before an earlier attempt at a one-way release on the same version, and ${putBack} If the data cannot be saved, the change does not go live.`;
+      case "not_covered":
+        return `${cost} This Host declares a data snapshot capability (${cap.id}), but it does not cover ${name}: ${coverage.reason} So no snapshot is taken, the stored data cannot come back, and ${codeOnly}`;
+      case "unknown":
+        return `${cost} This Host declares a data snapshot capability (${cap.id})${coverage.why ? `, but could not tell whether it covers ${name} (${coverage.why})` : ""}. It tries to save the stored data just before the release, unless it kept a snapshot from before an earlier attempt at a one-way release on the same version; if it cannot, the change does not go live. Once the data is saved, ${putBack}`;
+    }
+  }
+
+  /** What this Host's data snapshot capability says about the app in `root`: it covers it, it does not (and why), or nobody can tell. */
+  private async snapshotCoverage(root: string): Promise<SnapshotCoverage> {
+    const cap = this.opts.dataSnapshot;
+    if (!cap?.covers) return { state: "unknown" };
+    try {
+      const answer = await cap.covers({ appRoot: root });
+      return answer.covered ? { state: "covered" } : { state: "not_covered", reason: answer.reason };
+    } catch (err) {
+      return { state: "unknown", why: errText(err) };
+    }
   }
 
   /**
@@ -947,7 +1002,7 @@ export class AppHost {
     } else {
       lines.push(
         cap
-          ? `This Host can put stored data back (${cap.id}), but it took no snapshot before ${oldest}, so it cannot put this data back.`
+          ? `This Host has a data snapshot capability (${cap.id}), but no snapshot was taken before ${oldest}, so it cannot put this data back.`
           : "This Host cannot put stored data back.",
         `Only the code of ${plan.target} would come back. The stored data would stay as it is now, so ${plan.target} may not work with it: the older version may fail on today's data.`,
       );
@@ -1028,8 +1083,8 @@ export class AppHost {
 
   /**
    * Before a write to the app on PneumaSpace, from one answer of PneumaSpace's: refused while the app is not there to
-   * write to (taken down by the owner, removed on PneumaSpace, or gone from it, which a release would only create
-   * again, empty), and when another manager runs it; when nobody does, the publish marks it as this Host's, and the
+   * write to (taken down by the owner, removed on PneumaSpace, being purged there, or gone from it, which a release would
+   * only create again, empty), and when another manager runs it; when nobody does, the publish marks it as this Host's, and the
    * note says so.
    */
   private async claim(name: string, act: "submit" | "approval" | "undo", record: ChangeRecord): Promise<string | undefined> {
@@ -1177,7 +1232,10 @@ export class AppHost {
    * against, and the draft's signature when it was diffed. Record mode passes neither, because nothing
    * was checked. `asIs` says the copy is the current version, recorded earlier and not live. When the
    * release takes a one-way change live for the first time and this Host has a data snapshot capability,
-   * the stored data is saved first (see `snapshotBase`); if that fails, nothing goes out.
+   * the stored data is saved first (see `snapshotBase`); if that fails, nothing goes out. When the capability
+   * says it does not cover the app, no snapshot is taken and the release goes out saying so (`data_note`),
+   * unless `snapshotPromised`: the owner approved on the word that the data would be saved (or that the Host
+   * would try), so nothing goes out without a snapshot.
    */
   private async publishRelease(input: {
     readonly name: string;
@@ -1191,6 +1249,7 @@ export class AppHost {
     readonly sealedSignature?: string;
     readonly oneWay?: OneWayChange;
     readonly asIs?: boolean;
+    readonly snapshotPromised?: boolean;
   }): Promise<PublishOutcome> {
     const { name, paths, record, releaseRoot } = input;
     const current = record.current();
@@ -1209,7 +1268,20 @@ export class AppHost {
 
     const cap = this.opts.dataSnapshot;
     const snap = cap ? this.snapshotBase(record, serving, input) : null;
-    if (cap && snap) {
+    // Asked only when a snapshot is due; an answer it could not give means try the snapshot, as without `covers`.
+    const coverage = cap && snap ? await this.snapshotCoverage(paths.root) : undefined;
+    let dataNote: string | undefined;
+    if (cap && snap && coverage?.state === "not_covered") {
+      if (input.snapshotPromised) {
+        return {
+          ok: false,
+          reason: "data_snapshot_failed",
+          detail: `the owner was told the stored data would be saved before ${snap.oneWay} went live, but ${cap.id} does not cover ${name} now: ${coverage.reason} So nothing went live. Submit the change again, so the owner reads what approving costs now`,
+          address_note: untouched(record, serving),
+        };
+      }
+      dataNote = `the stored data was not saved before ${snap.oneWay} went live, because ${cap.id} does not cover ${name}: ${coverage.reason} An undo past it puts back only the code`;
+    } else if (cap && snap) {
       // Not atomic with the release: the app keeps running while the data is saved, so a write it makes
       // between the snapshot and the new build's first start is not in the snapshot.
       let ref: string;
@@ -1254,7 +1326,7 @@ export class AppHost {
         address_note,
       };
     }
-    return { ok: true, address: this.opts.space.address(name), probe };
+    return { ok: true, address: this.opts.space.address(name), probe, ...(dataNote ? { data_note: dataNote } : {}) };
   }
 
   /** A private copy of a tree outside the app, where no process the agent started can reach it by a relative path. */
@@ -1504,7 +1576,7 @@ export class AppHost {
       const version = asIs ? baseVersion : nextVersionId(record);
       // No await from the comparison to the restore below: nothing in this process can edit the tree in between.
       const edited = workingTree !== undefined && sourceSignature(paths.root) !== workingTree;
-      const note = edited ? leftAlone(version) : undefined;
+      const note = andNote(edited ? leftAlone(version) : undefined, released.ok ? released.data_note : undefined);
       const serving = readServingVersion(paths);
       const addressNote = released.ok ? undefined : (released.address_note ?? untouched(record, serving));
       const extra: HostEntryFields = released.ok
@@ -1698,7 +1770,9 @@ export class AppHost {
       if (!decision.allowed) {
         const disclosure = [...assessment.disclosure, ...(declared ? [declarationLine(declared, input.byOwner)] : [])];
         if (!disclosure.length) disclosure.push("This Host is set to have the owner review every change.");
-        if (oneWay) disclosure.push(this.oneWayCost());
+        // What the capability says about this app decides what the owner is promised, and what the release then keeps.
+        const coverage = oneWay && this.opts.dataSnapshot ? await this.snapshotCoverage(paths.root) : undefined;
+        if (oneWay) disclosure.push(this.oneWayCost(input.name, coverage ?? { state: "unknown" }));
         const pending: PendingChange = {
           change_id: changeId,
           intent: input.intent,
@@ -1718,6 +1792,7 @@ export class AppHost {
           ...(input.agentProvenance ? { agent_provenance: input.agentProvenance } : {}),
           ...credentialField(input.credential),
           ...(preview.id ? { preview_app_id: preview.id } : {}),
+          ...(coverage ? { data_snapshot_coverage: coverage.state } : {}),
         };
         mkdirSync(paths.pending, { recursive: true });
         writeFileSync(join(paths.pending, `${changeId}.json`), `${JSON.stringify(pending, null, 2)}\n`);
@@ -1817,6 +1892,8 @@ export class AppHost {
       readonly credential?: string;
       /** A decision: the agent whose change it is; `agent` is then who decided. */
       readonly author?: string;
+      /** The owner approved on the word that the stored data would be saved first, or that the Host would try (see `publishRelease`). */
+      readonly snapshot_promised?: boolean;
     },
     workingTree?: string,
   ): Promise<ChangeOutcome> {
@@ -1855,6 +1932,7 @@ export class AppHost {
         sealedSignature: draftSignature,
         oneWay,
         asIs,
+        snapshotPromised: change.snapshot_promised === true,
       });
       // Checked again on the copy that went out, with no await from here to the record below: what was
       // published, what is recorded and what was checked are the same bytes, so `sealed` holds.
@@ -1894,7 +1972,7 @@ export class AppHost {
       // No await from the comparison to the restore: nothing in this process can edit the tree in between.
       const version = asIs ? change.base_version : nextVersionId(record);
       const edited = workingTree !== undefined && sourceSignature(paths.root) !== workingTree;
-      const note = edited ? leftAlone(version) : undefined;
+      const note = andNote(edited ? leftAlone(version) : undefined, released.data_note);
       // The recorded version is byte-identical to what was checked: as-is by the signature above, otherwise because it is this copy.
       const guarantees = [...earned, GUARANTEES.sealed];
       const extra: HostEntryFields = { ...fields, outcome: "published", address: released.address, note };
@@ -2024,6 +2102,8 @@ export class AppHost {
         one_way: pending.one_way ?? undefined,
         declared_one_way: pending.declared_one_way,
         channel,
+        // A one-way change's disclosure promised a snapshot (or an attempt) unless it said the capability does not cover the app.
+        snapshot_promised: Boolean(pending.one_way) && pending.data_snapshot_coverage !== "not_covered",
       };
       await threads.appendTurn(info.thread_id, { kind: "user_decision", proposal_id: changeId, decision: answer === "approved" ? "approved" : "rejected", reason });
       try {
@@ -2424,8 +2504,13 @@ export class AppHost {
       bring_back:
         now.runtime.state === "gone"
           ? `PneumaSpace has no app named ${name} any more, so there is nothing to bring back; publish it again instead (its stored data is not there any more)`
-          : `${name} is serving and was not taken down`,
-      publish_again: `PneumaSpace still has ${name} (${now.runtime.state === "removed" ? "removed, with its data: bring it back instead" : "serving"}); publishing again is for an app it no longer has`,
+          : now.runtime.state === "purging"
+            ? `PneumaSpace began purging ${name}, with its stored data, so there is nothing to bring back; clear it instead`
+            : `${name} is serving and was not taken down`,
+      publish_again:
+        now.runtime.state === "purging"
+          ? `PneumaSpace has not finished purging ${name}, and its name stays taken until it does; publishing again is for an app it no longer has`
+          : `PneumaSpace still has ${name} (${now.runtime.state === "removed" ? "removed, with its data: bring it back instead" : "serving"}); publishing again is for an app it no longer has`,
       clear: `${name} is serving on PneumaSpace: take it down first, then clear it. Clearing never goes in one step from serving`,
     };
     throw new HostError(409, `${why[choice]}. Nothing changed.`, choice === "clear" ? "clear_running" : `cannot_${choice}`);
@@ -2515,10 +2600,20 @@ export class AppHost {
   }
 
   /**
-   * Forget the app: its versions, history and waiting changes. Only once PneumaSpace does not serve it (taken down, or
-   * gone), never in one step from serving, and only with its name typed as `confirm`. Where this Host's runtime may
-   * purge (`SpaceRuntime.purge`), the app is purged on PneumaSpace with its stored data; where it may not, PneumaSpace
-   * keeps it removed, with its data, for its owner to purge there. Owner only.
+   * Forget the app: its versions, history and waiting changes. Only once PneumaSpace does not serve it (taken down,
+   * being purged, or gone), never in one step from serving, and only with its name typed as `confirm`. Where this Host's
+   * runtime may purge (`SpaceRuntime.purge`), the app is purged on PneumaSpace with its stored data, also one whose
+   * purge began and did not finish; where it may not, PneumaSpace keeps it as it is, for its owner to purge there. Owner only.
+   *
+   * The record goes only once PneumaSpace no longer lists the app, where this Host purges: a purge that PneumaSpace has
+   * not finished (it failed, or took longer than the wait) leaves the app `purging` there, its name taken, and the Host
+   * keeps its record, so the app stays in status, the list and the owner page, and clearing again asks for the purge again.
+   *
+   * Before the purge, the data snapshot capability is asked to let go of everything it made for the app
+   * (`discardData`): what it keeps can stop PneumaSpace's purge, and nothing else would ever end it. It is asked also
+   * where this Host may not purge, since the owner's purge there would meet the same leftovers. If it cannot let go,
+   * nothing else is cleared, so the record keeps the refs for the next try. A capability without `discardAll` is not
+   * asked; the confirmation said its snapshots stay.
    */
   clear(name: string, act: OwnerAct & { readonly confirm: string }): Promise<ClearResult> {
     return this.serial(name, async () => {
@@ -2527,20 +2622,65 @@ export class AppHost {
       if (act.confirm !== name) throw new HostError(400, `clearing ${name} needs its name typed exactly as the confirmation; nothing changed`, "confirm_name");
       const now = await this.presence(name, record);
       this.refuseChoice(name, "clear", now);
-      const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true);
+      const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot ?? null, this.opts.workingCopiesApart === true);
+      const where =
+        now.runtime.state === "removed"
+          ? `${name} is still taken down, with its data`
+          : now.runtime.state === "purging"
+            ? `PneumaSpace still lists ${name} as being purged`
+            : `PneumaSpace has no app named ${name}`;
+      // What the capability made for the app goes first: left behind, it can stop the purge below.
+      const cap = this.opts.dataSnapshot;
+      let discarded: readonly string[] | undefined;
+      if (cap) {
+        try {
+          const outcome = await discardData(record, cap);
+          if (outcome.asked) {
+            discarded = outcome.discarded;
+            this.log(`${name}: ${cap.id} let go of ${outcome.discarded.length ? outcome.discarded.join(", ") : "nothing (it held nothing of the app's)"}${outcome.refused.length ? `; left as they are: ${outcome.refused.join("; ")}` : ""}`);
+          }
+        } catch (err) {
+          throw new HostError(
+            502,
+            `${cap.id} could not let go of what it saved of ${name} (${errText(err)}). Nothing else was cleared: ${where}, and this Host keeps its record, so clearing again tries again.`,
+            "data_snapshot_discard_failed",
+          );
+        }
+      }
+      const letGo = discarded?.length ? ` ${cap!.id} has already dropped what it saved of ${name} (${discarded.join(", ")}).` : "";
       // Previews of the changes that wait end with the app's record; each ends itself anyway.
       for (const pending of this.pendingChanges(paths, record).pending) await this.previews.drop(previewName(name, pending.change_id), pending.preview_app_id);
-      let spaceHolds = now.runtime.state === "removed";
+      let spaceHolds = now.runtime.state === "removed" || now.runtime.state === "purging";
       if (spaceHolds && this.opts.space.purge) {
-        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now.
-        if (!(await this.opts.space.purge(name, this.manager.name)) && runtimeFacts(await askApp(this.opts.space, name)).state !== "gone") {
-          throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing was cleared; ${name} is still taken down, with its data.`, "space_refused");
+        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now. Only an app
+        // it no longer lists is gone; one it lists as being purged is not, and its name stays taken until the purge ends.
+        if (!(await this.opts.space.purge(name, this.manager.name))) {
+          const after = runtimeFacts(await askApp(this.opts.space, name));
+          if (after.state === "purging") {
+            throw new HostError(
+              502,
+              `PneumaSpace has not finished removing ${name}: it began purging it, with its stored data, and still lists it as being purged (its purge failed, or had not finished when this Host stopped waiting). ` +
+                `Its name stays taken until the purge finishes. This Host keeps its record, so ${name} stays in status, the list and the owner page; nothing else was cleared.${letGo} ` +
+                `Look with status, or in PneumaSpace's console; clear again to ask PneumaSpace to purge it again.`,
+              "space_purge_unfinished",
+            );
+          }
+          if (after.state !== "gone") throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing else was cleared; ${where}.${letGo}`, "space_refused");
         }
         spaceHolds = false;
       }
       rmSync(paths.root, { recursive: true, force: true });
-      this.log(`${name}: cleared by ${act.subject}${act.channel ? ` (${act.channel})` : ""}${spaceHolds ? "; PneumaSpace keeps it removed, with its data" : ""}`);
-      return { app: name, cleared: true, deleted: facts.deletes, kept: facts.keeps, space_holds: spaceHolds };
+      const held = now.runtime.state === "purging" ? "; PneumaSpace has not finished purging it" : "; PneumaSpace keeps it removed, with its data";
+      this.log(`${name}: cleared by ${act.subject}${act.channel ? ` (${act.channel})` : ""}${spaceHolds ? held : ""}`);
+      return {
+        app: name,
+        cleared: true,
+        deleted: facts.deletes,
+        kept: facts.keeps,
+        ...(discarded ? { data_discarded: discarded } : {}),
+        space_holds: spaceHolds,
+        ...(now.runtime.state === "unknown" || now.runtime.state === "serving" ? {} : { runtime_state: now.runtime.state }),
+      };
     });
   }
 
@@ -2586,6 +2726,7 @@ export class AppHost {
       governance: this.governance,
       governance_note: this.governanceNote(),
       data_snapshot: this.opts.dataSnapshot?.id ?? null,
+      data_snapshot_coverage: this.opts.dataSnapshot ? coverageFields(await this.snapshotCoverage(paths.root)) : null,
       uncommitted: this.uncommitted(record),
       pending,
       ...(malformed.length ? { malformed_pending: malformed } : {}),
@@ -2606,7 +2747,7 @@ export class AppHost {
       taken_down,
       standing,
       choices: choicesFor(standing, runtime),
-      clearing: clearingFacts(name, history, runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true),
+      clearing: clearingFacts(name, history, runtime, this.opts.space, this.opts.dataSnapshot ?? null, this.opts.workingCopiesApart === true),
     };
   }
 
@@ -2759,6 +2900,7 @@ function standingWords(name: string, standing: Standing): string {
   if (standing === "down") return "the owner took it down";
   if (standing === "removed_elsewhere") return "it was taken down on PneumaSpace, not through this Host";
   if (standing === "vanished") return `PneumaSpace has no app named ${name} any more`;
+  if (standing === "purging") return "PneumaSpace began purging it and has not finished";
   return "PneumaSpace did not say";
 }
 
@@ -2795,12 +2937,32 @@ function refuseNotThere(name: string, act: "submit" | "approval" | "undo", recor
       "app_vanished",
     );
   }
+  if (standing === "purging") {
+    throw new HostError(
+      409,
+      `PneumaSpace began purging ${name}, with its stored data, and has not finished: it serves nothing and takes no changes, and its name stays taken until the purge finishes. ${nothing} ` +
+        `The owner clears it; status says what clearing does here.`,
+      "app_purging",
+    );
+  }
 }
 
 /** What clearing `name` would delete and keep, with this Host's runtime and data snapshot capability as they are. */
-export function clearingFacts(name: string, history: readonly HistoryEntry[], runtime: RuntimeFacts, space: Pick<SpaceRuntime, "purge">, snapshotCapability: string | null, copiesApart = false): ClearingFacts {
+export function clearingFacts(
+  name: string,
+  history: readonly HistoryEntry[],
+  runtime: RuntimeFacts,
+  space: Pick<SpaceRuntime, "purge">,
+  capability: Pick<DataSnapshotCapability, "id" | "discardAll"> | null,
+  copiesApart = false,
+): ClearingFacts {
   const snapshots = [...new Set(history.map((entry) => entry.data_ref?.ref).filter((ref): ref is string => typeof ref === "string" && ref.length > 0))];
-  return clearingWords(name, runtime, Boolean(space.purge), snapshots, snapshotCapability, copiesApart);
+  return clearingWords(name, runtime, Boolean(space.purge), snapshots, capability?.id ?? null, copiesApart, typeof capability?.discardAll === "function");
+}
+
+/** A capability's answer about an app as status carries it. */
+function coverageFields(coverage: SnapshotCoverage): { readonly state: SnapshotCoverage["state"]; readonly reason?: string } {
+  return coverage.state === "not_covered" ? { state: coverage.state, reason: coverage.reason } : coverage.state === "unknown" && coverage.why ? { state: coverage.state, reason: coverage.why } : { state: coverage.state };
 }
 
 /** The one line status, list and the owner page show while `cannotVouch` holds; undefined otherwise. */
