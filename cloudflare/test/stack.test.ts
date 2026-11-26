@@ -160,7 +160,6 @@ describe("the Cloudflare edition end to end, offline", () => {
     const status = await cli(copy(), ["status"]);
     expect(status.out).toContain("todo: v2");
     expect(status.out).toContain("changed here, not submitted: none");
-    expect(status.out).toContain("asleep is normal: PneumaSpace stops the app's container after a few minutes without requests and starts it, with its data, on the next request");
     const history = await cli(copy(), ["history"]);
     expect(history.out).toMatch(/change published -> v2 by test-agent/);
     expect(history.out).toContain("guarantees: verified, previewed");

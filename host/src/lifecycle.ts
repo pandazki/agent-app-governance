@@ -25,6 +25,8 @@ export interface RuntimeFacts {
   readonly checked_at: string;
   /** Why the state is `unknown`: PneumaSpace's error, as it came. */
   readonly note?: string;
+  /** With `serving`: PneumaSpace has the app asleep after being idle, and the next request starts it (see `SpaceApp.asleep`). */
+  readonly asleep?: true;
 }
 
 /** The owner took the app down through this Host: when, who, and through what. */
@@ -68,7 +70,7 @@ export function runtimeFacts(answer: { readonly app: SpaceApp | null } | { reado
   // An app being purged is on its way out with its data; one PneumaSpace calls anything else (registered, draft) is there.
   if (app.status === "removed") return { state: "removed", checked_at };
   if (app.status === "purging" || app.status === "purged") return { state: "gone", checked_at };
-  return { state: "serving", checked_at };
+  return { state: "serving", checked_at, ...(app.asleep ? { asleep: true as const } : {}) };
 }
 
 /** Whether the owner took the app down through this Host, from its history: the last lifecycle entry decides. */

@@ -622,9 +622,6 @@ function standingLines(s) {
   return [];
 }
 const serves = (s) => !s.standing || s.standing === "running" || s.standing === "unconfirmed" || (s.standing === "down" && s.runtime?.state === "serving");
-/** PneumaSpace stops an idle app's container and starts it on the next request; an agent seeing it asleep should not keep it awake. */
-const ASLEEP_IS_NORMAL =
-  "asleep is normal: PneumaSpace stops the app's container after a few minutes without requests and starts it, with its data, on the next request, in a few seconds; nothing needs to keep it awake, and an app kept awake holds one of the few apps the deployment runs at once";
 /** When PneumaSpace last confirmed what is said about it, where the centre answers from stored facts. */
 const checkedLine = (at, failed) =>
   `${at ? `PneumaSpace confirmed this ${readableTime(at)}` : "PneumaSpace has not been asked about these yet"}${failed ? `; asking it again just now failed (${failed})` : ""}. --check asks it now.`;
@@ -909,7 +906,6 @@ switch (command) {
       console.log(`${s.app_id}: ${s.active_version ?? "unpublished"} ${serves(s) ? `at ${s.address}` : "(not serving)"}`);
       for (const line of standingLines(s)) console.log(line);
       if (s.runtime) console.log(checkedLine(s.runtime.checked_at, s.runtime_check_failed));
-      if (s.standing === "running") console.log(ASLEEP_IS_NORMAL);
       if (s.serving_uncertain) console.log(`the Host cannot vouch for what the address serves: ${s.serving_uncertain}`);
       else if (s.serving_version && s.serving_version !== s.active_version) {
         console.log(`the address serves ${s.serving_version}, not ${s.active_version}: the last release did not go live. Submitting with no new edits releases ${s.active_version} as it is.`);

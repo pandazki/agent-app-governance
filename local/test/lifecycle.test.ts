@@ -67,6 +67,7 @@ describe("what the two facts mean together", () => {
 
   test("PneumaSpace's answer is a fact with its time; one being purged counts as gone", () => {
     expect(serving).toEqual({ state: "serving", checked_at: "2026-11-26T10:00:00.000Z" });
+    expect(runtimeFacts({ app: { name: "todo", status: "registered", expiresAt: null, manager: null, asleep: true } }, at)).toEqual({ state: "serving", checked_at: "2026-11-26T10:00:00.000Z", asleep: true });
     expect(removed.state).toBe("removed");
     expect(gone.state).toBe("gone");
     expect(runtimeFacts({ app: { name: "todo", status: "purging", expiresAt: null, manager: null } }, at).state).toBe("gone");
