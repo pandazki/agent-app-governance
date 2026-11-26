@@ -53,16 +53,28 @@ export function usable(value: unknown, app: string, etag: string | null): value 
   );
 }
 
-/** The app's view: stored when it is usable, from the container (which then stores it) when it is not. */
-export async function readView(deps: GatewayDeps, app: string, origin: string, principal: Principal): Promise<ViewAnswer> {
+/**
+ * The app's view: stored when it is usable, from the container (which then stores it) when it is not. `timing` gets
+ * how long each step took, in ms: `r2-view` (reading the stored view), `r2-head` (the folder's etag), `container`
+ * (asking the app's Durable Object, when the stored view was not usable).
+ */
+export async function readView(deps: GatewayDeps, app: string, origin: string, principal: Principal, timing: Record<string, number> = {}): Promise<ViewAnswer> {
   const began = Date.now();
+  const timed = async <T>(name: string, work: Promise<T>): Promise<T> => {
+    const at = Date.now();
+    try {
+      return await work;
+    } finally {
+      timing[name] = Date.now() - at;
+    }
+  };
   if (deps.views) {
-    const [stored, etag] = await Promise.all([deps.views.view(app).catch(() => null), deps.views.folderEtag(app).catch(() => undefined)]);
+    const [stored, etag] = await Promise.all([timed("r2-view", deps.views.view(app)).catch(() => null), timed("r2-head", deps.views.folderEtag(app)).catch(() => undefined)]);
     if (etag === null) return { ok: false, status: 404, missing: true, error: `this Host has no app named ${app}` };
     if (typeof etag === "string" && usable(stored, app, etag)) return { ok: true, view: stored, source: "stored", ms: Date.now() - began };
   }
   try {
-    const res = await forward(deps, app, "view", principal, origin, `/apps/${app}/view`, "GET", "");
+    const res = await timed("container", forward(deps, app, "view", principal, origin, `/apps/${app}/view`, "GET", ""));
     const value = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (res.ok && usable(value, app, null)) return { ok: true, view: value, source: "container", ms: Date.now() - began };
     if (res.status === 400 && value.reason === "bad_op") return legacy(deps, app, origin, principal, began);
@@ -70,6 +82,11 @@ export async function readView(deps: GatewayDeps, app: string, origin: string, p
   } catch (err) {
     return { ok: false, status: 502, missing: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** `timing` as a Server-Timing header: each step with its duration, and where the view came from. */
+export function serverTiming(timing: Record<string, number>, source?: string): string {
+  return [...Object.entries(timing).map(([name, ms]) => `${name};dur=${ms}`), ...(source ? [`source;desc="${source}"`] : [])].join(", ");
 }
 
 /** A view put together from the reads a Durable Object of the build before answers; not stored, and without plans (the page asks for a plan when it needs one). */

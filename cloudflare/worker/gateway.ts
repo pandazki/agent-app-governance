@@ -1,6 +1,6 @@
 import { API_HEADER, API_LEVEL, APP_HEADER, APP_NAME, PRINCIPAL_HEADER, type Principal } from "../src/protocol";
 import { isPageRequest, servePage, type PageDeps } from "./page";
-import { asOf, readView, type ViewStore } from "./views";
+import { asOf, readView, serverTiming, type ViewStore } from "./views";
 
 // ---------------------------------------------------------------------------
 // The Worker in front: who may do what.
@@ -282,10 +282,13 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; an agent token cannot do it`);
   // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
   if (op === "read" && (rest.length === 0 || rest[0] === "history")) {
-    const viewed = await readView(deps, name, url.origin, principal);
-    if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status);
+    const steps: Record<string, number> = {};
+    const viewed = await readView(deps, name, url.origin, principal, steps);
+    // Where the time of a read went, in the Worker: each R2 read, and the container when the stored view was not usable.
+    const header = { "server-timing": serverTiming(steps, viewed.ok ? viewed.source : undefined) };
+    if (!viewed.ok) return json({ error: viewed.error, reason: viewed.missing ? "no_app" : "host_unavailable" }, viewed.status, header);
     const timing = { centre: { view: viewed.ms }, view: viewed.source };
-    return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing });
+    return json(rest.length === 0 ? { ...asOf(viewed.view.status, now), timing } : { history: viewed.view.history, timing }, 200, header);
   }
   return forward(deps, name, op, principal, url.origin, url.pathname, method, text);
 }

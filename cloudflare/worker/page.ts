@@ -1,5 +1,5 @@
 import { appModel, assetType, backModel, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
-import { asOf, readView, warm } from "./views";
+import { asOf, readView, serverTiming, warm } from "./views";
 import type { PageModel } from "../../local/src/page-model";
 import { chooseLang } from "../../local/src/page-words";
 import { APP_NAME, CHANNEL_HEADER, OWNER_SUBJECT, PAGE_CHANNEL } from "../src/protocol";
@@ -153,14 +153,20 @@ async function read(deps: GatewayDeps, origin: string, name: string, path: strin
 async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDeps, session: string | null): Promise<Response> {
   const tag = nonce();
   const versions = await page.versions();
-  const html = (status: number, model: PageModel) => new Response(renderShell(model, tag, { dir: "", files: versions }), { status, headers: pageHeaders(tag) });
+  // Where a view's time went in the Worker, in its Server-Timing header: the summaries, each R2 read of the stored view.
+  const steps: Record<string, number> = {};
+  let source: string | undefined;
+  const html = (status: number, model: PageModel) =>
+    new Response(renderShell(model, tag, { dir: "", files: versions }), { status, headers: { ...pageHeaders(tag), ...(session ? { "server-timing": serverTiming(steps, source) } : {}) } });
   const done = url.searchParams.get("done");
+  const listed = Date.now();
   // A summary saved by a build before summaries named the owner gets the subject every app here is created with.
   const summaries = session
     ? ((await deps.summaries())
         .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null && APP_NAME.test(String((s as { app_id?: unknown }).app_id ?? "")))
         .map((s) => ("error" in s || typeof s.owner === "string" ? s : { ...s, owner: OWNER_SUBJECT })) as unknown as Overview["summaries"])
     : [];
+  if (session) steps.summaries = Date.now() - listed;
   const space = page.spaceOrigin ? `${page.spaceOrigin.replace(/\/+$/, "")}/` : undefined;
   const ctx: PageContext = {
     lang: chooseLang(url.searchParams.get("lang"), request.headers.get("accept-language") ?? undefined),
@@ -196,7 +202,8 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
     parts.length === 2 ? "app" : parts.length === 4 && parts[2] === "change" && CHANGE_ID.test(parts[3]!) ? "change" : parts.length === 4 && parts[2] === "back" && VERSION.test(parts[3]!) ? "back" : null;
   if (!APP_NAME.test(name) || !shape || !summaries.some((s) => s.app_id === name)) return html(404, missingModel(ctx));
 
-  const viewed = await readView(deps, name, url.origin, { kind: "owner" });
+  const viewed = await readView(deps, name, url.origin, { kind: "owner" }, steps);
+  if (viewed.ok) source = viewed.source;
   if (!viewed.ok) return viewed.missing ? html(404, missingModel(ctx)) : html(502, unreadableModel(name, viewed.error, ctx, true));
   const status = asOf(viewed.view.status, ctx.now);
   const appStatus = status as unknown as Parameters<typeof appModel>[1];

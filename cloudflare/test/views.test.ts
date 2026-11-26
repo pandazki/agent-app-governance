@@ -295,6 +295,17 @@ describe("reads from the stored view", () => {
     clock.value = Date.now();
   });
 
+  test("a read says in Server-Timing where its time went in the Worker; the sign-in view says nothing", async () => {
+    const steps = (header: string | null) => (header ?? "").split(", ").map((entry) => entry.split(";")[0]);
+    const viewed = await fetch(`${stack.url}/app/notes`, { headers: { cookie: `${PAGE_COOKIE}=${session.cookie}` } });
+    expect(steps(viewed.headers.get("server-timing"))).toEqual(["summaries", "r2-view", "r2-head", "source"]);
+    expect(viewed.headers.get("server-timing")).toMatch(/r2-view;dur=\d+, r2-head;dur=\d+, source;desc="stored"$/);
+    const token = String(JSON.parse(readFileSync(join(apps(), ".appgov", "centre.json"), "utf8")).token);
+    const read = await fetch(`${stack.url}/apps/notes/history`, { headers: { authorization: `Bearer ${token}` } });
+    expect(steps(read.headers.get("server-timing"))).toEqual(["r2-view", "r2-head", "source"]);
+    expect((await fetch(`${stack.url}/app/notes`)).headers.get("server-timing")).toBeNull();
+  });
+
   test("the sign-in rules hold on the new read path: nothing without a session, and an agent token or CLI session is no session", async () => {
     const from = ops();
     const starts = stack.starts();
