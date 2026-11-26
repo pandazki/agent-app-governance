@@ -11,7 +11,7 @@ import { hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
 import { AppMark, Details, EmptyState, Header, HintCard, RichText, SourceChip, StatePill } from "./parts";
 import { StartSteps } from "./start-view";
-import { ConnectionsBlock } from "./connect-view";
+import { ConnectFirstButton, ConnectionsBlock, ConnectPanel } from "./connect-view";
 
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
@@ -122,9 +122,20 @@ function AppGrid({ apps }: { apps: readonly AppCard[] }) {
 
 export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => void }) {
   const ui = model.ui;
+  // Apps and no assistant yet: connecting one is the action beside the title, and opens here.
+  const [connecting, setConnecting] = useState(false);
+  const connectFirst = model.connectFirst && model.connect ? { label: model.connectFirst, connect: model.connect } : null;
   return (
     <>
-      <Header crumbs={[{ text: ui.my_apps }]} title={model.title} meta={ui.tagline} onSearch={onSearch} />
+      <Header crumbs={[{ text: ui.my_apps }]} title={model.title} meta={ui.tagline} onSearch={onSearch}
+        action={connectFirst && !connecting ? <ConnectFirstButton label={connectFirst.label} onClick={() => setConnecting(true)} /> : undefined} />
+      {connectFirst && connecting && (
+        <Section title={connectFirst.label}>
+          <div className="max-w-[600px]">
+            <ConnectPanel connect={connectFirst.connect} onClose={() => setConnecting(false)} />
+          </div>
+        </Section>
+      )}
       {(model.waiting.length > 0 || model.problems.length > 0) && (
         <Section title={ui.waiting_title} aside={<ContextNote label={ui.waiting_title}>{ui.section_waiting_hint}</ContextNote>}>
           <Surface>
@@ -170,7 +181,7 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
             <div className="max-w-[560px]"><HintCard hint={model.hint} /></div>
           </Collapsible>
         )}
-        {model.connections && model.connect && <ConnectionsBlock connections={model.connections} connect={model.connect} />}
+        {model.connections && model.connections.length > 0 && model.connect && <ConnectionsBlock connections={model.connections} connect={model.connect} />}
         <Details facts={model.facts} checked={model.checked} />
       </div>
     </>

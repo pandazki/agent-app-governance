@@ -58,7 +58,7 @@ const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--
   list [--check]         every app the centre keeps, and whether each is on PneumaSpace (--check: asked now)
   update                 replace this CLI with the centre's own (when it says it is at another API level)
   connect <code> --host <url>
-                         connect this directory with a one-time code from the owner page: an agent token in
+                         connect this directory with a one-time code from the owner page: a token in
                          ${STATE_DIR}/${CENTRE_FILE} (never printed), this centre's CLI and an AGENTS.md (with CLAUDE.md).
                          The page gives the whole command: curl -fsS <url>/connect | node - <code>
 
@@ -66,7 +66,7 @@ Owner only:
   login [--key-file <f>] sign in with the owner key the installer wrote; the session is kept next to that file
   logout
   token create [--label <l>] [--days <n>] --write <dir>
-                         create an agent token and write it, with the centre's address, to <dir>/${STATE_DIR}/${CENTRE_FILE}
+                         create a token and write it, with the centre's address, to <dir>/${STATE_DIR}/${CENTRE_FILE}
                          and, beside it, this centre's own CLI (.appgov/appgov.mjs) and an AGENTS.md (with CLAUDE.md)
                          that tell an agent started in <dir> what it is and how to work there
   token list | token revoke <id>
@@ -81,15 +81,15 @@ Owner only:
                          stays on PneumaSpace, removed, with its stored data, until you purge it in PneumaSpace's
                          console as its owner: the Host's token may not purge
 
-Who acts: a command that changes something goes with the agent token and is recorded as the agent's, unless it acts
+Who acts: a command that changes something goes with the token and is recorded as the agent's, unless it acts
 as the owner: approve, deny, undo --accept-one-way, token create and revoke, container stop, take-down,
 bring-back, publish-again and clear, and create, submit,
 discard, undo or preview given --owner. Those send the owner's session, and only after a person in an interactive
 terminal types the command's name; without a terminal they are refused before anything is sent. login needs a
-terminal too. Reading (status, history, list, fetch) uses the agent token, or the owner's session when there is none.
+terminal too. Reading (status, history, list, fetch) uses the token, or the owner's session when there is none.
 
 The centre: --host <url>, else APPGOV_HOST, else ${STATE_DIR}/${CENTRE_FILE} here or in a directory above.
-The agent token: APPGOV_TOKEN, else ${STATE_DIR}/${CENTRE_FILE}. The owner's session: from login, kept in
+The token: APPGOV_TOKEN, else ${STATE_DIR}/${CENTRE_FILE}. The owner's session: from login, kept in
 ${join("~", STATE_DIR, "hosts", "<host>")} (APPGOV_HOME moves ${join("~", STATE_DIR)}).
 APPGOV_AGENT names the agent for the history.`;
 
@@ -365,13 +365,13 @@ const REFUSAL_HINTS = {
   plan_changed: "Nothing changed. Run the same undo again to see what going back does now, then confirm that.",
   owner_required: "Stop and show this to the user: it is theirs to do, signed in as the owner. Do not look for a way around it.",
   working_copy_behind: `Run node ${SELF} fetch, then make the change again.`,
-  unauthenticated: `The centre did not accept the credential. An agent token lives in ${STATE_DIR}/${CENTRE_FILE} (or APPGOV_TOKEN); the owner creates one with token create. Ask the user.`,
+  unauthenticated: `The centre did not accept the credential. A token lives in ${STATE_DIR}/${CENTRE_FILE} (or APPGOV_TOKEN); the owner creates one with token create. Ask the user.`,
 };
 const refusalCode = (reason) => (reason === "crosses_one_way_change" || reason === "owner_required" ? 2 : 3);
 const refusalText = (data, fallback) => `${data.error ?? fallback}${REFUSAL_HINTS[data.reason] ? `\n${REFUSAL_HINTS[data.reason]}` : ""}`;
 
 async function send(method, path, payload, { owner = false } = {}) {
-  if (!CENTRE) fail(`no centre to talk to: there is no --host flag, no APPGOV_HOST, and no ${STATE_DIR}/${CENTRE_FILE} here or above. Ask the user for the centre's address and an agent token.`, 3);
+  if (!CENTRE) fail(`no centre to talk to: there is no --host flag, no APPGOV_HOST, and no ${STATE_DIR}/${CENTRE_FILE} here or above. Ask the user for the centre's address and a token.`, 3);
   let url;
   try {
     url = new URL(`${CENTRE}${path}`);
@@ -382,8 +382,8 @@ async function send(method, path, payload, { owner = false } = {}) {
     if (owner) fail(`no owner session for the centre at ${CENTRE}: sign in first, in your terminal, with node ${SELF} login.`, 2);
     fail(
       method === "GET"
-        ? `no credential for the centre at ${CENTRE}: no APPGOV_TOKEN, no token in ${STATE_DIR}/${CENTRE_FILE}, and no owner session. Ask the user for an agent token.`
-        : `no agent token for the centre at ${CENTRE}: no APPGOV_TOKEN and no token in ${STATE_DIR}/${CENTRE_FILE}, so nothing was sent. Ask the user for an agent token. (The owner acts as themselves with --owner, in a terminal.)`,
+        ? `no credential for the centre at ${CENTRE}: no APPGOV_TOKEN, no token in ${STATE_DIR}/${CENTRE_FILE}, and no owner session. Ask the user for a token.`
+        : `no token for the centre at ${CENTRE}: no APPGOV_TOKEN and no token in ${STATE_DIR}/${CENTRE_FILE}, so nothing was sent. Ask the user for a token. (The owner acts as themselves with --owner, in a terminal.)`,
       3,
     );
   }
@@ -682,7 +682,7 @@ function newCopy(dir, copy) {
   // The centre's own address always (as it gave it, whatever address this command came by); the agent token when this
   // command had one (signed in as the owner, it has none).
   writePrivate(join(dir, STATE_DIR, CENTRE_FILE), { url: centreSays ?? CENTRE, ...(TOKEN ? { token: TOKEN } : {}) });
-  console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}; the centre's address${TOKEN ? " and the agent token are" : " is"} in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git). Open it with your coding agent.`);
+  console.log(`working copy of ${copy.app} (${copy.active_version}) in ${dir}; the centre's address${TOKEN ? " and the token are" : " is"} in ${join(dir, STATE_DIR, CENTRE_FILE)} (keep it out of git). Open it with your coding agent.`);
 }
 
 // The block this CLI keeps in a directory's AGENTS.md, as the local edition's Host keeps the one in its apps directory.
@@ -775,11 +775,11 @@ if (command === "connect") {
     found = starter.status === 200 ? JSON.parse(starter.text) : null;
   } catch {}
   if (typeof found?.cli !== "string" || typeof found?.agents !== "string") {
-    fail(`the Host made the agent token but did not send its CLI and instructions (${starter.err?.code ?? starter.status}); nothing was written. Ask the user to revoke "${data.label}" on the owner page and make a new code.`, 3);
+    fail(`the Host made the token but did not send its CLI and instructions (${starter.err?.code ?? starter.status}); nothing was written. Ask the user to revoke "${data.label}" on the owner page and make a new code.`, 3);
   }
   writePrivate(file, { url: home, token: data.token });
   const written = writeStarter(dir, found);
-  console.log(`connected ${dir} to the Host at ${home} as "${data.label}". The agent token is in ${join(STATE_DIR, CENTRE_FILE)}: never print it, copy it or commit it.`);
+  console.log(`connected ${dir} to the Host at ${home} as "${data.label}". The token is in ${join(STATE_DIR, CENTRE_FILE)}: never print it, copy it or commit it.`);
   console.log(`written: ${[join(STATE_DIR, CENTRE_FILE), ...written].join(", ")}. Read AGENTS.md here: it says what this directory is and how to create, change and list apps.`);
   process.exit(0);
 }
@@ -818,14 +818,14 @@ if (command === "token") {
   if (!ownerSession()) fail(`tokens are the owner's: sign in first with node ${SELF} login`, 2);
   if (sub === "list") {
     out(await call("GET", "/tokens", undefined, { owner: true }), ({ tokens }) => {
-      if (!tokens.length) console.log("no agent tokens");
+      if (!tokens.length) console.log("no tokens");
       for (const t of tokens) console.log(`${t.id}  ${t.label}  created ${readableTime(new Date(t.created_at).toISOString())}  ${t.revoked_at ? "revoked" : `valid until ${readableTime(new Date(t.expires_at).toISOString())}`}`);
     });
     process.exit(0);
   }
   if (sub === "revoke") {
     if (!id) fail("token revoke takes <id>");
-    await confirmAsOwner("revoke", `Revoking agent token ${id}`);
+    await confirmAsOwner("revoke", `Revoking token ${id}`);
     out(await call("DELETE", `/tokens/${encodeURIComponent(id)}`, undefined, { owner: true }), () => console.log(`revoked ${id}`));
     process.exit(0);
   }
@@ -835,14 +835,14 @@ if (command === "token") {
     const dir = resolve(flags.write);
     const file = join(dir, STATE_DIR, CENTRE_FILE);
     if (existsSync(file)) fail(`${file} exists already; revoke the token in it first, or write to another directory`);
-    await confirmAsOwner("create", `Creating an agent token for ${dir}`);
+    await confirmAsOwner("create", `Creating a token for ${dir}`);
     // What the agent will run and read comes from the centre, before any token exists: nothing is left half made.
     const starter = await call("GET", "/starter", undefined, { owner: true });
     const data = await call("POST", "/tokens", { label: flags.label ?? "agent", ...(flags.days ? { expires_in_days: Number(flags.days) } : {}) }, { owner: true });
     // The centre's own address, whatever address this command came by.
     writePrivate(file, { url: typeof starter.host_url === "string" && starter.host_url ? clean(starter.host_url) : CENTRE, token: data.token });
     const written = writeStarter(dir, starter);
-    console.log(`created agent token ${data.id} (${data.label}), valid until ${readableTime(new Date(data.expires_at).toISOString())}; written to ${file}. Keep that file out of git.`);
+    console.log(`created token ${data.id} (${data.label}), valid until ${readableTime(new Date(data.expires_at).toISOString())}; written to ${file}. Keep that file out of git.`);
     console.log(`${dir} also has ${written.join(", ")}: this centre's CLI and what an agent started there needs to know. Start your agent in ${dir}.`);
     process.exit(0);
   }
@@ -942,7 +942,7 @@ switch (command) {
       for (const h of history) {
         const where = h.version ? ` -> ${h.version}` : "";
         const why = h.reason ? ` (${h.reason})` : "";
-        console.log(`${h.at} ${h.kind} ${h.outcome}${where} by ${h.agent}${h.credential ? ` (${h.credential})` : ""} [${h.control}]: ${h.intent}${why}`);
+        console.log(`${h.at} ${h.kind} ${h.outcome}${where} by ${h.agent}${h.credential ? ` (${String(h.credential).replace(/^agent token /, "token ")})` : ""} [${h.control}]: ${h.intent}${why}`);
         if (h.author) console.log(`    the change was made by ${h.author}`);
         if (h.changed_paths?.length) console.log(`    files: ${h.changed_paths.join(", ")}`);
         if (h.approval) console.log(`    approval: ${h.approval.reason_code} by ${h.approval.by.join(", ") || "nobody yet"} (${h.risks?.join(", ") ?? ""})`);

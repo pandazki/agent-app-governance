@@ -309,7 +309,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   }
 
   const who = await authenticate(request, deps, now);
-  if (!who) return refuse(401, "unauthenticated", "sign in as the owner, or send an agent token the owner created (Authorization: Bearer ...)");
+  if (!who) return refuse(401, "unauthenticated", "sign in as the owner, or send a token the owner created (Authorization: Bearer ...)");
   const { principal } = who;
   const owner = principal.kind === "owner";
 
@@ -323,7 +323,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   }
 
   if (parts[0] === "tokens") {
-    if (!owner) return refuse(403, "owner_required", "only the owner creates, lists and revokes agent tokens");
+    if (!owner) return refuse(403, "owner_required", "only the owner creates, lists and revokes tokens");
     if (method === "GET" && parts.length === 1) return json({ tokens: await deps.auth.listTokens() });
     if (method === "POST" && parts.length === 1) {
       const body = parseObject(await readText(request));
@@ -364,7 +364,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
   if (!op) return refuse(404, "not_found", "not found");
   const text = method === "POST" ? await readText(request) : "";
   const reason = ownerOnly(rest, method === "POST" ? parseObject(text) : {});
-  if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; an agent token cannot do it`);
+  if (reason && !owner) return refuse(403, "owner_required", `${reason} is the owner's decision; a token cannot do it`);
   // Status and history, for the owner and agent tokens alike: from the stored view, without a container.
   if (op === "read" && (rest.length === 0 || (rest.length === 1 && rest[0] === "history"))) {
     const steps: Record<string, number> = {};

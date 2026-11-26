@@ -1,6 +1,6 @@
 # Installing agent-app-governance: a runbook for coding agents
 
-This file is for a coding agent that a person asked to install or set up this project. If you were asked to work on the code itself, it does not apply; each edition's guide is in its folder. For what the project is, read [README.md](./README.md); this file does not repeat it.
+This file is for a coding agent that a person asked to install or set up this project. If you were asked to work on the code itself, it does not apply. For what the project is, read [README.md](./README.md).
 
 ## Rules for the whole install
 
@@ -15,17 +15,19 @@ This file is for a coding agent that a person asked to install or set up this pr
 If the person did not say, ask exactly one question:
 
 > Which edition do you want?
-> - Local: runs on this computer in Docker. Free. About five minutes.
+> - Local: runs on this computer in Docker. Free.
 > - Cloudflare: runs on your own Cloudflare account (Workers Paid plan, and a domain in that account). Nothing runs on this computer once it is installed.
 
 ## 1. The repository
 
-If the current directory is not already a clone (no `README.md` and `local/compose.yaml` here), clone it into the current directory and work in it:
+If the current directory is already a clone (`README.md` and `local/compose.yaml` are here), work in it. Otherwise clone into a new subfolder named `agent-app-governance`, never into the current directory itself, and work there:
 
 ```sh
-git clone https://github.com/pandazki/agent-app-governance.git
+git clone https://github.com/pandazki/agent-app-governance.git agent-app-governance
 cd agent-app-governance
 ```
+
+If `agent-app-governance` already exists, do not clone over it, rename it or remove it: when `git -C agent-app-governance remote get-url origin` prints this repository's address, it is an earlier clone, so work in it; otherwise ask the person.
 
 ## The local edition
 
@@ -33,7 +35,7 @@ cd agent-app-governance
 
 | What | Command | Good answer | A bad answer means |
 | --- | --- | --- | --- |
-| Docker answers | `docker info --format '{{.ServerVersion}}'` | A version number | Docker is not running. Ask the person to start Docker Desktop or colima; do not start or reconfigure it yourself. |
+| Docker answers | `docker info --format '{{.ServerVersion}}'` | A version number | Tell the two faults apart, under "When `docker info` fails" below this table, and stop. Do not start or reconfigure Docker yourself. |
 | Which Docker context | `docker context show` | A name, such as `default`, `desktop-linux` or `colima` | If it is not the context the person uses for Docker, ask which one; then put `DOCKER_CONTEXT=<name>` before every `docker` command below. |
 | Compose | `docker compose version --short` | 2.17 or newer | Older Compose cannot build the Host's image (it uses `additional_contexts`). Ask the person to update Docker. |
 | Node.js | `node --version` | v24 or newer | Ask the person to install Node.js 24. The apps' tests need it. |
@@ -41,6 +43,11 @@ cd agent-app-governance
 | Free ports | macOS: `lsof -nP -iTCP:8080 -iTCP:8081 -iTCP:9000 -iTCP:8090 -sTCP:LISTEN`. Linux: `ss -ltn` (it also sees ports that Docker holds for other containers, which `lsof` as a normal user does not) | Nothing listening on 8080, 8081, 9000 or 8090 | A port is taken: choose others, below. |
 | Compose project name | `docker ps -a --filter label=com.docker.compose.project=agent-app-governance --format '{{.Label "com.docker.compose.project.working_dir"}}'` | No output, or lines that all name this clone's `local/` folder (an earlier install from here: go on) | Another folder's stack uses the name: choose another name, below. Starting this one under the same name would replace that stack's containers. |
 | Docker network name | `docker network ls --filter name=^agent-app-governance$ --format '{{.Name}}'` | No output, or the earlier install of this clone | Taken by something else: choose another name, below. |
+
+**When `docker info` fails**, find out which of two faults it is, with commands that change nothing: `docker context ls -q` lists the contexts, and `docker --context <name> info --format '{{.ServerVersion}}'` asks each one other than the current one, which `docker context show` prints.
+
+- None answers: Docker is not running. Say: "Docker is not running on this computer: no Docker context answers. Please start Docker Desktop, or run `colima start` if you use colima, and tell me when it is up."
+- Another one answers: Docker runs under another context than this shell uses. Say: "Docker is running, but under the Docker context `<name>`, and this shell uses `<current>`. Either run `docker context use <name>` in your own terminal, or tell me to use `DOCKER_CONTEXT=<name>` for this install."
 
 ### When a default port or name is taken
 
@@ -55,7 +62,7 @@ PNEUMA_SPACE_OBJECT_PORT=48362
 APPGOV_HOST_PORT=48363
 ```
 
-A changed `APPGOV_HOST_PORT` changes the page's address below. Details: [running beside other services](./local/docs/reference.md#running-beside-other-services).
+Run the commands below as written, also with changed ports; never put a port into them by hand. They find the ports themselves: `docker compose port` prints where a service listens, and the CLI finds the Host this clone started. Details: [running beside other services](./local/docs/reference.md#running-beside-other-services).
 
 ### Install
 
@@ -64,26 +71,26 @@ cd local
 docker compose up -d --build
 ```
 
-The first build takes several minutes: it builds PneumaSpace and the Host from source. Run it from `local/`, so the page knows where the apps folder is.
+Run it from `local/`, so the page knows where the apps folder is.
 
 ### Check it worked, without the person
 
-From `local/`. Use the ports from `.env` if you changed them.
+From `local/`:
 
 ```sh
-docker compose ps --format '{{.Service}} {{.State}}'          # six services, each "running"
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8090/  # 200: the apps page
-curl -fsS -o /dev/null http://127.0.0.1:8081/healthz && echo ok  # PneumaSpace answers
-node bin/appgov.mjs list                                        # "no apps yet", or the apps
+docker compose ps --format '{{.Service}} {{.State}}'                                   # six services, each "running"
+curl -s -o /dev/null -w '%{http_code}\n' "http://$(docker compose port host 8090)/"      # 200: your apps page
+curl -fsS -o /dev/null "http://$(docker compose port gateway 8081)/healthz" && echo ok  # the PneumaSpace console answers
+node bin/appgov.mjs list                                                               # "no apps yet", or the apps
 ```
 
 Do not create an app to test it: it would stay in the person's list.
 
 ### Hand-off: say this to the person
 
-Fill in the parts in angle brackets. Do not include the owner link: you have not read it.
+Fill in the parts in angle brackets; `<address>` is what `docker compose port host 8090` printed (127.0.0.1:8090 unless you changed the port). Do not include the owner link: you have not read it.
 
-> It is installed. Your apps page is http://127.0.0.1:8090/
+> It is installed. Your apps page is `http://<address>/`
 >
 > 1. To decide on changes there, open it from your owner link. In your own terminal, run
 >    `cd <the clone>/local && docker compose logs host | grep "owner link" | tail -1`
@@ -109,7 +116,7 @@ You cannot do these: each needs the person's own Cloudflare sign-in or choice. A
 
 | What | Command | Good answer | A bad answer means |
 | --- | --- | --- | --- |
-| Docker answers | `docker info --format '{{.ServerVersion}}'` | A version number | Ask the person to start Docker. It builds the images, for linux/amd64. |
+| Docker answers | `docker info --format '{{.ServerVersion}}'` | A version number | Tell the two faults apart, under "When `docker info` fails" in the local edition, and stop. It builds the images, for linux/amd64. |
 | Which Docker context | `docker context show` | A name | As in the local edition: if it is not the one the person uses, put `DOCKER_CONTEXT=<name>` before each installer command. |
 | Node.js | `node --version` | v24 or newer | PneumaSpace's installer needs 24. Ask the person to install it. |
 | Bun | `bun --version` | A version | The Host's installer builds the apps page with Bun. Ask the person to install it from https://bun.sh. |
@@ -119,7 +126,7 @@ You cannot do these: each needs the person's own Cloudflare sign-in or choice. A
 
 ### Install PneumaSpace (skip when the person has a deployment to use)
 
-From this repository's root. PneumaSpace goes next to it, not inside it; if your sandbox does not let you write outside the current folder, ask the person to allow it.
+From this repository's root. PneumaSpace goes next to it, in `../pneuma-space`, not inside it; if that folder already exists, ask the person whether to use it, and if your sandbox does not let you write outside the current folder, ask the person to allow it.
 
 ```sh
 git clone https://github.com/pandazki/pneuma-space.git ../pneuma-space

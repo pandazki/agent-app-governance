@@ -2,10 +2,10 @@
 // The artifact's own CLI. No dependencies; any Node >= 18 runs it. A copy lives in
 // every app at .appgov/appgov.mjs, so whichever coding agent opens the directory
 // can drive the governed loop without installing anything.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -50,7 +50,10 @@ Owner only, in a terminal (each says what it does and asks you to type a word):
 In an app's directory, commands act on that app. Elsewhere, name it: status <name>, or --app <name>.
 
 The Host's address: --host <url>, else APPGOV_HOST, else the address the Host recorded in
-${STATE_DIR}/host.json (here or in a directory above), else ${DEFAULT_HOST}.
+${STATE_DIR}/host.json (here or in a directory above). Run from a checkout (local/bin/appgov.mjs): else the
+address the checkout's Host recorded in its apps folder, else APPGOV_HOST_PORT from local/.env, else ${DEFAULT_HOST}.
+The CLI talks only to an appgov Host, and from a checkout only to the Host of that checkout's apps folder,
+unless --host or APPGOV_HOST names it.
 APPGOV_AGENT names the agent for the history; APPGOV_OWNER is the owner subject (default user:me).`;
 
 // The flags that take a value, and what to say when one is the last word with nothing after it. Without a value
@@ -93,8 +96,48 @@ function findApp(start) {
 const readableTime = (iso) => (typeof iso === "string" && iso.length >= 16 ? `${iso.slice(0, 16).replace("T", " ")} UTC` : "an unknown date");
 
 /**
+ * The checkout this copy of the CLI belongs to, when it runs as local/bin/appgov.mjs: the directory compose runs
+ * from, the settings compose reads there (the shell's first, then .env, as compose takes them), and so the apps
+ * folder its Host was given. Null for the copies the Host puts in the apps folder and in every app.
+ */
+function findCheckout() {
+  const dir = resolve(SCRIPT_DIR, "..");
+  if (!existsSync(join(dir, "compose.yaml"))) return null;
+  const file = join(dir, ".env");
+  const env = {};
+  try {
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+      if (m) env[m[1]] = m[2].replace(/^(["'])(.*)\1$/, "$2");
+    }
+  } catch {
+    // No .env: compose's defaults.
+  }
+  const setting = (key) => process.env[key]?.trim() || env[key]?.trim() || "";
+  const appsSetting = setting("APPGOV_APPS_DIR");
+  return { dir, envFile: file, port: setting("APPGOV_HOST_PORT"), appsDir: appsSetting ? resolve(dir, appsSetting) : join(dir, "apps") };
+}
+const CHECKOUT = findCheckout();
+
+/** One directory, however it is written: symbolic links resolved as far as the path exists, relative paths from the checkout. */
+function samePath(a, b) {
+  const real = (path) => {
+    const missing = [];
+    for (let dir = resolve(CHECKOUT?.dir ?? process.cwd(), path); ; dir = dirname(dir)) {
+      try {
+        return join(realpathSync(dir), ...missing.reverse());
+      } catch {
+        if (dirname(dir) === dir) return resolve(CHECKOUT?.dir ?? process.cwd(), path);
+        missing.push(basename(dir));
+      }
+    }
+  };
+  return real(a) === real(b);
+}
+
+/**
  * The address a Host recorded for itself: .appgov/host.json in the current directory or above, else
- * next to this copy of the CLI, else in the apps directory next to bin/ (local/apps).
+ * next to this copy of the CLI, else in the apps folder of the checkout this copy belongs to.
  */
 function findRecordedHost(start) {
   const files = [];
@@ -102,7 +145,8 @@ function findRecordedHost(start) {
     files.push(join(dir, STATE_DIR, "host.json"));
     if (dirname(dir) === dir) break;
   }
-  files.push(join(SCRIPT_DIR, "host.json"), join(SCRIPT_DIR, "..", "apps", STATE_DIR, "host.json"));
+  files.push(join(SCRIPT_DIR, "host.json"));
+  if (CHECKOUT) files.push(join(CHECKOUT.appsDir, STATE_DIR, "host.json"));
   for (const file of files) {
     if (!existsSync(file)) continue;
     try {
@@ -126,15 +170,17 @@ function appsDirOf(recorded) {
 function resolveHost(flag) {
   const clean = (url) => String(url).trim().replace(/\/+$/, "");
   const recorded = findRecordedHost(process.cwd());
-  if (flag) return { url: clean(flag), source: "That address came from the --host flag.", recorded };
-  if (process.env.APPGOV_HOST) return { url: clean(process.env.APPGOV_HOST), source: "That address came from APPGOV_HOST.", recorded };
+  if (flag) return { url: clean(flag), source: "That address came from the --host flag.", recorded, named: true };
+  if (process.env.APPGOV_HOST) return { url: clean(process.env.APPGOV_HOST), source: "That address came from APPGOV_HOST.", recorded, named: true };
   if (recorded) {
     return { url: clean(recorded.url), source: `That address was recorded by the Host on ${readableTime(recorded.recorded_at)} in ${recorded.file}.`, recorded };
   }
-  return {
-    url: DEFAULT_HOST,
-    source: `That address is the built-in default: there is no --host flag, no APPGOV_HOST, and no ${STATE_DIR}/host.json recorded by a Host here or above.`,
-  };
+  const none = `there is no --host flag, no APPGOV_HOST, and no ${STATE_DIR}/host.json recorded by a Host here or above${CHECKOUT ? ` or in ${CHECKOUT.appsDir}` : ""}`;
+  if (CHECKOUT?.port) {
+    if (!/^\d+$/.test(CHECKOUT.port)) fail(`APPGOV_HOST_PORT is "${CHECKOUT.port}", not a port number. Fix it in ${CHECKOUT.envFile}, or pass --host <url>.`, 3);
+    return { url: `http://127.0.0.1:${CHECKOUT.port}`, source: `That address is APPGOV_HOST_PORT from ${process.env.APPGOV_HOST_PORT?.trim() ? "the environment" : CHECKOUT.envFile}: ${none}.` };
+  }
+  return { url: DEFAULT_HOST, source: `That address is the built-in default: ${none}.` };
 }
 
 // The environment variables each coding agent sets in the shells it starts, and only those. A shell started from
@@ -263,8 +309,9 @@ const HOST_API_LEVEL = 2;
 let hostLevelChecked = false;
 
 async function send(method, path, payload) {
-  // A request that changes something is never the first one: nothing is changed on a Host this CLI cannot read.
-  if (method !== "GET" && !hostLevelChecked) await call("GET", "/healthz");
+  // The first request is always the Host check: nothing is asked of a service that is not an appgov Host this CLI
+  // can read, or, from a checkout, of a Host that keeps another apps folder; and nothing is changed on one.
+  if (path !== "/healthz" && !hostLevelChecked) await call("GET", "/healthz");
   let url;
   try {
     url = new URL(`${HOST}${path}`);
@@ -292,15 +339,35 @@ async function send(method, path, payload) {
       3,
     );
   }
-  if (status >= 200 && status < 300 && !hostLevelChecked) {
-    if (!(Number(level) >= HOST_API_LEVEL)) fail(`the Host at ${HOST} is older than this CLI; rebuild it: docker compose up -d --build`, 3);
-    hostLevelChecked = true;
+  if (!hostLevelChecked) {
+    // Every appgov Host says its level on every answer, whatever the status; another program does not.
+    if (level === undefined) {
+      fail(
+        `what answers at ${HOST} is not an appgov Host: its answer (HTTP ${status}) has no appgov-api header, which every appgov Host sends. ` +
+          `It is another program on that port, or an appgov Host from before API levels, which needs a rebuild (docker compose up -d --build). ${HOST_SOURCE} ` +
+          "Nothing was sent to it but this check. Find where this Host runs (docker compose ps, in the directory it was started from, shows its port) and pass --host <url>.",
+        3,
+      );
+    }
+    if (status >= 200 && status < 300 && !(Number(level) >= HOST_API_LEVEL)) fail(`the Host at ${HOST} is older than this CLI; rebuild it: docker compose up -d --build`, 3);
   }
   let data;
   try {
     data = JSON.parse(text);
   } catch {
     data = {};
+  }
+  if (!hostLevelChecked && status >= 200 && status < 300) {
+    // From a checkout, the Host must be the one its apps folder was given to, unless the address was named on purpose.
+    const folder = typeof data.apps_folder === "string" ? data.apps_folder : null;
+    if (CHECKOUT && !HOST_NAMED && folder && !samePath(folder, CHECKOUT.appsDir)) {
+      fail(
+        `the appgov Host at ${HOST} keeps the apps folder ${folder}, not this checkout's (${CHECKOUT.appsDir}): it was started from another checkout. ${HOST_SOURCE} ` +
+          `Nothing was sent to it but this check. Start this checkout's Host (docker compose up -d in ${CHECKOUT.dir}), or, if that Host is the one you mean, pass --host ${HOST}.`,
+        3,
+      );
+    }
+    hostLevelChecked = true;
   }
   return { status, data };
 }
@@ -382,7 +449,7 @@ function printChange(result, appName) {
 
 const { flags, rest } = parse(process.argv.slice(2));
 const [command, ...args] = rest;
-const { url: HOST, source: HOST_SOURCE, recorded: RECORDED } = resolveHost(flags.host);
+const { url: HOST, source: HOST_SOURCE, recorded: RECORDED, named: HOST_NAMED = false } = resolveHost(flags.host);
 
 /** Two addresses of one Host: the same scheme, port and host name, with localhost, 127.0.0.1 and [::1] taken as one name. */
 function sameHost(a, b) {
@@ -451,7 +518,8 @@ const serves = (s) => !s.standing || s.standing === "running" || s.standing === 
 /** Every app in a few lines each: version and address, then only what deserves a look. */
 function printApps({ governance, apps }) {
   if (!apps.length) {
-    console.log(`no apps yet. Create one with: node ${STATE_DIR}/appgov.mjs create <name>`);
+    // As this copy was run: from a checkout that is bin/appgov.mjs, in the apps folder .appgov/appgov.mjs.
+    console.log(`no apps yet. Create one with: node ${relative(process.cwd(), fileURLToPath(import.meta.url)) || "appgov.mjs"} create <name>`);
     return;
   }
   const waiting = apps.flatMap((app) => items(app.pending).map(() => app.app_id));
@@ -515,7 +583,7 @@ function guideBlock(appsDir) {
     `- What apps do I have: ${run("list")}. It shows each app's version, address, last change, and any change waiting for me.`,
     `- One app in full: ${run("status <name>")} and ${run("history <name>")}.`,
     `- A new app: ${run("create <name>")}.`,
-    `- To change an app, work in its directory (${quoted(join(appsDir, "<name>"))}) and follow its AGENTS.md. A change goes live only through that app's own submit. A change that waits for me is mine to decide, on the Host's page or in my terminal.`,
+    `- To change an app, work in its directory (${quoted(join(appsDir, "<name>"))}) and follow its AGENTS.md. An app here goes live only through this CLI's create and submit. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it. A change that waits for me is mine to decide, on the Host's page or in my terminal.`,
     `- If the Host cannot be reached at that address, ask me where it runs and add --host <url>.`,
     GUIDE_END,
   ].join("\n");

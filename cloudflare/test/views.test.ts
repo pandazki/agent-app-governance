@@ -190,7 +190,7 @@ describe("reads from the stored view", () => {
     expect(status.out).toContain(`These edits are change ${waiting}, which was submitted and waits for the owner.`);
     const history = await cli(copy(), ["history"]);
     expect(history.code).toBe(0);
-    expect(history.out).toMatch(/change needs_approval by codex \(agent token "laptop" \(t[0-9a-f]+\)\) \[agent-driven\]: Let anyone in/);
+    expect(history.out).toMatch(/change needs_approval by codex \(token "laptop" \(t[0-9a-f]+\)\) \[agent-driven\]: Let anyone in/);
     expect([stack.starts(), opsSince(from)]).toEqual([starts, []]);
   });
 

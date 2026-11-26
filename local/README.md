@@ -15,7 +15,7 @@ This edition runs on your own computer, in Docker. It starts PneumaSpace, a smal
 - **One computer, one person, and you trust the computer.** The Host has no login. Anyone who can reach its port can read your apps page and its API. What keeps your agent from approving its own change (a terminal for `approve`, a private link for the page) does not stop another program on the same computer.
 - **Docker**, running, with a version of Compose that supports `additional_contexts` in a build, which the Host's image uses. On Linux, Docker Engine with the Compose and buildx plugins is enough.
 - **The `gateway` container mounts the Docker socket** (`/var/run/docker.sock`), which gives it control of Docker on this computer.
-- **Four free ports on 127.0.0.1:** 8080 (the apps), 8081 (the PneumaSpace console), 9000 (the object store) and 8090 (the Host). Nothing listens on other addresses. To use other ports, see [running beside other services](./docs/reference.md#running-beside-other-services).
+- **Four free ports on 127.0.0.1:** 8080 (the apps themselves, at `/apps/<name>/`), 8081 (the PneumaSpace console), 9000 (the object store) and 8090 (your apps page: the Host). Nothing listens on other addresses. To use other ports, see [running beside other services](./docs/reference.md#running-beside-other-services).
 - **Node.js 24 or newer.** The CLI alone runs on Node 18, but your agent runs each app's tests on your computer, and the app template asks for Node 24.
 - **Internet access for the first build.** The images build PneumaSpace and pneuma-framework from GitHub at the commits `compose.yaml` pins, and pull base images from Docker Hub.
 
@@ -83,7 +83,7 @@ The app directory is /path/to/agent-app-governance/local/apps/todo. Open it with
 
 `create todo` gives you the template's starter app under the name `todo`: one page that says "Hello, guest" and has a sign-in button. It is not a to-do list yet; ask your agent for one.
 
-The app answers at http://127.0.0.1:8080/apps/todo/, and the apps page lists it.
+The app itself answers at http://127.0.0.1:8080/apps/todo/, and your apps page lists it.
 
 The PneumaSpace console at http://127.0.0.1:8081/ is the platform's own admin page, without a login. Changing an app there goes around the Host, and the app's history then no longer matches what is live.
 
@@ -140,7 +140,7 @@ node .appgov/appgov.mjs undo "why"          # back one version; run it again to 
 node .appgov/appgov.mjs undo --to v2 "why"  # straight back to an earlier version
 ```
 
-In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>` work too. The Host keeps an `AGENTS.md` and a copy of the CLI there, so an agent started in `apps/` can answer "what apps do I have?".
+In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>` work too.
 
 `undo` goes back along the versions the current one was built on. It publishes the older version's code, checks that the app answers, and only then moves the history. It refuses while the folder has edits that were never submitted; submit them, or drop them with `discard`. On the apps page, every version the current one was built on has a "Go back to this" button (the page is in English or Chinese, following your browser's language).
 
@@ -175,7 +175,7 @@ On the apps page, opened from your owner link, the same actions are under "Take 
 | `the Host cannot vouch for what the address serves` | The Host does not know which version the address serves: after a failed release or undo it could not put the address back, or an undo went out and could not be recorded. | Do what the line says. In the first case, the next release or undo that answers settles it. In the second, submitting and approving are refused until you run `undo`. |
 | `undo` refuses, saying the way back crosses a change "that putting files back cannot undo" | A one-way change is in the way. | You decide: `undo --accept-one-way "why"` in your terminal, or go back on the page. |
 | `submit`, `approve` or `undo` refused with `app_down`, `app_removed_elsewhere` or `app_vanished` | The app is taken down (by you, or on PneumaSpace), or PneumaSpace no longer has it. Nothing was checked or released. | Bring it back; for an app PneumaSpace no longer has, publish it again or clear it. See [Take an app down, bring it back, or clear it](#take-an-app-down-bring-it-back-or-clear-it). |
-| `cannot reach the Host at ...` | The Host is not running, or runs at another address. | Run `docker compose ps` in `local/`. For another address, pass `--host <url>`. |
+| `cannot reach the Host at ...` | The Host is not running, or runs at another address. | Run `docker compose ps` in `local/`. For a Host this clone did not start, pass `--host <url>`. |
 
 ## Where things live
 
@@ -199,6 +199,6 @@ Docker puts the compose project's name in front of each volume's name, for examp
 - The rules read only SQL text and `pneuma-space.json`. A change that deletes or rewrites files, key-value data or objects looks to them like an ordinary code change, and in `personal` the standing rule would release it; for that storage the Host relies on the agent declaring the change with `--one-way`.
 - The preview starts with empty storage. It shows that the app starts and answers its home page without a server error, not that it works with your data or for a signed-in visitor. A change can pass when none of the app's own tests ran; `submit` and `history` then say so.
 - While the `screenshot` service takes a picture of an app, the app's scripts can still send requests to the other services on the compose network, a preview's scripts included. To switch pictures off, put `APPGOV_SCREENSHOT_CDP=` in `.env`.
-- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
+- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. On 2026-11-26, from the overview's sentence under "Start here", a Codex session installed this edition on a machine whose default ports were taken (it chose other ports and touched nothing else), and a second session made a working app (reading-list) from its hand-off. Not run: a whole Linux machine, several users, a hosted setup.
 
 [docs/reference.md](./docs/reference.md) covers the CLI, the modes and what each recorded guarantee means, the risk rules, one-way changes and undo, taking an app down and clearing it, the PostgreSQL option, starting Claude Code or Codex from the Host (`bun run drive`), running beside other services, and the tests.

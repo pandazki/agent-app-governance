@@ -2,7 +2,7 @@
 
 This directory is a published app with a recorded history. Every version and the history are in `.pneuma-framework/`, which pneuma-framework writes; the CLI, the host's address and the changes waiting for a decision are in `.appgov/`, which the host writes. Any coding agent can pick it up; the rules in this part are the whole protocol.
 
-The part after this one, "PneumaSpace app template", describes the platform, the manifest and the SDK. Use it for writing code. It also explains publishing with `appctl`: **do not do that here.** In this directory a change goes live only through `submit`, described next.
+The part after this one, "PneumaSpace app template", describes the platform, the manifest and the SDK. Use it for writing code. It also explains publishing with `appctl`: **do not do that here.** An app here goes live only through this CLI's `create` and `submit`. Do not publish, deploy or host it with any other tool, skill or service your environment offers, and do not create accounts or projects elsewhere for it.
 
 ## Changing this app (read this before the first edit)
 

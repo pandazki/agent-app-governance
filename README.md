@@ -4,11 +4,11 @@
 
 ## Start here
 
-You get a page with the small apps your coding agent (Claude Code or Codex) builds for you, a record of every change, your say on the risky ones, and a way back to an earlier version.
+You get a page with the small apps your coding agent (Claude Code or Codex) builds for you, a record of every change, your say on the risky ones, and a way back to an earlier version. It covers the apps you create here: apps you already have cannot be imported, and it is not a backup of their data.
 
 Choose one edition:
 
-- **Local**: runs on your computer, in Docker. You need Docker, Node.js 24 and git. Nothing to pay. About five minutes.
+- **Local**: runs on your computer, in Docker. You need Docker, Node.js 24 and git. Nothing to pay. An agent's install took about two minutes with the images already built; building them the first time takes longer.
 - **Cloudflare**: runs on your own Cloudflare account, so nothing runs on your computer once it is installed. You need a Cloudflare account on the Workers Paid plan (it costs money every month) with a domain in it (a domain costs a yearly fee), and Docker, Node.js 24 and Bun for the install. It installs PneumaSpace there too, and asks you for a few things only you can do in Cloudflare.
 
 The easiest way to start: open Claude Code or Codex in the folder where it should go, and paste one sentence.
@@ -18,7 +18,7 @@ The easiest way to start: open Claude Code or Codex in the folder where it shoul
 
 Your agent checks what is needed first and stops to ask you for what only you can do. To do it by hand: [the local guide](./local/README.md), [the Cloudflare guide](./cloudflare/README.md).
 
-When it is done, you have a page to open in your browser (http://127.0.0.1:8090/ for the local edition, your Host's own address for the Cloudflare one), and it shows the next step. Then you tell your agent what you want, for example: "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it."
+When it is done, you have your apps page to open in your browser (for the local edition, http://127.0.0.1:8090/ or the address your agent gives you; for the Cloudflare one, your Host's own address), and it shows the next step. Then you tell your agent what you want, for example: "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it."
 
 ## What it is
 
@@ -28,7 +28,7 @@ A coding agent such as Claude Code or Codex can build a small app with stored da
 - The next change can break the app or delete its data, and the agent does not always stop to ask.
 - Going back is guesswork. The agent's session is gone, and stored data does not go back with the code.
 
-This repository gives such apps one way to go live. You create an app here from a template. Whichever agent changes it afterwards submits the change to a service called the Host, which checks it, has it approved by a rule or by you, publishes it, and records it in the app's own folder. It covers apps you create with it: it does not take over apps you already have, and it is not a backup of their data. It is built on [pneuma-framework](https://github.com/pandazki/pneuma-framework) and [PneumaSpace](https://github.com/pandazki/pneuma-space).
+This repository gives such apps one way to go live. You create an app here from a template. Whichever agent changes it afterwards submits the change to a service called the Host, which checks it, has it approved by a rule or by you, publishes it, and records it in the app's own folder.
 
 ## What you get
 
@@ -54,10 +54,9 @@ The local edition assumes one trusted machine, four free ports on 127.0.0.1, Doc
 ```sh
 cd local
 docker compose up -d --build
-node bin/appgov.mjs create todo
 ```
 
-Then open http://127.0.0.1:8090/. The local guide goes on from there: handing the app to your agent, deciding on a change, and going back.
+Then open your apps page, http://127.0.0.1:8090/: it shows the two steps to a first app. The local guide goes on from there: deciding on a change, and going back.
 
 ## Limits
 
@@ -67,7 +66,7 @@ Then open http://127.0.0.1:8090/. The local guide goes on from there: handing th
 - The preset's rules for SQL are text patterns: they stop a `DROP` written in a string that never runs, and miss a deletion built from variables.
 - The rules read only SQL text and the app's manifest. A change that deletes or rewrites files, key-value data or objects looks like an ordinary code change to them; for that, the Host relies on the agent declaring it with `--one-way`. The agent instructions in every app tell it to.
 - The Host is code in this repository, not a package to import. The parts that publish a version, check that the app answers and put the address back are in `host/`, not in pneuma-framework.
-- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
+- What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. On 2026-11-26, from the sentence under "Start here", a Codex session installed the local edition on a machine whose default ports were taken (it chose other ports and touched nothing else), and a second session made a working app (reading-list) from its hand-off. Not run: a whole Linux machine, several users, a hosted setup.
 
 ## Built on
 

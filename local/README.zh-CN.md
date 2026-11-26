@@ -15,7 +15,7 @@
 - **一台电脑、一个人，而且你信任这台电脑。** Host 没有登录。能访问它端口的人，都能看到你的应用页面和它的 API。防止 agent 自己批准自己改动的那些措施（`approve` 必须在终端里运行，页面上做决定需要一个私有链接），挡不住同一台电脑上的其他程序。
 - **Docker** 要在运行，Compose 的版本要支持构建时的 `additional_contexts`，Host 的镜像用到了它。在 Linux 上，装 Docker Engine 加 Compose 和 buildx 插件就够了。
 - **`gateway` 容器会挂载 Docker socket**（`/var/run/docker.sock`），也就是说它能控制这台电脑上的 Docker。
-- **127.0.0.1 上要有四个空闲端口：** 8080（应用）、8081（PneumaSpace 控制台）、9000（对象存储）和 8090（Host）。其他地址上什么都不监听。要换端口，见[和其他服务并排运行](./docs/reference.zh-CN.md#和其他服务并排运行)。
+- **127.0.0.1 上要有四个空闲端口：** 8080（应用本身，在 `/apps/<name>/` 下）、8081（PneumaSpace 控制台）、9000（对象存储）和 8090（应用页面，也就是 Host）。其他地址上什么都不监听。要换端口，见[和其他服务并排运行](./docs/reference.zh-CN.md#和其他服务并排运行)。
 - **Node.js 24 或更新版本。** 单跑 CLI 用 Node 18 就够，但 agent 会在你的电脑上跑每个应用的测试，而应用模板要求 Node 24。
 - **第一次构建需要联网。** 镜像会从 GitHub 按 `compose.yaml` 里固定的提交构建 PneumaSpace 和 pneuma-framework，还会从 Docker Hub 拉基础镜像。
 
@@ -140,7 +140,7 @@ node .appgov/appgov.mjs undo "原因"         # 退回一个版本；再运行�
 node .appgov/appgov.mjs undo --to v2 "原因" # 直接退回到更早的某个版本
 ```
 
-在 `apps/` 目录本身，`list`、`create <name>`、`status <name>` 和 `history <name>` 也能用。Host 在那里放了一份 `AGENTS.md` 和 CLI 的副本，所以在 `apps/` 里启动的 agent 能回答"我有哪些应用"。
+在 `apps/` 目录本身，`list`、`create <name>`、`status <name>` 和 `history <name>` 也能用。
 
 `undo` 沿着当前版本所基于的那些版本往回退。它先发布旧版本的代码，确认应用有应答，然后才改动历史。目录里有从没提交过的编辑时，它会拒绝执行；先提交，或者用 `discard` 丢掉。在应用页面上，当前版本所基于的每个版本旁边都有"回到这个版本"按钮（页面按浏览器的语言显示中文或英文）。
 
@@ -175,7 +175,7 @@ node bin/appgov.mjs clear todo              # 清除：忘掉它；只在它不�
 | `the Host cannot vouch for what the address serves` | Host 不知道地址上跑的是哪个版本：要么发布或回退失败后，没能把地址放回去；要么回退已经发出去，却没能记进历史。 | 照那一行说的做。第一种情况，下一次有应答的发布或回退就会把它理清。第二种情况，在你运行 `undo` 之前，提交和批准都会被拒绝。 |
 | `undo` 拒绝执行，提示往回退会越过一个 "that putting files back cannot undo" 的改动 | 中间隔着一个单向改动。 | 由你决定：在终端里运行 `undo --accept-one-way "原因"`，或者在页面上回退。 |
 | `submit`、`approve` 或 `undo` 被拒绝，原因是 `app_down`、`app_removed_elsewhere` 或 `app_vanished` | 应用被收起了（被你，或者在 PneumaSpace 上），或者 PneumaSpace 上已经没有它了。什么都没检查，也没发布。 | 恢复它；如果 PneumaSpace 上已经没有它，就重新发布或清除。见[收起、恢复或清除应用](#收起恢复或清除应用)。 |
-| `cannot reach the Host at ...` | Host 没在运行，或者在另一个地址上。 | 在 `local/` 里运行 `docker compose ps`。如果在别的地址，加上 `--host <url>`。 |
+| `cannot reach the Host at ...` | Host 没在运行，或者在另一个地址上。 | 在 `local/` 里运行 `docker compose ps`。要连的 Host 不是这个克隆启动的，就加上 `--host <url>`。 |
 
 ## 东西存在哪里
 
@@ -199,6 +199,6 @@ Docker 会在每个卷名前面加上 compose 项目名，比如 `agent-app-gove
 - 规则只读 SQL 文本和 `pneuma-space.json`。一个删除或改写文件、键值数据或对象的改动，在规则看来就是普通的代码改动，在 `personal` 下常设规则会直接放行；对这些存储，Host 依靠 agent 用 `--one-way` 自己声明。
 - 预览启动时存储是空的。它能说明应用能启动、首页的应答不是服务器错误，说明不了应用在你的数据上、或者对已登录的访客是否正常。一个改动可能在应用自己的测试一个都没跑的情况下通过，这时 `submit` 和 `history` 会如实说明。
 - `screenshot` 服务给应用拍截图时，应用的脚本（包括预览的脚本）仍然能向 compose 网络里的其他服务发请求。要关掉截图，在 `.env` 里写上 `APPGOV_SCREENSHOT_CDP=`。
-- 实际跑过的：在这份代码较早的一个版本上，在 macOS 上用 colima 和 Docker Desktop 跑过真实的 Claude Code 和 Codex 会话（改应用并提交）、等主人决定后被批准或拒绝的改动、越过单向改动的回退，以及 PostgreSQL 数据快照。在这份代码上：跑过离线测试，以及在 macOS 上用 colima 完成的一次创建、一次脚本化改动和一次回退。没跑过的：整台 Linux 机器、多用户、托管运行。
+- 实际跑过的：在这份代码较早的一个版本上，在 macOS 上用 colima 和 Docker Desktop 跑过真实的 Claude Code 和 Codex 会话（改应用并提交）、等主人决定后被批准或拒绝的改动、越过单向改动的回退，以及 PostgreSQL 数据快照。在这份代码上：跑过离线测试，以及在 macOS 上用 colima 完成的一次创建、一次脚本化改动和一次回退。2026-11-26，一个 Codex 会话照仓库总览“从这里开始”里的那句话，在默认端口已被占用的机器上装好了这个版本（它换用了别的端口，没有碰任何别的东西），第二个会话照它的交接说明做出了一个能用的应用（reading-list）。没跑过的：整台 Linux 机器、多用户、托管运行。
 
 [docs/reference.zh-CN.md](./docs/reference.zh-CN.md) 里有 CLI、各模式和每项记录下来的保证是什么意思、风险规则、单向改动与回退、收起和清除应用、PostgreSQL 那项设置、由 Host 启动 Claude Code 或 Codex（`bun run drive`）、和其他服务并排运行，以及测试。
