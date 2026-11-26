@@ -10,7 +10,8 @@ const install = (await import(join(import.meta.dir, "..", "scripts", "install.mj
   parse(argv: string[]): { domain?: string; prefix: string };
   chooseDomain(recorded: string | undefined, given: string | undefined): string | null;
   hostAddress(domain: string | null, workersDev: string): string;
-  findZone(api: Api, accountId: string, hostname: string): Promise<string>;
+  findZone(api: Api, accountId: string, hostname: string): Promise<{ id: string; nameServers: string[] }>;
+  waitForRecord(hostname: string, nameServers: string[], options: { wait?: number; every?: number; resolver?: unknown }): Promise<boolean>;
   domainHolder(api: Api, accountId: string, hostname: string, service: string): Promise<string | null>;
   attachDomain(api: Api, accountId: string, zoneId: string, hostname: string, service: string): Promise<void>;
   ownerRecord(existing: Record<string, unknown> | null, url: string, key: string): Record<string, unknown>;
@@ -26,7 +27,7 @@ function fakeApi(zones: string[], domains: { hostname: string; service: string }
   const api: Api = async (method, path, body) => {
     calls.push({ method, path, ...(body ? { body } : {}) });
     const zone = /^\/zones\?name=([^&]+)&account\.id=acct$/.exec(path);
-    if (method === "GET" && zone) return { status: 200, ok: true, result: zones.includes(zone[1]!) ? [{ id: `zone-${zone[1]}`, name: zone[1] }] : [], errors: "" };
+    if (method === "GET" && zone) return { status: 200, ok: true, result: zones.includes(zone[1]!) ? [{ id: `zone-${zone[1]}`, name: zone[1], name_servers: ["ana.ns.example.net", "bob.ns.example.net"] }] : [], errors: "" };
     if (method === "GET" && path === "/accounts/acct/workers/domains") return { status: 200, ok: true, result: domains, errors: "" };
     if (method === "PUT" && path === "/accounts/acct/workers/domains") {
       domains.push({ hostname: (body as { hostname: string }).hostname, service: (body as { service: string }).service });
@@ -59,8 +60,8 @@ describe("the installer and the Host's address", () => {
 
   test("the zone is the longest suffix of the hostname the account has; none is refused before anything changes", async () => {
     const { api, calls } = fakeApi(["example.com", "deep.example.com"], []);
-    expect(await install.findZone(api, "acct", "host.deep.example.com")).toBe("zone-deep.example.com");
-    expect(await install.findZone(api, "acct", "host.example.com")).toBe("zone-example.com");
+    expect(await install.findZone(api, "acct", "host.deep.example.com")).toEqual({ id: "zone-deep.example.com", nameServers: ["ana.ns.example.net", "bob.ns.example.net"] });
+    expect((await install.findZone(api, "acct", "host.example.com")).id).toBe("zone-example.com");
     await expect(install.findZone(api, "acct", "host.example.org")).rejects.toThrow(/no zone of host\.example\.org is in this Cloudflare account/);
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
@@ -79,6 +80,24 @@ describe("the installer and the Host's address", () => {
     expect(free.calls.at(-1)).toEqual({ method: "PUT", path: "/accounts/acct/workers/domains", body: { environment: "production", hostname: "host.example.com", service: "appgov-host", zone_id: "zone-example.com" } });
     // Run again: it is the Worker's now, and nothing more is asked.
     expect(await install.domainHolder(free.api, "acct", "host.example.com", "appgov-host")).toBe("appgov-host");
+  });
+
+  test("the record is looked for at the zone's own nameservers until they have it, and only then through this machine", async () => {
+    let asked = 0;
+    const resolver = {
+      resolve4: async (name: string) => {
+        expect(name).toBe("host.example.com");
+        if (++asked < 3) throw Object.assign(new Error("queryA ENOTFOUND"), { code: "ENOTFOUND" });
+        return ["192.0.2.1"];
+      },
+      resolve6: async () => {
+        throw Object.assign(new Error("queryAaaa ENODATA"), { code: "ENODATA" });
+      },
+    };
+    expect(await install.waitForRecord("host.example.com", ["ana.ns.example.net"], { every: 5, resolver })).toBe(true);
+    expect(asked).toBe(3);
+    const never = { resolve4: async () => [], resolve6: async () => [] };
+    expect(await install.waitForRecord("host.example.com", ["ana.ns.example.net"], { wait: 30, every: 5, resolver: never })).toBe(false);
   });
 
   test("the wait for HTTPS ends when the Host answers there, and says when it is this machine's lookup that fails", async () => {

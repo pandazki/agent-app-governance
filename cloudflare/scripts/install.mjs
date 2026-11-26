@@ -19,6 +19,7 @@
 // output is shown with the account id taken out.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { lookup, Resolver } from "node:dns/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -82,13 +83,13 @@ export function chooseDomain(recorded, given) {
 /** The Host's own address: its domain when it has one, else its workers.dev address. */
 export const hostAddress = (domain, workersDev) => (domain ? `https://${domain}` : workersDev);
 
-/** The zone `hostname` is in, among the account's: the longest suffix that is one. */
+/** The zone `hostname` is in, among the account's (the longest suffix that is one): its id and its nameservers. */
 export async function findZone(api, accountId, hostname) {
   const labels = hostname.split(".");
   for (let i = 0; i < labels.length - 1; i++) {
     const found = await api("GET", `/zones?name=${labels.slice(i).join(".")}&account.id=${accountId}`);
     if (!found.ok) throw new Stop(`looking up the zone of ${hostname} failed (${found.status}: ${found.errors})`);
-    if (found.result?.[0]?.id) return found.result[0].id;
+    if (found.result?.[0]?.id) return { id: found.result[0].id, nameServers: found.result[0].name_servers ?? [] };
   }
   throw new Stop(`no zone of ${hostname} is in this Cloudflare account; add the zone first, or pick a hostname in a zone it has`);
 }
@@ -109,9 +110,31 @@ export async function attachDomain(api, accountId, zoneId, hostname, service) {
 }
 
 /**
- * Until the Host answers at `url` over valid HTTPS (a new certificate can take minutes). Right after the hostname is
- * attached, the first lookup waits a little: one made before its DNS record is out is answered "no such host", and
- * resolvers keep that answer for up to the zone's 30 minutes.
+ * Until the zone's own nameservers answer for `hostname`, up to two minutes. They keep no "no such host" answer, as
+ * resolvers do (for up to the zone's 30 minutes), so this machine's resolver is asked only once the record is out.
+ * False when they could not be asked or did not answer in time.
+ */
+export async function waitForRecord(hostname, nameServers, { wait = 120_000, every = 2000, resolver } = {}) {
+  let asking = resolver;
+  if (!asking) {
+    const addresses = (await Promise.all(nameServers.map((ns) => lookup(ns, { all: true, family: 4 }).catch(() => [])))).flat().map((a) => a.address);
+    if (!addresses.length) return false;
+    asking = new Resolver({ timeout: 3000, tries: 1 });
+    asking.setServers(addresses);
+  }
+  for (const deadline = Date.now() + wait; Date.now() < deadline; ) {
+    for (const kind of ["resolve4", "resolve6"]) {
+      try {
+        if ((await asking[kind](hostname)).length) return true;
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, every));
+  }
+  return false;
+}
+
+/**
+ * Until the Host answers at `url` over valid HTTPS (a new certificate can take minutes). `first` delays the first try.
  */
 export async function waitForHttps(url, { wait = HTTPS_WAIT_MS, every = 5000, first = 0, fetcher = fetch } = {}) {
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -324,7 +347,7 @@ export async function install(options) {
   // The owner's domain, checked before anything changes: its zone is in the account, and no other Worker has it.
   const api = (method, path, body) => cfApi(session, method, path, body);
   const domain = chooseDomain(record.domain, options.domain);
-  const zoneId = domain ? await findZone(api, accountId, domain) : null;
+  const zone = domain ? await findZone(api, accountId, domain) : null;
   let attached = domain ? (await domainHolder(api, accountId, domain, options.prefix)) === options.prefix : false;
   const url = hostAddress(domain, workersDev);
   const exists = scripts.result.some((s) => s.id === options.prefix);
@@ -381,10 +404,10 @@ export async function install(options) {
     // sending the page there; a new one gets it right after its first deploy.
     if (domain && !attached && exists) {
       log(`attaching ${domain} to the Worker ${options.prefix}`);
-      await attachDomain(api, accountId, zoneId, domain, options.prefix);
+      await attachDomain(api, accountId, zone.id, domain, options.prefix);
       attached = true;
       log(`waiting until ${url} answers over HTTPS`);
-      await waitForHttps(url, { first: 20_000 });
+      await waitForHttps(url, { first: (await waitForRecord(domain, zone.nameServers)) ? 0 : 20_000 });
     }
     writePrivate(paths.config, workerConfig(options, accountId, commit, url));
     let deployed = false;
@@ -398,12 +421,12 @@ export async function install(options) {
     let justAttached = false;
     if (domain && !attached) {
       log(`attaching ${domain} to the Worker ${options.prefix}`);
-      await attachDomain(api, accountId, zoneId, domain, options.prefix);
+      await attachDomain(api, accountId, zone.id, domain, options.prefix);
       justAttached = true;
     }
     if (domain) {
       log(`waiting until ${url} answers over HTTPS`);
-      await waitForHttps(url, { first: justAttached ? 20_000 : 0 });
+      await waitForHttps(url, { first: justAttached && !(await waitForRecord(domain, zone.nameServers)) ? 20_000 : 0 });
     }
   } finally {
     await space.close();
