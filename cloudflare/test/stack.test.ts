@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,7 +65,8 @@ const apps = () => join(root, "apps");
 const copy = () => join(apps(), "todo");
 
 beforeAll(async () => {
-  stack = await startStack();
+  // Waiting for an awake slot is bounded; short here, so a test of a wait that ends without one does not take a minute.
+  stack = await startStack({ room: { waitMs: 1500, pollMs: 100 } });
   root = mkdtempSync(join(tmpdir(), "appgov-cf-stack-"));
   ownerHome = join(root, "owner-home");
   agentHome = join(root, "agent-home");
@@ -139,6 +140,8 @@ describe("the Cloudflare edition end to end, offline", () => {
   test("create, with the agent token: a managed app on the plane, and a working copy with the agent instructions", async () => {
     const made = await cli(apps(), ["create", "todo"]);
     expect(made.out).toContain("published v1");
+    const id = stack.plane.find("todo")!.id;
+    expect(made.out).toContain(`its requests and wake and sleep counts, on PneumaSpace: ${stack.plane.origin}/dashboard?view=projects&app=${id}&tab=usage`);
     expect(made.code).toBe(0);
     const app = stack.plane.apps.find((a) => a.name === "todo" && a.expiresAt === null)!;
     expect(app.manager?.name).toBe("appgov");
@@ -151,6 +154,17 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.bucket.objects.has(folderKey("todo"))).toBe(true);
     // Made with the agent token: the record names the agent and the token, not the Host on the owner's behalf.
     expect((await cli(copy(), ["history"])).out).toMatch(/create published -> v1 by test-agent \(token "laptop" \(t[a-f0-9]+\)\) \[agent-driven\]/);
+  });
+
+  test("create under a name an app made outside this Host has: refused in plain words, and that app is not touched", async () => {
+    const outside = stack.plane.outsider("made-outside");
+    const result = await cli(apps(), ["create", "made-outside"]);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("PneumaSpace already has an app named made-outside, and this Host does not manage it: it was made in the workspace outside this Host.");
+    expect(result.out).toContain("This Host never takes over or changes an app it does not manage, so choose another name.");
+    expect(stack.plane.calls.filter((c) => c.method !== "GET" && c.path.includes(`/apps/${outside.id}`))).toEqual([]);
+    expect(stack.plane.apps.filter((a) => a.name.startsWith("made-outside"))).toEqual([outside]);
+    expect(existsSync(join(apps(), "made-outside"))).toBe(false);
   });
 
   test("the template's own requests were made against the first preview, with the platform token, in order", async () => {
@@ -204,6 +218,7 @@ describe("the Cloudflare edition end to end, offline", () => {
     expect(stack.plane.serving("todo")!["public/style.css"]).toContain("#fafafa");
     const status = await cli(copy(), ["status"]);
     expect(status.out).toContain("todo: v2");
+    expect(status.out).toContain(`its requests and wake and sleep counts, on PneumaSpace: ${stack.plane.origin}/dashboard?view=projects&app=${stack.plane.find("todo")!.id}&tab=usage`);
     expect(status.out).toContain("changed here, not submitted: none");
     const history = await cli(copy(), ["history"]);
     expect(history.out).toMatch(/change published -> v2 by test-agent/);
@@ -475,5 +490,98 @@ describe("the Cloudflare edition end to end, offline", () => {
     status = (await cli(second, ["status"])).out;
     expect(status).toContain(`changed here, not submitted: app/public/app.js (edited here on ${next}, the version this copy holds, so fetch refuses while they are here`);
     expect((await cli(second, ["discard"])).code).toBe(0);
+  });
+
+  describe("the workspace's awake slots", () => {
+    const wake = (name: string) => stack.plane.fetch(`${stack.plane.origin}/apps/${name}/`, { headers: { authorization: `Bearer ${FAKE_TOKEN}` } }).then((r) => r.text());
+    // Previews still on the plane that a test here made (a change that waits from an earlier test keeps its own).
+    let earlier = new Set<string>();
+    const stillOnPlane = () => stack.plane.apps.filter((a) => a.expiresAt !== null && a.status !== "purged" && !earlier.has(a.name)).map((a) => a.name);
+    const awake: { awake: boolean }[] = [];
+    beforeEach(() => {
+      earlier = new Set(stack.plane.apps.filter((a) => a.expiresAt !== null && a.status !== "purged").map((a) => a.name));
+    });
+    afterEach(() => {
+      for (const app of awake.splice(0)) app.awake = false;
+    });
+    const actionsOn = (name: string) => stack.plane.calls.filter((c) => c.path === `/apps/${stack.plane.find(name)!.id}/actions`).map((c) => (c.body as { type: string }).type);
+    const change = (word: string) => {
+      const style = join(copy(), "app", "public", "style.css");
+      writeFileSync(style, `${readFileSync(style, "utf8")}\n/* ${word} */\n`);
+    };
+    afterAll(() => {
+      stack.plane.awakeQuota = null;
+    });
+
+    test("with every slot held, one by the app's own live instance, that instance sleeps to make room and the change goes through", async () => {
+      stack.plane.awakeQuota = 2;
+      const outside = stack.plane.outsider("made-elsewhere", true);
+      awake.push(outside);
+      await wake("todo");
+      expect(stack.plane.find("todo")!.awake).toBe(true);
+      change("own slot");
+      const result = await cli(copy(), ["submit", "A change while both slots are held"]);
+      expect(result.out).toMatch(/published v\d+/);
+      expect(result.code).toBe(0);
+      // Only the app's own instance was put to sleep; the app made elsewhere was not touched.
+      expect(actionsOn("todo")).toContain("sleep");
+      expect(actionsOn("made-elsewhere")).toEqual([]);
+      expect(outside.awake).toBe(true);
+      expect(stillOnPlane()).toEqual([]);
+    });
+
+    test("with every slot held by apps this Host may not put to sleep, the submit waits, then says who holds them; no preview is left", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("held-one", true);
+      const two = stack.plane.outsider("held-two", true);
+      awake.push(one, two);
+      const before = stack.plane.serving("todo");
+      change("no slot");
+      const began = Date.now();
+      const result = await cli(copy(), ["submit", "A change with no slot to be had"]);
+      expect(Date.now() - began).toBeGreaterThanOrEqual(1500);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("preview_refused");
+      expect(result.out).toContain("PneumaSpace refused to start the preview: all 2 awake slots of the workspace are held");
+      expect(result.out).toContain("held-one (not managed by this Host)");
+      expect(result.out).toContain("held-two (not managed by this Host)");
+      expect(result.out).toContain("Nothing was found wrong with the change itself, and nothing was released.");
+      expect(result.out).toContain("trying again later will work");
+      // The preview that could not start was discarded before the answer, and nothing else was touched.
+      expect(stillOnPlane()).toEqual([]);
+      expect(actionsOn("held-one")).toEqual([]);
+      expect(actionsOn("held-two")).toEqual([]);
+      expect(stack.plane.serving("todo")).toEqual(before);
+      await cli(copy(), ["discard"]);
+    });
+
+    test("a create with every slot held waits, then says who holds them; no app and no preview is left", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("full-one", true);
+      const two = stack.plane.outsider("full-two", true);
+      awake.push(one, two);
+      const result = await cli(apps(), ["create", "roomless"]);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("preview_refused");
+      expect(result.out).toContain("full-one (not managed by this Host) and full-two (not managed by this Host)");
+      expect(result.out).toContain("trying again later will work");
+      expect(stillOnPlane()).toEqual([]);
+      expect(stack.plane.find("roomless")).toBeUndefined();
+      expect(existsSync(join(apps(), "roomless"))).toBe(false);
+      expect(actionsOn("full-one")).toEqual([]);
+      expect(actionsOn("full-two")).toEqual([]);
+    });
+
+    test("a slot that comes free while the Host waits is taken, and the change goes through", async () => {
+      stack.plane.awakeQuota = 2;
+      const one = stack.plane.outsider("busy-one", true);
+      const two = stack.plane.outsider("busy-two", true);
+      awake.push(one, two);
+      setTimeout(() => (two.awake = false), 400);
+      change("slot frees");
+      const result = await cli(copy(), ["submit", "A change that waits for a slot"]);
+      expect(result.out).toMatch(/published v\d+/);
+      expect(stillOnPlane()).toEqual([]);
+    });
   });
 });

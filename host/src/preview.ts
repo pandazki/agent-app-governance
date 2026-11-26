@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { snapshot, sourceSignature } from "./artifact";
 import { makePreviewRequests, refusalText, type PreviewRequest, type PreviewRequestFacts } from "./preview-requests";
+import { DEFAULT_ROOM, heldSlots, publishMakingRoom, refusedForRoom, type Room } from "./room";
 import type { SpaceApp, SpaceManager, SpaceRuntime } from "./space";
 import { timed } from "./steps";
 
@@ -42,14 +43,26 @@ export type Booted =
 
 /**
  * Why PneumaSpace refused to publish a preview, in words, when the reason is not the change: the tenant's ephemeral
- * quota (appctl prints the refusal's `quota` field), or a ttl above `ephemeral_max_ttl_seconds`. Undefined otherwise.
+ * quota (appctl prints the refusal's `quota` field), every awake slot held (host/src/room.ts), or a ttl above
+ * `ephemeral_max_ttl_seconds`. Undefined otherwise.
  */
 function refusal(output: string, ttlSeconds: number): string | undefined {
   const fine = "Nothing was found wrong with the change itself, and nothing was released.";
+  if (refusedForRoom({ code: 1, output })) {
+    return `${fine} PneumaSpace refused to start the preview: ${heldSlots(output) ?? "every awake slot of the workspace is held; trying again later will work"}`;
+  }
   let quota: { resource?: unknown; used?: unknown; limit?: unknown } | undefined;
   try {
     quota = JSON.parse(/^quota (\{.*\})$/m.exec(output)?.[1] ?? "null") ?? undefined;
   } catch {}
+  if (quota?.resource === "ephemeral" && typeof quota.used === "number" && typeof quota.limit === "number" && quota.used < quota.limit) {
+    // PneumaSpace refuses a new app with the same code when the tenant's storage is full, and ephemeral apps are left.
+    return (
+      `PneumaSpace refused to publish the preview: the workspace's storage is full, not its ephemeral apps (${quota.used} of ${quota.limit} in use). ` +
+      `Each app and each preview holds a share of it. ${fine} A preview discarded in the last few minutes still holds its share until PneumaSpace has purged it, so trying again in a few minutes may work; ` +
+      "otherwise the PneumaSpace owner frees storage by purging an app"
+    );
+  }
   if (quota?.resource === "ephemeral") {
     return (
       `PneumaSpace refused to publish the preview: the tenant's ephemeral apps are all in use (${String(quota.used)} of ${String(quota.limit)}), ` +
@@ -78,19 +91,27 @@ export class Previews {
       readonly manager: SpaceManager;
       readonly ttlSeconds: number;
       readonly log: (line: string) => void;
+      /** How long a preview waits for an awake slot when every one is held (host/src/room.ts). Default one minute. */
+      readonly room?: Room;
     },
   ) {}
 
   /**
    * Publish `root` as the ephemeral app `app` and see that it answers; one that does not is discarded
-   * again. A PneumaSpace from before ephemeral apps ignores the marker and keeps a durable app, which
-   * would never end: that one is taken down again and the preview fails, saying why.
+   * again, as is one PneumaSpace created and then refused to release. A PneumaSpace from before ephemeral
+   * apps ignores the marker and keeps a durable app, which would never end: that one is taken down again
+   * and the preview fails, saying why. `own` names the apps this preview may put to sleep when every
+   * awake slot is held: the app's own live instance, which the release replaces anyway.
    */
-  async boot(app: string, root: string, check?: { readonly file: string; readonly requests: readonly PreviewRequest[] }): Promise<Booted> {
+  async boot(app: string, root: string, check?: { readonly file: string; readonly requests: readonly PreviewRequest[] }, own: readonly string[] = []): Promise<Booted> {
     const { space, manager } = this.opts;
-    const published = await timed("publish the preview", () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager }));
+    const published = await timed("publish the preview", () =>
+      publishMakingRoom(space, this.opts.room ?? DEFAULT_ROOM, manager.name, app, own, () => space.publish(app, root, { ephemeral: { ttlSeconds: this.opts.ttlSeconds }, manager })),
+    );
     let output = `[preview ${app}] ${published.output}`;
     if (published.code !== 0) {
+      // Created and then refused: it holds an ephemeral slot and storage until it ends, so it goes now.
+      if (published.app) await this.drop(app, published.app);
       const refused = refusal(published.output, this.opts.ttlSeconds);
       return refused ? { ok: false, output, refused } : { ok: false, output };
     }
@@ -141,6 +162,7 @@ export class Previews {
     draft: string,
     signature: string,
     id: string | undefined,
+    own: readonly string[] = [],
   ): Promise<{ ok: true; preview: StandingPreview; republished: boolean; id?: string } | { ok: false; reason: string; detail: string }> {
     const { state: now, listed } = await this.read(app);
     if (now.state === "standing") return { ok: true, preview: now, republished: false };
@@ -153,7 +175,7 @@ export class Previews {
       if (listed && !(id && (await this.opts.space.discard(app, this.opts.manager.name, id)))) {
         return { ok: false, reason: "preview_failed", detail: `${now.state === "gone" ? now.note : `PneumaSpace still lists ${app}`}. This Host discards only the preview it published, by the id PneumaSpace returned for it, so a new preview cannot take the name while that app holds it` };
       }
-      const booted = await this.boot(app, copy);
+      const booted = await this.boot(app, copy, undefined, own);
       if (booted.ok) return { ok: true, preview: booted.preview, republished: true, ...(booted.id ? { id: booted.id } : {}) };
       if (booted.refused) return { ok: false, reason: "preview_refused", detail: `${booted.refused}. The change still waits.\n${booted.output.slice(-600)}` };
       return { ok: false, reason: "preview_failed", detail: `the preview did not come up, so nobody can look at it; the change still waits.\n${booted.output.slice(-600)}` };

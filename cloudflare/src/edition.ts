@@ -2,6 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppHost } from "../../host/src/host";
 import { loadRiskPolicy, type GovernanceMode } from "../../host/src/policy";
+import type { Room } from "../../host/src/room";
 import type { SpaceRuntime } from "../../host/src/space";
 import type { AppLayout, CheckRun } from "../../host/src/test-coverage";
 
@@ -24,6 +25,7 @@ export interface EditionHostOptions {
   readonly manager: { readonly name: string; readonly url?: string };
   readonly previewTtlSeconds: number;
   readonly preview?: boolean;
+  readonly room?: Room;
   readonly runVerify?: (root: string, command: string) => Promise<CheckRun>;
   readonly log?: (line: string) => void;
 }
@@ -44,6 +46,7 @@ export function editionHost(opts: EditionHostOptions): AppHost {
     layout: CF_LAYOUT,
     // Agents work in working copies the CLI holds; the container's directory is a cache of the record in R2.
     workingCopiesApart: true,
+    ...(opts.room ? { room: opts.room } : {}),
     ...(opts.runVerify ? { runVerify: opts.runVerify } : {}),
     ...(opts.log ? { log: opts.log } : {}),
   });

@@ -127,6 +127,8 @@ export interface StackOptions {
    * address, the domain) and `otherUrl` the one it had before (workers.dev).
    */
   readonly domain?: boolean;
+  /** How long the Host waits for an awake slot on PneumaSpace, and how often it asks meanwhile (AppHostOptions.room). */
+  readonly room?: { readonly waitMs: number; readonly pollMs: number };
 }
 
 export async function startStack(options: StackOptions = {}): Promise<Stack> {
@@ -150,6 +152,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       governance: "personal",
       manager: { name: "appgov", url: `${origin}/` },
       previewTtlSeconds: 600,
+      ...(options.room ? { room: options.room } : {}),
     });
     const server = createContainerServer({ host, appsDir, secret, ownerSubject: "user:owner" });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

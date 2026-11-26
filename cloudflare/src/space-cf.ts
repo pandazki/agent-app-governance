@@ -3,6 +3,7 @@ import { cpSync, existsSync, lstatSync, readdirSync, readFileSync } from "node:f
 import { extname, join } from "node:path";
 import {
   MANAGER_HEADER,
+  type AwakeSlots,
   type CommandResult,
   type ProbeResult,
   type PublishOptions,
@@ -104,6 +105,8 @@ interface Listed {
 
 /** The plane's authoritative detail of one app (GET /apps/:id). */
 interface Detail extends Listed {
+  /** Whether the app's Node process runs now: one that is awake or waking holds one of the tenant's awake slots. */
+  readonly runtime?: { readonly state?: string; readonly running?: boolean };
   readonly current: { readonly number: number; readonly digest: string } | null;
   readonly releases: readonly { readonly number: number; readonly digest: string }[];
 }
@@ -220,6 +223,8 @@ export class CfSpace implements SpaceRuntime {
 
   async publish(name: string, dir: string, options: PublishOptions = {}): Promise<PublishResult> {
     const { ephemeral, manager } = options;
+    // The app's id once it is known, also for a refusal: a preview created and then refused is discarded by it.
+    let id: string | undefined;
     try {
       const { pkg, bytes, digest } = await timed("build the package", () => packageApp(dir));
       let app = await timed("look up the app on PneumaSpace", () => this.find(name));
@@ -235,6 +240,7 @@ export class CfSpace implements SpaceRuntime {
         app = { ...created, current: null, releases: [] };
         this.ids.set(name, created.id);
       }
+      id = app.id;
       if (ephemeral) this.ephemeral.set(name, app.id);
       const kind = ephemeral ? { ephemeral: true } : {};
       // A durable app that already has a release with these exact bytes goes back to it with the typed action
@@ -248,7 +254,6 @@ export class CfSpace implements SpaceRuntime {
         const after = await timed("roll back to the earlier release", () => this.api<Detail>("POST", `/apps/${app!.id}/actions`, { type: "rollback", release: earlier.number }, manager?.name));
         return { code: 0, output: `${name} went back to release ${earlier.number}, which holds these exact files, as release ${after.current?.number ?? "?"}`, app: app.id };
       }
-      const id = app.id;
       const ticket = await timed("ask for an upload ticket", () =>
         this.api<{ uploadId: string; url: string; headers: Record<string, string> }>("POST", `/apps/${id}/uploads`, { manifest: pkg.manifest, digest, bytes: bytes.length, ...kind }, manager?.name),
       );
@@ -257,6 +262,8 @@ export class CfSpace implements SpaceRuntime {
         if (!put.ok) throw new Error(`the package upload answered ${put.status}`);
         await put.body?.cancel();
       });
+      // A preview this process is putting to sleep still holds an awake slot until it sleeps, and the release needs one.
+      if (this.sleeping.size) await timed("wait for a preview to go to sleep", () => Promise.all(this.sleeping.values()));
       const released = await timed("release the upload", () =>
         this.api<Detail>(
           "POST",
@@ -268,16 +275,18 @@ export class CfSpace implements SpaceRuntime {
       const ends = released.expiresAt ? ` expires ${new Date(released.expiresAt).toISOString()}  app ${app.id}` : "";
       return { code: 0, output: `released ${name} as release ${released.current?.number ?? "?"}${ends}`, app: app.id };
     } catch (err) {
-      return { code: 1, output: await this.refusal(err) };
+      return { code: 1, output: await this.refusal(err), ...(id ? { app: id } : {}) };
     }
   }
 
   /**
-   * A publish the plane refused, in the words the Host's previews read (host/src/preview.ts): the tenant's ephemeral
-   * quota as a `quota {...}` line, a ttl above the plane's maximum in the gateway's phrasing. Anything else as it came.
+   * A publish the plane refused, in the words the Host reads (host/src/preview.ts, host/src/room.ts): the tenant's
+   * ephemeral quota as a `quota {...}` line, every awake slot held (the new release could not start) as a `quota
+   * {"resource":"awake"}` line, a ttl above the plane's maximum in the gateway's phrasing. Anything else as it came.
    */
   private async refusal(err: unknown): Promise<string> {
     if (!(err instanceof PlaneError)) return err instanceof Error ? err.message : String(err);
+    if (err.code === "compute_quota") return `${err.message}\nquota ${JSON.stringify({ resource: "awake" })}`;
     if (err.code === "ephemeral_quota") {
       let used: number | string = "all";
       let limit: number | string = "the tenant's limit";
@@ -429,6 +438,22 @@ export class CfSpace implements SpaceRuntime {
     }
   }
 
+  /** Which apps of the tenant are awake or waking now, each read from its detail, and how many may be. */
+  async awake(): Promise<AwakeSlots> {
+    const listed = await this.list();
+    const [me, details] = await Promise.all([
+      this.api<{ tenants: { id: string; quota?: { awake?: number } }[] }>("GET", "/me"),
+      Promise.all(listed.filter((app) => app.status !== "purged").map((app) => this.detail(app.id).catch(() => null))),
+    ]);
+    const apps = details
+      .filter((d): d is Detail => d !== null && (d.runtime?.running === true || d.runtime?.state === "awake" || d.runtime?.state === "waking"))
+      .map((d) => ({ name: d.name, manager: d.manager?.name ?? null }));
+    const limit = me.tenants.find((t) => t.id === this.tenantId)?.quota?.awake;
+    // Without the quota, which slots are free is not known; the caller then treats the answer as unknown.
+    if (typeof limit !== "number") throw new Error("PneumaSpace did not say how many apps may be awake");
+    return { limit, apps };
+  }
+
   // No `purge`: the plane gives tokens no purge authority, on purpose. Clearing an app leaves it removed here, with its
   // data, for the PneumaSpace owner to purge in the console.
 
@@ -448,5 +473,11 @@ export class CfSpace implements SpaceRuntime {
 
   address(name: string): string {
     return `${this.origin}/apps/${name}/`;
+  }
+
+  /** The dashboard's usage tab for the app, as PneumaSpace's own CLI prints it, once a lookup or a publish here found its id. */
+  statsAddress(name: string): string | null {
+    const id = this.ids.get(name);
+    return id ? `${this.origin}/dashboard?view=projects&app=${encodeURIComponent(id)}&tab=usage` : null;
   }
 }
