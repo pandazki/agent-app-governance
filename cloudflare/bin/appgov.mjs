@@ -57,6 +57,10 @@ const USAGE = `usage: node ${SELF} <command> [--app <name>] [--agent <name>] [--
                          elsewhere: put the app's working copy in ./<name> (or --into <dir>)
   list [--check]         every app the centre keeps, and whether each is on PneumaSpace (--check: asked now)
   update                 replace this CLI with the centre's own (when it says it is at another API level)
+  connect <code> --host <url>
+                         connect this directory with a one-time code from the owner page: an agent token in
+                         ${STATE_DIR}/${CENTRE_FILE} (never printed), this centre's CLI and an AGENTS.md (with CLAUDE.md).
+                         The page gives the whole command: curl -fsS <url>/connect | node - <code>
 
 Owner only:
   login [--key-file <f>] sign in with the owner key the installer wrote; the session is kept next to that file
@@ -740,6 +744,43 @@ if (command === "update") {
   const same = readFileSync(self, "utf8") === starter.cli;
   if (!same) writeFileSync(self, starter.cli);
   console.log(same ? `${SELF} is the centre's own CLI already (API level ${starter.api_level}).` : `replaced ${SELF} with the centre's own CLI (API level ${starter.api_level}). Run your command again.`);
+  process.exit(0);
+}
+
+if (command === "connect") {
+  // The agent's side of connecting from the owner page (worker/connect.ts): the one-time code is traded for an agent
+  // token, which goes straight into .appgov/centre.json and is never printed; then this centre's CLI and starter
+  // instructions go beside it, as token create --write leaves them.
+  const code = args[0];
+  if (!code) fail(`connect takes the one-time code the owner page shows: curl -fsS <the Host's address>/connect | node - <code>`);
+  if (!CENTRE) fail("connect needs the Host's address (--host <url>), as in the command the owner page shows");
+  const dir = resolve(flags.into ?? ".");
+  const file = join(dir, STATE_DIR, CENTRE_FILE);
+  if (existsSync(file)) fail(`${file} exists already, so ${dir} is connected. Nothing was changed.`);
+  const at = new URL(`${CENTRE}/connect`);
+  const traded = await request("POST", at, { code, agent: identifyAgent().name });
+  if (traded.err) fail(`cannot reach the Host at ${CENTRE} (${traded.err.code ?? traded.err.message}). If a sandbox blocks the network, run this with network access (ask the user). Nothing was changed.`, 3);
+  checkLevel(traded.level, at);
+  let data = {};
+  try {
+    data = JSON.parse(traded.text);
+  } catch {}
+  if (traded.status !== 201 || typeof data.token !== "string") {
+    fail(`${data.error ?? `the Host answered ${traded.status}`}${data.reason === "bad_code" || data.reason === "too_many_attempts" ? "\nAsk the user for a new code: they make one on the owner page, under \"Connect my AI assistant\"." : ""} Nothing was changed.`, 3);
+  }
+  const home = typeof data.host_url === "string" && data.host_url ? clean(data.host_url) : CENTRE;
+  const starter = await request("GET", new URL(`${home}/starter`), undefined, data.token);
+  let found = null;
+  try {
+    found = starter.status === 200 ? JSON.parse(starter.text) : null;
+  } catch {}
+  if (typeof found?.cli !== "string" || typeof found?.agents !== "string") {
+    fail(`the Host made the agent token but did not send its CLI and instructions (${starter.err?.code ?? starter.status}); nothing was written. Ask the user to revoke "${data.label}" on the owner page and make a new code.`, 3);
+  }
+  writePrivate(file, { url: home, token: data.token });
+  const written = writeStarter(dir, found);
+  console.log(`connected ${dir} to the Host at ${home} as "${data.label}". The agent token is in ${join(STATE_DIR, CENTRE_FILE)}: never print it, copy it or commit it.`);
+  console.log(`written: ${[join(STATE_DIR, CENTRE_FILE), ...written].join(", ")}. Read AGENTS.md here: it says what this directory is and how to create, change and list apps.`);
   process.exit(0);
 }
 

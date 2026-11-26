@@ -453,10 +453,20 @@ export async function install(options) {
   if (!owner || owner.url !== url) writePrivate(paths.owner, ownerRecord(owner, url, ownerKey));
   const cliSession = readJson(join(options.stateDir, "session.json"));
   if (cliSession && cliSession.url !== url) writePrivate(join(options.stateDir, "session.json"), { ...cliSession, url });
-  log(`installed. The Host answers at ${url}; its owner page is ${url}/ (sign in with the key in the owner credentials file)`);
+  log(`installed. The Host answers at ${url}`);
   if (domain) log(`${workersDev} still answers the API, for working copies that hold it (their CLI says how to move: update), and sends the page to ${url}`);
   log(`owner credentials: ${paths.owner} (keep this file private; the CLI's login reads it)`);
-  log(`next: node cloudflare/bin/appgov.mjs --host ${url} login, then token create --write <the directory your agent works in>`);
+  for (const line of nextSteps(url, paths.owner)) log(line);
+}
+
+/** What the person does next, as the installer's last lines say it: the page first, the terminal for those who prefer it. */
+export function nextSteps(url, ownerFile) {
+  return [
+    `next: 1. open ${url}/ and sign in with the key in ${ownerFile} (the value of "key"; do not paste it into a chat)`,
+    `      2. under "Connect my AI assistant", name the connection, get a code, and paste the sentence it shows to Claude Code or Codex, opened in an empty folder for your apps`,
+    `      3. ask your assistant for an app; the page shows what to say`,
+    `      in a terminal instead: node cloudflare/bin/appgov.mjs --host ${url} login, then token create --write <the directory your agent works in>`,
+  ];
 }
 
 /**

@@ -132,3 +132,15 @@ describe("the installer and the Host's address", () => {
     expect(install.ownerRecord(null, "https://host.example.com", "apk_new")).toEqual({ url: "https://host.example.com", key: "apk_new" });
   });
 });
+
+describe("what the installer says at the end", () => {
+  test("the page first: open it and sign in with the key in the named file, connect the assistant there, then ask it for an app; the terminal after", () => {
+    const { nextSteps } = install as unknown as { nextSteps(url: string, ownerFile: string): string[] };
+    const lines = nextSteps("https://appgov-host.<subdomain>.workers.dev", "/home/me/.appgov/hosts/appgov-host/owner.json");
+    const said = lines.join("\n");
+    expect(lines[0]).toContain("open https://appgov-host.<subdomain>.workers.dev/ and sign in with the key in /home/me/.appgov/hosts/appgov-host/owner.json");
+    expect(said.indexOf('"Connect my AI assistant"')).toBeLessThan(said.indexOf("token create --write"));
+    expect(said).toContain("ask your assistant for an app");
+    expect(said).not.toMatch(/apk_|apt_|aps_/);
+  });
+});

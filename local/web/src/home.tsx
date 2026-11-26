@@ -10,6 +10,8 @@ import { Section, Surface } from "../beautifui/site";
 import { hue, usePage, useUi } from "./lib";
 import type { AppCard, HomeModel, Problem, Tone, WaitingCard } from "./model";
 import { AppMark, Details, EmptyState, Header, HintCard, RichText, SourceChip, StatePill } from "./parts";
+import { StartSteps } from "./start-view";
+import { ConnectionsBlock } from "./connect-view";
 
 export const TONE_VAR: Record<Tone, string> = { green: "var(--green)", orange: "var(--orange)", red: "var(--red)", neutral: "var(--ink-3)", accent: "var(--accent)" };
 
@@ -146,6 +148,8 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
           {model.checked && <CheckResult checked={model.checked} />}
           {model.apps.length ? (
             <AppGrid apps={model.apps} />
+          ) : model.start ? (
+            <StartSteps start={model.start} connect={model.connect} />
           ) : (
             <EmptyState title={ui.empty_title} body={ui.empty_body} />
           )}
@@ -161,9 +165,12 @@ export function Home({ model, onSearch }: { model: HomeModel; onSearch: () => vo
         </Section>
       )}
       <div className="flex flex-col gap-1.5 px-5 py-4 sm:px-8">
-        <Collapsible label={ui.hint_title} defaultOpen={!model.apps.length && !model.down.cards.length}>
-          <div className="max-w-[560px]"><HintCard hint={model.hint} /></div>
-        </Collapsible>
+        {model.hint && (
+          <Collapsible label={ui.hint_title} defaultOpen={!model.apps.length && !model.down.cards.length}>
+            <div className="max-w-[560px]"><HintCard hint={model.hint} /></div>
+          </Collapsible>
+        )}
+        {model.connections && model.connect && <ConnectionsBlock connections={model.connections} connect={model.connect} />}
         <Details facts={model.facts} checked={model.checked} />
       </div>
     </>

@@ -47,6 +47,8 @@ export interface HostServerOptions {
   readonly pictures?: PagePictures;
   /** The owner page's built client (web/dist); by default the one beside the source. */
   readonly assets?: PageAssets;
+  /** The apps folder as the person's own computer names it (APPGOV_APPS_HOST_DIR), for the page's first steps. */
+  readonly appsFolder?: string;
 }
 
 /**

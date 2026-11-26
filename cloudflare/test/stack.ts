@@ -9,7 +9,8 @@ import { appSummaries } from "../worker/apps-index";
 import { createContainerServer } from "../src/server";
 import { CfSpace } from "../src/space-cf";
 import { operate, withTiming, type FolderBucket, type HostPort, type StoredObject } from "../worker/folders";
-import { handle, json, OP_HEADER, ORIGIN_HEADER, sha256, type AuthStore, type StoredToken } from "../worker/gateway";
+import { handle, json, OP_HEADER, ORIGIN_HEADER, sha256 } from "../worker/gateway";
+import { AuthRecords, MapKv } from "../worker/auth-records";
 import type { PageDeps } from "../worker/page";
 import type { PageModel } from "../../local/src/page-model";
 import { assetType } from "../../local/src/page-views";
@@ -62,39 +63,10 @@ export class MemoryBucket implements FolderBucket {
   }
 }
 
-export class MemoryAuth implements AuthStore {
-  readonly sessions = new Map<string, number>();
-  readonly tokens = new Map<string, StoredToken>();
-  readonly failures = new Map<string, { slot: number; count: number }>();
-  async addSession(hash: string, expiresAt: number) {
-    this.sessions.set(hash, expiresAt);
-  }
-  async hasSession(hash: string, now: number) {
-    return (this.sessions.get(hash) ?? 0) > now;
-  }
-  async dropSession(hash: string) {
-    this.sessions.delete(hash);
-  }
-  async addToken(hash: string, token: StoredToken) {
-    this.tokens.set(hash, token);
-  }
-  async findToken(hash: string, now: number) {
-    const token = this.tokens.get(hash);
-    return token && token.revoked_at === null && token.expires_at > now ? token : null;
-  }
-  async listTokens() {
-    return [...this.tokens.values()];
-  }
-  async revokeToken(id: string, now: number) {
-    for (const [hash, token] of this.tokens) if (token.id === id) return (this.tokens.set(hash, { ...token, revoked_at: token.revoked_at ?? now }), true);
-    return false;
-  }
-  async loginFailures(key: string, now: number, failed: boolean) {
-    const slot = Math.floor(now / 600_000);
-    const kept = this.failures.get(key);
-    const count = kept && kept.slot === slot ? kept.count : 0;
-    if (failed) this.failures.set(key, { slot, count: count + 1 });
-    return failed ? count + 1 : count;
+/** The auth Durable Object's own rules (worker/auth-records.ts), over a map. */
+export class MemoryAuth extends AuthRecords {
+  constructor() {
+    super(new MapKv());
   }
 }
 

@@ -16,6 +16,8 @@ export const UI_KEYS = [
   "theme_light", "theme_dark", "language",
   "signin_title", "signin_lead", "signin_where", "signin_key", "signin_go", "signin_wrong", "signin_limited", "sign_out", "owner_signed_out", "loading",
   "take_down", "bring_back", "publish_again", "clear", "clear_go", "life_title", "clear_deletes", "clear_keeps", "down_title", "not_running", "check_now",
+  "more_info", "connect_title", "connect_label", "connect_placeholder", "connect_go", "connect_paste", "connect_waiting", "connect_expired", "connect_again", "connect_close", "connect_more", "connect_limit",
+  "connections_title", "connect_another", "revoke", "revoke_body", "revoke_go",
 ] as const;
 export type UiKey = (typeof UI_KEYS)[number];
 export type Ui = Readonly<Record<UiKey, string>>;
@@ -163,8 +165,57 @@ export interface HomeModel extends Common {
   readonly down: { readonly cards: readonly AppCard[]; readonly show: string };
   /** When PneumaSpace last confirmed the states shown, where they come from stored facts, and how to ask again. */
   readonly checked: Checked | null;
-  readonly hint: Hint;
+  /** While there are no apps: the steps to a first one, in place of the empty list and of `hint`. */
+  readonly start: StartModel | null;
+  /** What to tell the agent for a new app or a change; null while `start` says it. */
+  readonly hint: Hint | null;
+  /** Connecting an assistant from this page (the Cloudflare edition); null where agents need no credential. */
+  readonly connect: ConnectModel | null;
+  /** The assistants connected to this Host, with a way to revoke each (the Cloudflare edition). */
+  readonly connections: readonly Connection[] | null;
   readonly facts: readonly Fact[];
+}
+
+/** One step on the way to a first app. `done`: behind the person; `now`: theirs to do; `later`: after the one before. */
+export interface StartStep {
+  readonly title: string;
+  readonly state: "done" | "now" | "later";
+  /** What the step gives to copy, with the words before it: a folder, a sentence. Shown unless the step is later. */
+  readonly copy: { readonly label: string; readonly text: string; readonly mono: boolean } | null;
+  /** Once done, what was done, in a few words. */
+  readonly doneNote: string | null;
+  /** What the person may want to know, behind the step's small info control. */
+  readonly more: string | null;
+  /** The step is connecting an assistant, done on this page (ConnectModel). */
+  readonly connect: boolean;
+}
+
+export interface StartModel {
+  readonly steps: readonly StartStep[];
+}
+
+/** Connecting an assistant with a one-time code: the routes, and the words that go with the code. */
+export interface ConnectModel {
+  /** POST { label } answers { id, code, expires_at, command }. */
+  readonly url: string;
+  /** POST, with `{id}` filled: what became of the code (waiting, used, expired, gone). */
+  readonly stateUrl: string;
+  /** POST, with `{id}` filled: close the code before it is used. */
+  readonly cancelUrl: string;
+  /** Where the page goes once the code was used. */
+  readonly done: string;
+  /** The sentence to give the assistant, with `{command}` where the command goes. */
+  readonly sentence: string;
+}
+
+/** An assistant connected to this Host: an agent token, from a code or from `token create`. */
+export interface Connection {
+  readonly id: string;
+  readonly label: string;
+  /** Which agent connected, when, and when it was last used. */
+  readonly meta: Rich;
+  /** POST: revoke it. */
+  readonly revokeUrl: string;
 }
 
 export type RowBadge = "done" | "failed" | "waiting" | "plain" | "undo";

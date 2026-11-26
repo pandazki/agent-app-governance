@@ -2,6 +2,26 @@
 
 [中文版](./README.zh-CN.md)
 
+## Start here
+
+You get a page with the small apps your coding agent (Claude Code or Codex) builds for you, a record of every change, your say on the risky ones, and a way back to an earlier version.
+
+Choose one edition:
+
+- **Local**: runs on your computer, in Docker. You need Docker, Node.js 24 and git. Nothing to pay. About five minutes.
+- **Cloudflare**: runs on your own Cloudflare account, so nothing runs on your computer once it is installed. You need a Cloudflare account on the Workers Paid plan (it costs money every month) with a domain in it (a domain costs a yearly fee), and Docker, Node.js 24 and Bun for the install. It installs PneumaSpace there too, and asks you for a few things only you can do in Cloudflare.
+
+The easiest way to start: open Claude Code or Codex in the folder where it should go, and paste one sentence.
+
+- Local: `Install the local edition of https://github.com/pandazki/agent-app-governance on this computer, following AGENTS.md in that repository.`
+- Cloudflare: `Install the Cloudflare edition of https://github.com/pandazki/agent-app-governance on my Cloudflare account, following AGENTS.md in that repository.`
+
+Your agent checks what is needed first and stops to ask you for what only you can do. To do it by hand: [the local guide](./local/README.md), [the Cloudflare guide](./cloudflare/README.md).
+
+When it is done, you have a page to open in your browser (http://127.0.0.1:8090/ for the local edition, your Host's own address for the Cloudflare one), and it shows the next step. Then you tell your agent what you want, for example: "Make me a new app called reading-list: a list of books I want to read, where I can add a book and tick it off when I've read it."
+
+## What it is
+
 A coding agent such as Claude Code or Codex can build a small app with stored data in a few minutes. Living with that app afterwards is the hard part:
 
 - Nobody keeps track of what changed, who asked for it, or whether anything was checked before it went live.
