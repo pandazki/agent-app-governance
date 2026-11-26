@@ -219,7 +219,7 @@ describe("clearing an app", () => {
     const status = await host.status("todo");
     expect(status.clearing).toMatchObject({ purges: true, snapshots: [] });
     expect(status.clearing.deletes).toEqual([
-      "this Host's record of todo: its versions, its history and the changes that wait for the owner, with their previews",
+      "the folder todo on this Host, the one agents work in, with its files, its versions, its history and the changes that wait for the owner, with their previews",
       "todo on PneumaSpace, with all its stored data (purged): this cannot be undone",
     ]);
     const cleared = await host.clear("todo", { ...owner(), confirm: "todo" });
@@ -231,12 +231,25 @@ describe("clearing an app", () => {
     expect(host.list()).toEqual([]);
   });
 
+  test("a purge that goes through without an answer in time still clears; one PneumaSpace refuses clears nothing", async () => {
+    await host.takeDown("todo", owner());
+    space.purgeRefuses = true;
+    expect(await refusal(host.clear("todo", { ...owner(), confirm: "todo" }))).toMatchObject({ status: 502, reason: "space_refused" });
+    expect(existsSync(app())).toBe(true);
+    expect(space.live.get("todo")!.status).toBe("removed");
+    space.purgeRefuses = false;
+    space.purgeUnanswered = true;
+    expect(await host.clear("todo", { ...owner(), confirm: "todo" })).toMatchObject({ cleared: true, space_holds: false });
+    expect(existsSync(app())).toBe(false);
+    expect(space.live.has("todo")).toBe(false);
+  });
+
   test("where it may not (the Cloudflare plane): the record goes, and PneumaSpace keeps the app removed with its data, as the confirmation said", async () => {
     space.purges = false;
     await host.takeDown("todo", owner());
     const status = await host.status("todo");
     expect(status.clearing.purges).toBe(false);
-    expect(status.clearing.deletes).toEqual(["this Host's record of todo: its versions, its history and the changes that wait for the owner, with their previews"]);
+    expect(status.clearing.deletes).toEqual(["the folder todo on this Host, the one agents work in, with its files, its versions, its history and the changes that wait for the owner, with their previews"]);
     expect(status.clearing.keeps[0]).toBe(
       "todo on PneumaSpace, removed, with all its stored data: this Host may not purge it there. Its name, its app slot and its storage stay taken until the PneumaSpace owner purges it in PneumaSpace's console",
     );
@@ -272,5 +285,40 @@ describe("clearing an app", () => {
 
     expect(status.clearing.snapshots).toEqual(["snap-1"]);
     expect(status.clearing.keeps).toContain("the data snapshots this Host made of todo (snap-1), where fake-snapshot keeps them: clearing does not delete them");
+  });
+});
+
+describe("stored facts restated from a newer listing of PneumaSpace (the Cloudflare edition's reads)", () => {
+  const listing = (at: string, apps: Record<string, string>) => ({ checked_at: at, apps });
+  const runningStatus = {
+    app_id: "todo",
+    runtime: { state: "serving", checked_at: "2026-11-26T10:00:00.000Z" },
+    taken_down: null,
+    standing: "running",
+    choices: { take_down: true, bring_back: false, publish_again: false, clear: false },
+    clearing: { purges: false, snapshots: [] as string[], snapshot_capability: null, copies_apart: true, deletes: [] as string[], keeps: [] as string[] },
+  };
+
+  test("a newer listing without the app makes a stored 'running' vanished, with what the owner may do and what clearing leaves", async () => {
+    const { restated } = await import("../../host/src/lifecycle");
+    const out = restated(runningStatus, "todo", listing("2026-11-26T10:05:00.000Z", { other: "registered" }), true);
+    expect(out).toMatchObject({ standing: "vanished", runtime: { state: "gone", checked_at: "2026-11-26T10:05:00.000Z" }, choices: { publish_again: true, clear: true, take_down: false } });
+    expect(out.clearing.keeps).toContain("nothing on PneumaSpace: it has no app named todo any more");
+  });
+
+  test("an older listing changes nothing; a removed app the owner took down stays down", async () => {
+    const { restated } = await import("../../host/src/lifecycle");
+    expect(restated(runningStatus, "todo", listing("2026-11-26T09:00:00.000Z", {}), true)).toBe(runningStatus);
+    const down = { ...runningStatus, taken_down: { at: "2026-11-26T09:30:00.000Z", by: OWNER }, standing: "down", runtime: { state: "removed", checked_at: "2026-11-26T10:00:00.000Z" } };
+    expect(restated(down, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "removed" }), true)).toMatchObject({ standing: "down", choices: { bring_back: true, clear: true } });
+  });
+
+  test("a summary stored by a Host from before these fields takes the listing alone", async () => {
+    const { restated } = await import("../../host/src/lifecycle");
+    const old = { app_id: "todo", active_version: "v3" };
+    expect(restated(old, "todo", listing("2026-11-26T10:05:00.000Z", {}))).toMatchObject({ standing: "vanished", runtime: { state: "gone" } });
+    expect(restated(old, "todo", listing("2026-11-26T10:05:00.000Z", { todo: "registered" }))).toMatchObject({ standing: "running" });
+    expect(restated(old, "todo", listing("2026-11-26T10:05:00.000Z", {}), true)).toMatchObject({ choices: { publish_again: true, clear: true } });
+    expect(restated(old, "todo", null)).toBe(old);
   });
 });

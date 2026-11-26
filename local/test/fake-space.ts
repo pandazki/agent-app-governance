@@ -237,11 +237,20 @@ export class FakeSpace implements SpaceRuntime {
         this.log.push(`purge ${name} refused`);
         return false;
       }
+      if (this.purgeRefuses) {
+        this.log.push(`purge ${name} refused`);
+        return false;
+      }
       this.live.delete(name);
       this.log.push(`purge ${name}`);
-      return true;
+      // As the gateway does when destroying the storage takes longer than the Host waits: it goes through, unanswered.
+      return !this.purgeUnanswered;
     };
   }
+  /** The purge goes through, but the Host hears no answer in time. */
+  purgeUnanswered = false;
+  /** The purge is refused, and the app stays removed. */
+  purgeRefuses = false;
 
   /** What someone at PneumaSpace's console would do behind the Host's back: remove and purge the app, data and all. */
   vanish(name: string): void {

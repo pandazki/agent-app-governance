@@ -1,4 +1,4 @@
-import { appModel, assetType, backModel, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
+import { appModel, assetType, backModel, DONE_KEYS, changeModel, homeModel, missingModel, NO_PICTURES_HERE, PAGE_ICON, pageHeaders, renderShell, signInModel, unreadableModel, type Overview, type PageContext, type UndoPlanView } from "../../local/src/page-views";
 import { asOf, peekView, readPlan, readView, serverTiming, warm, type Peek } from "./views";
 import { restated } from "../../host/src/lifecycle";
 import { currentListing } from "./runtime-check";
@@ -57,7 +57,7 @@ export const PAGE_SESSION_PREFIX = "apc_";
 export const CSRF_HEADER = "x-appgov-csrf";
 const MAX_PAGE_BODY = 16 * 1024;
 const OWNER_LIFECYCLE = new Set(["take-down", "bring-back", "publish-again", "clear"]);
-const DONE = new Set(["live", "live_marked", "no", "back", "back_marked", "down", "up", "again", "cleared", "cleared_kept"]);
+const DONE = DONE_KEYS;
 const VERSION = /^v\d+$/;
 const CHANGE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
@@ -246,7 +246,7 @@ async function view(request: Request, url: URL, deps: GatewayDeps, page: PageDep
     const again = await readView(deps, name, self, { kind: "owner" }, {});
     if (again.ok) viewed = again;
   }
-  const status = restated(asOf(viewed.view.status, ctx.now), name, check?.listing);
+  const status = restated(asOf(viewed.view.status, ctx.now), name, check?.listing, true);
   const appStatus = status as unknown as Parameters<typeof appModel>[1];
   const kept = viewed.view.history as unknown as Parameters<typeof appModel>[2];
   // The risks this mode's standing rule lets through, as the container reports them with status.

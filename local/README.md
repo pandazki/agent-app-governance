@@ -123,6 +123,25 @@ In `apps/` itself, `list`, `create <name>`, `status <name>` and `history <name>`
 
 A **one-way change** is one that putting the old code back cannot undo, such as dropping a column. In `personal` and `review-all` the rules mark it (by default, the SQL listed under `personal` above, and dropping a capability that keeps stored data). In every mode the agent can mark it too, by submitting with `--one-way "<what is lost>"`; the app's `AGENTS.md` tells it to whenever a change deletes or rewrites data the app already stored, in any kind of storage. The rules set the least a change needs, and the agent can raise it, never lower it: in `personal` and `review-all` a change the agent marks waits for you even when the rules found nothing, and you read its words as the agent's declaration, apart from what the rules found. In every mode, going back past a one-way change is refused until you confirm it: in your terminal with `node .appgov/appgov.mjs undo --accept-one-way "why"`, which asks you to type `accept`, or on the apps page. Unless the PostgreSQL option saved a copy of the data, only the code goes back, and the older version may fail on the data as it is now.
 
+## Take an app down, bring it back, or clear it
+
+Every time you run `status` or `list`, open the apps page, or a change is submitted, approved or undone, the Host asks PneumaSpace whether the app is there. When it is not, `status`, `list` and the page say so first: you took it down, it was taken down on PneumaSpace (for example in its console), PneumaSpace no longer has it, or PneumaSpace did not answer. While an app is taken down or missing, submitting, approving a waiting change and going back are refused, and nothing creates the app again on its own.
+
+These are yours to do, in your own terminal. Each command shows what it will do and asks you to type its name (for `clear`, the app's name); any words after the app's name are your reason, and the history keeps them.
+
+```sh
+node bin/appgov.mjs take-down todo "why"   # stop serving; keep the history here and the stored data on PneumaSpace
+node bin/appgov.mjs bring-back todo        # serve it again, with the data PneumaSpace kept
+node bin/appgov.mjs publish-again todo     # only when PneumaSpace no longer has it: create it anew, with no stored data
+node bin/appgov.mjs clear todo             # forget it; only once it does not serve
+```
+
+While an app is taken down, your agent's `submit` is refused with a sentence saying you took it down. `clear` works only on an app that does not serve, so a serving app has to be taken down first. It deletes the app's folder, `apps/<name>/` (the source, every version, the history and the changes that wait), and on this edition it also purges the app on PneumaSpace with all its stored data. That cannot be undone. Data snapshots from the PostgreSQL option are not deleted, and the confirmation names them.
+
+If an app was removed and purged on PneumaSpace without the Host, `status` and the page say it is not on PneumaSpace and that its stored data is gone. You choose: publish it again (it starts with no stored data) or clear it.
+
+On the apps page, opened from your owner link, the same actions are under "Take down or clear", at the bottom of an app's page with its details; that section is open when the app is not there. Apps you took down sit in their own collapsed section below the list of apps. The routes and refusals are in the [reference](./docs/reference.md#taking-an-app-down-and-clearing-it).
+
 ## When something looks wrong
 
 | What you see | What it means | What to do |
@@ -132,6 +151,7 @@ A **one-way change** is one that putting the old code back cannot undo, such as 
 | `recorded vN, but it did not go live`, or `status` says `the address serves vM, not vN` | `record` mode: version N is recorded, and the address still serves M. | Fix the cause and submit again (with no new edits, N goes out as it is), or go back. |
 | `the Host cannot vouch for what the address serves` | The Host does not know which version the address serves: after a failed release or undo it could not put the address back, or an undo went out and could not be recorded. | Do what the line says. In the first case, the next release or undo that answers settles it. In the second, submitting and approving are refused until you run `undo`. |
 | `undo` refuses, saying the way back crosses a change "that putting files back cannot undo" | A one-way change is in the way. | You decide: `undo --accept-one-way "why"` in your terminal, or go back on the page. |
+| `submit`, `approve` or `undo` refused with `app_down`, `app_removed_elsewhere` or `app_vanished` | The app is taken down (by you, or on PneumaSpace), or PneumaSpace no longer has it. Nothing was checked or released. | Bring it back; for an app PneumaSpace no longer has, publish it again or clear it. See [Take an app down, bring it back, or clear it](#take-an-app-down-bring-it-back-or-clear-it). |
 | `cannot reach the Host at ...` | The Host is not running, or runs at another address. | Run `docker compose ps` in `local/`. For another address, pass `--host <url>`. |
 
 ## Where things live
@@ -158,4 +178,4 @@ Docker puts the compose project's name in front of each volume's name, for examp
 - While the `screenshot` service takes a picture of an app, the app's scripts can still send requests to the other services on the compose network, a preview's scripts included. To switch pictures off, put `APPGOV_SCREENSHOT_CDP=` in `.env`.
 - What has been run: on an earlier build of this code, on macOS with colima and with Docker Desktop, real Claude Code and Codex sessions that changed apps and submitted them, changes that waited for the owner and were approved or denied, an undo past a one-way change, and the PostgreSQL snapshots. On this code: the offline tests, and one create, scripted change and undo on macOS with colima. Not run: a whole Linux machine, several users, a hosted setup.
 
-[docs/reference.md](./docs/reference.md) covers the CLI, the modes and what each recorded guarantee means, the risk rules, one-way changes and undo, the PostgreSQL option, starting Claude Code or Codex from the Host (`bun run drive`), running beside other services, and the tests.
+[docs/reference.md](./docs/reference.md) covers the CLI, the modes and what each recorded guarantee means, the risk rules, one-way changes and undo, taking an app down and clearing it, the PostgreSQL option, starting Claude Code or Codex from the Host (`bun run drive`), running beside other services, and the tests.

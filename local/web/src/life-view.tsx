@@ -75,7 +75,7 @@ export function LifeBlock({ life }: { life: LifeCard }) {
               <Bullets lines={action.deletes} tone="text-red" />
             </>
           )}
-          {action.keeps && (
+          {action.keeps && action.keeps.length > 0 && (
             <>
               <p className="pt-2 pb-1 text-[11px] font-medium text-ink-3">{ui.clear_keeps}</p>
               <Bullets lines={action.keeps} />

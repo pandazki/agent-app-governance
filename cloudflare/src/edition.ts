@@ -42,6 +42,8 @@ export function editionHost(opts: EditionHostOptions): AppHost {
     previewTtlSeconds: opts.previewTtlSeconds,
     manager: opts.manager,
     layout: CF_LAYOUT,
+    // Agents work in working copies the CLI holds; the container's directory is a cache of the record in R2.
+    workingCopiesApart: true,
     ...(opts.runVerify ? { runVerify: opts.runVerify } : {}),
     ...(opts.log ? { log: opts.log } : {}),
   });

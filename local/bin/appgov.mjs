@@ -424,6 +424,7 @@ function standingLines(s) {
   const name = s.app_id;
   if (s.standing === "down") {
     const down = s.taken_down ?? {};
+    if (s.runtime?.state === "serving") return [`TAKEN DOWN here by ${down.by ?? "the owner"}, but PneumaSpace serves it again${when}. The owner records it as back (${OWNER_VERB("bring-back")}) or takes it down again.`];
     const gone = s.runtime?.state === "gone";
     return [
       `TAKEN DOWN: ${down.by ?? "the owner"} took ${name} down${down.at ? ` ${readableTime(down.at)}` : ""}. It serves nothing and takes no changes; ${gone ? "PneumaSpace no longer has it, so the data it stored there is gone" : "PneumaSpace keeps its stored data"}${when}.`,
@@ -445,7 +446,7 @@ function standingLines(s) {
   if (s.standing === "unconfirmed") return [`PneumaSpace did not answer, so whether ${name} is there is not confirmed${s.runtime?.note ? ` (${s.runtime.note})` : ""}.`];
   return [];
 }
-const serves = (s) => !s.standing || s.standing === "running" || s.standing === "unconfirmed";
+const serves = (s) => !s.standing || s.standing === "running" || s.standing === "unconfirmed" || (s.standing === "down" && s.runtime?.state === "serving");
 
 /** Every app in a few lines each: version and address, then only what deserves a look. */
 function printApps({ governance, apps }) {

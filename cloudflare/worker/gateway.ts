@@ -340,7 +340,7 @@ async function route(request: Request, deps: GatewayDeps): Promise<Response> {
       return out;
     }
     const timing = { centre: { view: viewed.ms }, view: viewed.source };
-    const status = () => ({ ...restated(asOf(viewed.view.status, now), name, check?.listing), ...(check?.failed ? { runtime_check_failed: check.failed } : {}), timing });
+    const status = () => ({ ...restated(asOf(viewed.view.status, now), name, check?.listing, true), ...(check?.failed ? { runtime_check_failed: check.failed } : {}), timing });
     return json(rest.length === 0 ? status() : { history: viewed.view.history, timing }, 200, header);
   }
   return forward(deps, name, op, principal, self, url.pathname, method, text);

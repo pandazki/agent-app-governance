@@ -691,8 +691,9 @@ describe("whether the app is there, on the page", () => {
     const clear = app.life!.actions.find((action) => action.verb === "clear")!;
     // The local gateway may purge: clearing says it deletes the app on PneumaSpace with its data.
     expect(clear).toMatchObject({
-      deletes: ["This Host's record of notes: its versions, its history, and the changes waiting for you, with their previews.", "notes on PneumaSpace, with all its stored data. This can't be undone."],
-      keeps: ["The working copies your agents hold: they stay where they are, and can no longer send changes."],
+      // Here the app's folder is the one agents work in: clearing deletes it, and purges the app on PneumaSpace.
+      deletes: ["The folder notes on this Host, the one your agents work in, with its files, its versions, its history, and the changes waiting for you, with their previews.", "notes on PneumaSpace, with all its stored data. This can't be undone."],
+      keeps: [],
       typeName: "notes",
       typeLabel: "Type the app's name, notes, to clear it",
       url: "/owner/apps/notes/clear",

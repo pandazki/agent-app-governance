@@ -248,11 +248,11 @@ export class Space implements SpaceRuntime {
     });
   }
 
-  private async admin(method: string, path: string, manager?: string): Promise<Response> {
+  private async admin(method: string, path: string, manager?: string, timeoutMs = 30_000): Promise<Response> {
     return fetch(`${this.opts.adminUrl.replace(/\/$/, "")}${path}`, {
       method,
       headers: { ...(this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {}), ...(manager ? { [MANAGER_HEADER]: manager } : {}) },
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -341,10 +341,13 @@ export class Space implements SpaceRuntime {
     return published.code === 0;
   }
 
-  /** The admin token may purge here (it already ends what a failed create left). Only a removed app can be purged. */
+  /**
+   * The admin token may purge here (it already ends what a failed create left). Only a removed app can be purged. The
+   * gateway answers once the app's storage is destroyed, which took 36 s on a trial stack with key-value data.
+   */
   readonly purge = async (name: string, manager?: string): Promise<boolean> => {
     try {
-      const res = await this.admin("POST", `/api/apps/${encodeURIComponent(name)}/purge`, manager);
+      const res = await this.admin("POST", `/api/apps/${encodeURIComponent(name)}/purge`, manager, 180_000);
       return res.ok || res.status === 404;
     } catch {
       return false;

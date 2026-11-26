@@ -7,7 +7,7 @@ This edition runs the Host on Cloudflare and publishes apps to a PneumaSpace dep
 ## How it differs from the local edition
 
 - **The record is at the centre.** Each app's folder (its source, every version and the history in `.pneuma-framework/`, the Host's state in `.appgov/`) is one object in an R2 bucket. Every operation loads it, runs, and saves it back only if nobody else changed it meanwhile. The container's disk is a cache: it can disappear between two operations and nothing is lost. What your agent edits is a working copy; the CLI sends it with `submit` and brings it in line with the centre after every operation that changes the app.
-- **The owner signs in.** The installer generates an owner key and writes it once to a file on your machine. Signing in with it gives a session. You create agent tokens for your agents. An agent token can create apps, submit, read status and history, fetch a working copy, undo, and discard. It cannot approve or deny a change, confirm going back past a one-way change, or create tokens. These refusals happen in the Worker, not in the CLI.
+- **The owner signs in.** The installer generates an owner key and writes it once to a file on your machine. Signing in with it gives a session. You create agent tokens for your agents. An agent token can create apps, submit, read status and history, fetch a working copy, undo, and discard. It cannot approve or deny a change, confirm going back past a one-way change, take an app down, bring it back, publish it again or clear it, or create tokens. These refusals happen in the Worker, not in the CLI.
 - **The apps page asks you to sign in.** The Worker serves the local edition's apps page at its own address. It shows nothing until you sign in with the owner key, and the session lasts 12 hours. It takes no screenshots, and there are no data snapshots.
 
 ## Before you start
@@ -102,7 +102,7 @@ An agent token that tries this is refused by the Worker. Each command shows the 
 
 Who a command acts as, in a working copy or anywhere else:
 
-- **As you, the owner:** `approve`, `deny`, `undo --accept-one-way`, `token create`, `token revoke`, `container stop`, and `create`, `submit`, `discard`, `undo` or `preview` given `--owner`. They send your session, never the agent token, and only after you type the command's name in an interactive terminal. The history records them as yours (`by owner (owner session) [owner]`). `login` needs a terminal too.
+- **As you, the owner:** `approve`, `deny`, `undo --accept-one-way`, `token create`, `token revoke`, `container stop`, `take-down`, `bring-back`, `publish-again`, `clear`, and `create`, `submit`, `discard`, `undo` or `preview` given `--owner`. They send your session, never the agent token, and only after you type the command's name in an interactive terminal. The history records them as yours (`by owner (owner session) [owner]`). `login` needs a terminal too.
 - **As the agent:** every other command that changes something. It goes with the agent token in `.appgov/centre.json` (or `APPGOV_TOKEN`) and is recorded as the agent's, with the token's label, also when you are the one who runs it. Without a token it is refused; it never falls back to your session.
 - **Reading** (`status`, `history`, `list`, `fetch`) changes nothing and is not recorded. It uses the agent token, or your session when there is no token.
 
@@ -121,6 +121,28 @@ Each asks you to type `undo`. Without `--owner`, an undo in a working copy goes 
 
 Undo puts back an earlier version's code. When PneumaSpace still has a release with exactly those files, the Host uses its typed action `rollback`; otherwise it uploads them again. Stored data stays as it is. When the versions it went back past declared other storage in `pneuma-space.json` or ran SQL the earlier version does not, `undo` says that the data they wrote is still stored and the earlier code may not show it; when one of them was declared one-way by its submitter, `undo` prints the submitter's words too. Going back past a one-way change needs the owner: signed in, in a terminal, `undo --accept-one-way "why"`, which asks you to type `undo` and, once it has shown what the crossing means, `accept`.
 
+## Take an app down, bring it back, or clear it
+
+The Host knows whether each app is on PneumaSpace. `status`, `list`, the list of apps, an app's page and the going-back page say first when it is not: you took it down, it was taken down on PneumaSpace but not through the Host, PneumaSpace no longer has it, or PneumaSpace did not answer. While an app is taken down or missing, submitting, approving a waiting change and going back are refused, and nothing creates the app again on its own.
+
+These are yours: signed in, in a terminal, each asks you to type its name (for `clear`, the app's name). In `~/apps`, name the app; any words after the name are your reason, and the history keeps them.
+
+```sh
+node .appgov/appgov.mjs take-down todo "why"   # stop serving; keep the record here and the stored data on PneumaSpace
+node .appgov/appgov.mjs bring-back todo        # serve it again, with the data PneumaSpace kept
+node .appgov/appgov.mjs publish-again todo     # only when PneumaSpace no longer has it: create it anew, with no stored data
+node .appgov/appgov.mjs clear todo             # forget it; only once it does not serve
+```
+
+- **Take down** uses PneumaSpace's `remove`. The app stops serving; its record and history stay in R2 and its stored data stays on PneumaSpace. Your agents' submits are refused with a sentence saying you took it down.
+- **Bring back** uses the plane's `resume`: the app serves its current release again, with its data.
+- **Publish again** is only for an app PneumaSpace no longer has, for example one removed and purged there without the Host. `status` and the page then say it is not on PneumaSpace and that its stored data is gone. Publishing again creates it anew from the current version, with no stored data.
+- **Clear** works only on an app that does not serve, so a serving app has to be taken down first. The centre forgets the app: its folder, history, versions, the changes that wait and their previews, its summary, stored view, plans and its entry in `apps.json`. The Host's PneumaSpace token cannot purge, so the app stays on PneumaSpace, removed, with all its stored data: its name, its app slot and its storage stay taken until the PneumaSpace owner purges it in PneumaSpace's console. The confirmation says so before you type the name, and afterwards the page names the console. Working copies stay where they are and can no longer submit.
+
+On the apps page these are under "Take down or clear", at the bottom of an app's page with its details; that section is open when the app is not there. Apps you took down sit in their own collapsed section below the list of apps.
+
+Reads come from stored views and summaries, which say what PneumaSpace answered when the app last changed. So the Worker also keeps one listing of every app on PneumaSpace (one call for all apps) as `runtime.json` in the bucket. A read of the page, `list` or `status` that finds it older than five minutes asks for a new one in the background and answers with the one it has; "Check now" on the page and `--check` on `status` and `list` ask now. The newer of the listing and the stored view wins, and the page and the CLI say when PneumaSpace last confirmed it. The four actions, and every submit, approval and undo, ask PneumaSpace live, in the container. The Worker makes that listing call itself, with the compatibility flag `global_fetch_strictly_public`, set in `cloudflare/wrangler.jsonc`, which the installer copies.
+
 ## Where things live
 
 | What | Where |
@@ -129,6 +151,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 | Every app's summary in one object, so the list of apps reads one object besides the listing | `apps.json` in the same bucket. Each summary in it carries the etag of the summary it copies, and the list takes from it only those whose etag is the one listed, so it can be behind or removed without the list being wrong |
 | What reading one app needs: its status, its newest 50 history entries and the plans for going back to the 8 nearest versions | The app's stored view in the same bucket (`views/<app>.json`), written with the folder. It names the folder's etag and its own shape; a reader that finds another etag or another shape has the container compute it again once, and it is stored for the next |
 | Plans for going back further, worked out when you opened them | `plans/<app>.json` in the same bucket: the last 8 asked for, for the folder they were worked out from, by its etag; any change to the app makes them stale |
+| The last listing of every app on PneumaSpace, with when it was taken | `runtime.json` in the same bucket |
 | A working copy | Wherever you created or fetched it; the CLI mirrors the centre's `.pneuma-framework/` into it |
 | The owner's sessions (the CLI's and the apps page's, each kind under its own prefix) and the agent tokens, hashed | A Durable Object of the Worker |
 | The apps page's files | The Worker's static assets, built by the installer from `local/web/` |
@@ -144,7 +167,7 @@ Undo puts back an earlier version's code. When PneumaSpace still has a release w
 - Undo restores code; stored data is never put back.
 - **An agent cannot open the live app or its preview.** Both answer only to people signed in to PneumaSpace, and an agent token is the centre's, not PneumaSpace's: the agent gets 401. So an agent cannot check its own release. The Host's probes only fetch the home page and one path that starts Node, so a change that breaks a data route can still pass and go live. You see it working only by opening the app yourself.
 - **A preview starts with empty storage.** It is a separate app on PneumaSpace, without the app's data. When a change that drops or rewrites stored data waits for you, the preview does not show it applied to that data; you decide from the disclosure, not from seeing which stored values would go.
-- PneumaSpace tokens cannot purge an app. When the Host takes an app's address down, the app is removed and its name stays taken until the PneumaSpace owner purges it in the console.
+- PneumaSpace tokens cannot purge an app. When you clear an app, or the Host takes down the address of a first release that failed, the app stays on PneumaSpace, removed, and its name stays taken until the PneumaSpace owner purges it in the console.
 - One container per app, started on demand for what changes the app; reading it needs none, except a plan for going back past the 8 nearest versions and the whole history of an app with more than 50 entries.
 - **The app's folder grows with every version.** Each version is a whole copy of the app (about 85 KB for the starter app), and every operation that changes the app loads and saves the folder whole: in the offline measurement below, 1 MB at 10 versions, 8.8 MB at 100 and 43 MB at 500, saved in 0.1, 0.7 and 3.5 s on one machine. A submit holds the connection open for the whole check, about 30 seconds in the runs below, about two thirds of it PneumaSpace releasing the preview and then the release (see the table below).
 - The default rules find destructive SQL by matching text, as in the local edition.

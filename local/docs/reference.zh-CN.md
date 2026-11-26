@@ -2,7 +2,7 @@
 
 [English](./reference.md) · [回到指南](../README.zh-CN.md)
 
-启动和日常使用见指南。这里写其余的内容：完整的 CLI、各个模式、风险规则、回退、PostgreSQL 那项设置、由 Host 启动 agent、和其他服务并排运行，以及测试。
+启动和日常使用见指南。这里写其余的内容：完整的 CLI、各个模式、风险规则、回退、收起和清除应用、PostgreSQL 那项设置、由 Host 启动 agent、和其他服务并排运行，以及测试。
 
 ## CLI
 
@@ -10,18 +10,22 @@
 
 | 命令 | 作用 |
 | --- | --- |
-| `status [<name>]` | 当前版本、地址、回退会回到的版本、主人、模式、是否开启了数据快照能力、PneumaSpace 上由谁管理这个应用、还没提交的文件，以及等待中的改动和各自的预览 |
+| `status [<name>]` | 应用在不在（不在时最先说明）、当前版本、地址、回退会回到的版本、主人、模式、是否开启了数据快照能力、PneumaSpace 上由谁管理这个应用、还没提交的文件，以及等待中的改动和各自的预览 |
 | `history [<name>]` | 每一次尝试，从早到晚，附带每次成立的保证 |
-| `list` | 所有应用：版本、地址、最近一次改动、等待中的改动、还没提交的文件 |
+| `list` | 所有应用：版本、地址、在不在、最近一次改动、等待中的改动、还没提交的文件 |
 | `submit "<intent>"` | 把工作目录交给 Host 走一遍流程。`--one-way "<会丢失什么>"` 声明这个改动会删除或改写已存的数据，任何模式都可用（见[单向改动与回退](#单向改动与回退)） |
 | `discard` | 把工作目录放回当前版本，丢掉从没提交过的编辑 |
 | `undo "<why>"` | 退回一个版本。`--to <version>` 直接退到更早的某个版本；`--accept-one-way` 是主人确认越过单向改动往回退 |
 | `approve <id>`、`deny <id> [why]` | 主人对等待中的改动做决定。都需要终端，并要你输入那个词来确认 |
 | `preview <id>` | 等待中的改动的预览自己结束后，重新发布一次 |
 | `create <name>` | 创建并发布一个新应用 |
+| `take-down [<name>] [why]` | 主人的操作：收起，让应用停止服务，保留一切（见[收起和清除应用](#收起和清除应用)） |
+| `bring-back [<name>] [why]` | 主人的操作：恢复一个已收起的应用，带着 PneumaSpace 保留的数据重新提供服务 |
+| `publish-again [<name>] [why]` | 主人的操作：重新发布，在 PneumaSpace 上已经没有这个应用时，用它的当前版本重新创建。没有任何存储的数据 |
+| `clear [<name>]` | 主人的操作：清除一个不提供服务的应用，并在 PneumaSpace 上彻底删除（purge）它。要你输入应用名 |
 | `guide [--write <file>]` | 打印一小段文字，可放进 agent 的用户级说明里：Host 的地址、应用总目录和各条命令。`--write` 把它写进指定文件的两个标记之间，以后再运行就替换那一段 |
 
-在应用目录里，命令作用于这个应用；在别处，用 `--app <name>` 指明（`status` 和 `history` 也可以直接把名字写在后面）。`--json` 会把 Host 的回答原样以 JSON 打印出来。
+在应用目录里，命令作用于这个应用；在别处，用 `--app <name>` 指明（`status`、`history`、`take-down`、`bring-back`、`publish-again` 和 `clear` 也可以直接把名字写在后面）。`--json` 会把 Host 的回答原样以 JSON 打印出来。
 
 CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <url>` 参数；`APPGOV_HOST`；Host 写下的 `.appgov/host.json`，依次在当前目录和它上面的每一层目录里找，然后在 CLI 文件旁边找，再到 CLI 所在目录旁边的 `apps/.appgov/host.json` 里找（`local/bin/appgov.mjs` 就是这样找到 `local/apps/.appgov/host.json` 的）；最后是 `http://127.0.0.1:8090`。连不上时，它会说明试的是哪个地址、这个地址从哪里来。
 
@@ -118,6 +122,53 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 - **越过单向改动往回退，在任何模式下都要等主人。** 回退会被拒绝（`crosses_one_way_change`，CLI 以 2 退出），什么都不会动。提示会列出每个单向版本及其原因，并说明属于哪种情况：(a) Host 在那次改动之前存了数据，数据会回到那份快照，此后存下的一切都被搁到一边、不再出现在应用里；(b) 回去的只有代码，旧版本可能读不了现在的数据。API 的回答里带有 `data_restore: "snapshot"` 或 `"none"`。
 - **主人确认**：在终端里运行 `undo --accept-one-way "<why>"` 并输入 `accept`，或者在从主人链接打开的页面上确认。确认会带上方案开始时的版本；如果这中间又有别的版本上线，Host 返回 `plan_changed`（409），什么都不变。除主人以外，Host 对任何人都返回 403。历史条目会记下 `one_way_crossed`、`confirmed_by`，在情况 (a) 下还会记下被替换的数据去了哪里。如果越过的某个版本是提交者声明为单向的，回退的回答会在 `declared_one_way` 里列出它和那段原话，CLI 也会打印出来：回退放回的是它的代码，不是它对已存数据做过的事。
 
+## 收起和清除应用
+
+应用在不在，来自两个地方：Host 自己的记录（主人有没有通过这个 Host 收起它，也就是历史里有一条 `take_down`，后面没有跟着 `bring_back` 或 `publish_again`），以及 PneumaSpace 对这个应用的说法。每次 `status`、`list` 和页面上的每个应用，以及每次提交、批准和回退之前，Host 都会问 PneumaSpace；在这个版本上，每次读取都是当场去问。`status` 和 `list` 把 PneumaSpace 的回答放在 `runtime` 里（`serving`、`removed`、`gone` 或 `unknown`，带 `checked_at`），把主人的收起放在 `taken_down` 里（谁、什么时候、通过什么），把两者合起来的结论放在 `standing` 里。`status` 还带有 `choices`（主人现在能做什么）和 `clearing`（清除会删掉什么、留下什么）。
+
+| `standing` | 意思 | 主人能做什么 |
+| --- | --- | --- |
+| `running` | PneumaSpace 在提供它的服务，这里也没人收起它 | 收起 |
+| `down` | 主人通过这个 Host 收起了它。PneumaSpace 把它保留为已移除，带着数据，或者已经没有它了 | 恢复；PneumaSpace 上已经没有它时重新发布；清除 |
+| `removed_elsewhere` | PneumaSpace 把它保留为已移除，带着数据，但不是通过这个 Host | 恢复，或清除 |
+| `vanished` | PneumaSpace 上已经没有这个应用（或正在彻底删除它），而这个 Host 没有收起它，所以它存储的数据已经不在了 | 重新发布，或清除 |
+| `unconfirmed` | PneumaSpace 没有回应 | 在它回应之前，什么都不能做 |
+
+Host 记为已收起、PneumaSpace 却又在提供服务的应用（在控制台里被恢复了），仍然是 `down`。主人可以再次收起它，或者恢复它；恢复这时只是把它记为已恢复，不动 PneumaSpace。
+
+每个操作做什么：
+
+- **收起**调用 PneumaSpace 的 `remove`，带上 Host 的管理者名字。地址不再应答；PneumaSpace 保留应用存储的数据，Host 保留目录、各个版本和历史。历史里会多一条 `take_down`，写明是谁、通过什么做的（从页面上做时是 `"channel": "owner-page"`），主人给的理由写在它的意图里。等待中的改动留着：在应用恢复之前，批准会被拒绝，拒绝改动仍然可以。
+- **恢复**带着 PneumaSpace 保留的数据，重新提供当前版本的服务。本地的 gateway 没有恢复这个操作，所以 Host 把当前版本发布到那个已移除的应用上，gateway 会以同一个 id、同样的数据重新登记它。之后 Host 访问一次首页；没有应答时，`bring_back` 条目会写明。
+- **重新发布**只用于 PneumaSpace 上已经没有的应用。它把当前版本发布成一个新应用，存储是空的，`publish_again` 条目会写明应用以前存储的数据已经不在了。
+- **清除**先检查 `confirm` 是不是应用名，再检查 PneumaSpace 是否不在提供它的服务：它从不一步从 `running` 走到清除。它丢弃等待中的改动的预览；如果 PneumaSpace 把应用保留为已移除，就在那里彻底删除它和它存储的全部数据；然后删掉应用目录 `apps/<name>/`：源码、每一个版本、历史和等待中的改动。这个目录也是你的 agent 工作的地方。没有历史可以写了；Host 的日志里会留下一行，写明是谁清除的。PneumaSpace 拒绝彻底删除时，什么都不清除。PostgreSQL 那项设置做的数据快照（历史里写着名字的那些数据库）不会被删掉：`status` 在 `clearing.keeps` 里列出它们，CLI 和页面会在你输入应用名之前显示这几行。
+
+清除会不会彻底删除，取决于 Host 的 PneumaSpace 运行时有没有这项能力（`SpaceRuntime.purge`），不是一项设置。本地的 gateway 允许 Host 彻底删除一个已移除的应用。Cloudflare 版的平台不给 Host 彻底删除的权限，所以在那里，清除会把应用留在 PneumaSpace 上（已移除，带着数据），由 PneumaSpace 的主人去彻底删除。
+
+**CLI。** `take-down`、`bring-back`、`publish-again` 和 `clear` 在应用目录之外可以把应用名直接写在后面；其余的话是主人的理由。每条命令没有终端就拒绝运行，先显示应用的状态和这个操作会做什么（`clear` 会显示会删除什么、会保留什么），再要你输入命令名，`clear` 要输入应用名。它以 `APPGOV_OWNER`（默认 `user:me`）作为身份发出。
+
+**路由。** 前三个返回 `standing`、`runtime`、`taken_down`，以及一句说明发生了什么的 `note`。`clear` 返回 `deleted`、`kept` 和 `space_holds`（PneumaSpace 是否还留着这个应用）。JSON API 对写操作的规则同样适用：不能带 `Origin` 或 `Sec-Fetch-Site`，必须声明 `content-type: application/json`。
+
+| 路由 | 请求体 |
+| --- | --- |
+| `POST /apps/<name>/take-down`、`/bring-back`、`/publish-again` | `subject`（只接受应用的主人），可选 `reason` |
+| `POST /apps/<name>/clear` | 同上，再加 `confirm`：应用名 |
+| `POST /owner/apps/<name>/take-down`、`/bring-back`、`/publish-again`、`/clear` | 页面用的，带主人链接的令牌。身份是应用的主人，条目里写着 `"channel": "owner-page"`。可选 `reason`；`clear` 要带 `confirm` |
+
+**拒绝。** 这些拒绝都不写任何东西，CLI 以 3 退出。
+
+| 代码 | 状态码 | 什么时候 |
+| --- | --- | --- |
+| `app_down` | 409 | 主人收起了应用时的提交、批准或回退。提示会写明是谁、什么时候收起的，并说明要由主人恢复 |
+| `app_removed_elsewhere` | 409 | 同上，应用是在 PneumaSpace 上收起的，不是通过这个 Host |
+| `app_vanished` | 409 | 同上，PneumaSpace 上已经没有这个应用：发布只会把它重新建成一个空应用。由主人重新发布或清除 |
+| `owner_required` | 403 | 应用主人以外的人要求收起、恢复、重新发布或清除 |
+| `confirm_name` | 400 | 清除时 `confirm` 里不是一字不差的应用名 |
+| `clear_running` | 409 | PneumaSpace 正在提供这个应用的服务时要求清除：先收起 |
+| `cannot_take_down`、`cannot_bring_back`、`cannot_publish_again` | 409 | 这个操作不符合应用现在的状态：比如恢复一个 PneumaSpace 上已经没有的应用，或者重新发布一个它还留着的应用 |
+| `space_unknown` | 502 | PneumaSpace 没有回应，无法知道应用在不在 |
+| `space_refused` | 502 | PneumaSpace 拒绝了移除、发布或彻底删除，或者没有回应 |
+
 ## PostgreSQL 数据快照
 
 这是一种可选的做法，不是 pneuma-framework 或 PneumaSpace 的承诺。开启后，单向改动第一次上线之前，Host 会复制一份应用的 PostgreSQL 数据库；经确认越过那次改动的回退会把这份副本放回去。代码在 `src/data-snapshot-postgres.ts`，复制用的是 PostgreSQL 的 `CREATE DATABASE ... TEMPLATE`。
@@ -152,7 +203,7 @@ CLI 按下面的顺序取 Host 的地址，用第一个有地址的：`--host <u
 - 每次快照和恢复都是完整复制，耗时和占用的磁盘随数据库增长。复制或替换数据库时应用会停下。
 - 从旧代码发出去到数据放回之间，旧代码跑在新数据上，可能返回错误。
 - `APPGOV_DATA_SNAPSHOT_URL` 是对那台服务器上所有应用数据库的超级用户权限。
-- 快照和被替换的数据库会一直留着，直到有人删掉。被替换的数据库仍归应用的 PostgreSQL 角色所有，所以只要还留着一个，PneumaSpace 清除这个应用（purge）就会失败；先删掉被替换的数据库。
+- 快照和被替换的数据库会一直留着，直到有人删掉，清除应用也不会删掉它们。被替换的数据库仍归应用的 PostgreSQL 角色所有，所以只要还留着一个，PneumaSpace 彻底删除（purge）这个应用就会失败，清除这个应用也会以 `space_refused` 被拒绝；先删掉被替换的数据库。
 
 ## 由 Host 启动 agent（`bun run drive`）
 
@@ -235,7 +286,7 @@ Host 只接受这些主机名：`localhost`、`127.0.0.1`、`[::1]`、`APPGOV_HO
 
 ## 在一台机器上，主人这道关做了什么
 
-- `approve`、`deny` 和 `undo --accept-one-way` 没有终端就拒绝运行；需要主人做的决定如果来自别的身份，Host 返回 403。主人是应用的 `.appgov/app.json` 里写的那个，取自创建应用时的 `APPGOV_OWNER`（默认 `user:me`）。做决定的身份是 Host 从请求里读的，所以这只能挡住诚实的 agent 批准自己的改动，挡不住这台机器上的其他程序。
+- `approve`、`deny`、`undo --accept-one-way`、`take-down`、`bring-back`、`publish-again` 和 `clear` 没有终端就拒绝运行；需要主人做的决定如果来自别的身份，Host 返回 403。主人是应用的 `.appgov/app.json` 里写的那个，取自创建应用时的 `APPGOV_OWNER`（默认 `user:me`）。做决定的身份是 Host 从请求里读的，所以这只能挡住诚实的 agent 批准自己的改动，挡不住这台机器上的其他程序。
 - 主人链接：Host 生成一次随机令牌，存在自己的状态卷里（`/state/owner-token`，只有 Host 的用户能读），每次启动都打印这个链接。令牌放在地址里 `#` 之后的部分，浏览器不会把这部分发给任何服务器；页面把它留在当前标签页，每次做决定时从页面自己的源一起发出。页面上的决定和终端里的决定经过同样的检查，写下同样的历史条目，只多一项 `"channel": "owner-page"`。能读 Host 日志的程序就能读到这个链接。
 - Host 的 JSON API 拒绝只有浏览器才会发的请求：会改动东西的请求不能带 `Origin` 或 `Sec-Fetch-Site`，而且必须声明 `content-type: application/json`。这能防止网页通过 API 做事，但不是认证。
 - 截图：`screenshot` 服务是一个无界面的 Chrome。某个版本上线时、等待中的改动有预览时，以及隔 `APPGOV_SCREENSHOT_REFRESH_HOURS` 小时（默认 24）之后，Host 会请它给应用拍一张截图。每次拍照都不带 cookie，所以要求访客登录的应用拍不到截图。被拍的页面自己发出的请求只能去它自己的地址或走 https，但 WebSocket，以及来自其他站点的框架发出的任何请求，都不受限制，所以页面的脚本（包括预览的脚本）能向 compose 网络里的每个服务发请求。那里的 PneumaSpace 管理 API 有一些写操作不需要登录，比如停掉一个应用。在意这一点的话，设置 `APPGOV_SCREENSHOT_CDP=` 关掉截图，其他一切照旧。

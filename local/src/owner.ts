@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ChangeRecordRefused } from "@pneuma-framework/host-kit/change-record";
 import { APP_NAME } from "../../host/src/artifact";
 import { HostError, type AppHost } from "../../host/src/host";
-import { appModel, assetType, backModel, changeModel, homeModel, loadPageAssets, missingModel, NO_PICTURES, PAGE_ICON, pageHeaders, renderShell, unreadableModel, type PageAssets, type PageContext, type PictureLookup } from "./page";
+import { appModel, assetType, backModel, changeModel, DONE_KEYS, homeModel, loadPageAssets, missingModel, NO_PICTURES, PAGE_ICON, pageHeaders, renderShell, unreadableModel, type PageAssets, type PageContext, type PictureLookup } from "./page";
 import type { PageModel } from "./page-model";
 import { chooseLang } from "./page-words";
 import { LIFECYCLE_VERBS, lifecycle } from "./lifecycle-routes";
@@ -138,7 +138,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   }
 }
 
-const DONE = new Set(["live", "live_marked", "no", "back", "back_marked"]);
+const DONE = DONE_KEYS;
 
 /**
  * Serve a request if it is one of the page's: `GET /`, `/app/<name>`, `/app/<name>/change/<id>`,

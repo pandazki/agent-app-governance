@@ -122,6 +122,8 @@ export interface ClearingFacts {
   readonly snapshots: readonly string[];
   /** The capability that keeps them, by its id, or null where this Host has none. */
   readonly snapshot_capability: string | null;
+  /** Agents work in copies held apart (they stay); otherwise the app's directory, where agents work, is deleted with the record. */
+  readonly copies_apart: boolean;
   /** The same, in plain English lines, for the CLI: what is deleted, what stays, and where to finish. */
   readonly deletes: readonly string[];
   readonly keeps: readonly string[];
@@ -132,8 +134,12 @@ export interface ClearingFacts {
  * (the capability the runtime declares, never the edition): the confirmation shows exactly these before the owner types
  * the name.
  */
-export function clearingWords(name: string, runtime: RuntimeFacts, purges: boolean, snapshots: readonly string[], snapshotCapability: string | null): ClearingFacts {
-  const deletes = [`this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`];
+export function clearingWords(name: string, runtime: RuntimeFacts, purges: boolean, snapshots: readonly string[], snapshotCapability: string | null, copiesApart = false): ClearingFacts {
+  const deletes = [
+    copiesApart
+      ? `this Host's record of ${name}: its versions, its history and the changes that wait for the owner, with their previews`
+      : `the folder ${name} on this Host, the one agents work in, with its files, its versions, its history and the changes that wait for the owner, with their previews`,
+  ];
   const keeps: string[] = [];
   if (runtime.state === "removed" && purges) deletes.push(`${name} on PneumaSpace, with all its stored data (purged): this cannot be undone`);
   if (runtime.state === "removed" && !purges) {
@@ -143,8 +149,8 @@ export function clearingWords(name: string, runtime: RuntimeFacts, purges: boole
   }
   if (runtime.state === "gone") keeps.push(`nothing on PneumaSpace: it has no app named ${name} any more`);
   if (snapshots.length) keeps.push(`the data snapshots this Host made of ${name} (${snapshots.join(", ")}), where ${snapshotCapability ?? "the snapshot capability"} keeps them: clearing does not delete them`);
-  keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
-  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, deletes, keeps };
+  if (copiesApart) keeps.push("the working copies agents hold: they stay where they are, and can no longer submit");
+  return { purges, snapshots: [...snapshots], snapshot_capability: snapshotCapability, copies_apart: copiesApart, deletes, keeps };
 }
 
 /**
@@ -176,21 +182,24 @@ const isFacts = (value: unknown): value is RuntimeFacts =>
   typeof value === "object" && value !== null && typeof (value as RuntimeFacts).state === "string" && typeof (value as RuntimeFacts).checked_at === "string";
 
 /**
- * Status or a summary as stored, restated from a newer listing when there is one: the newer fact about PneumaSpace
- * wins, and the standing, the owner's choices and what clearing would do follow from it. Unchanged when the stored
- * facts are as new, or when they carry no presence at all (written by a Host from before them).
+ * Status (`status`: true) or a summary as stored, restated from a newer listing when there is one: the newer fact about
+ * PneumaSpace wins, and the standing, the owner's choices and what clearing would do follow from it. Unchanged when the
+ * stored facts are as new. One stored by a Host from before these fields carries none: the listing alone says what
+ * PneumaSpace holds (no app could be taken down through a Host from before them), and a status gets the choices.
  */
-export function restated<T extends Presence>(fields: T, name: string, listing: RuntimeListing | null | undefined): T {
-  if (!listing || !isFacts(fields.runtime)) return fields;
-  const runtime = newerRuntime(fields.runtime, factsFromListing(listing, name));
-  if (runtime === fields.runtime) return fields;
+export function restated<T extends Presence>(fields: T, name: string, listing: RuntimeListing | null | undefined, status = false): T {
+  if (!listing) return fields;
+  const stored = isFacts(fields.runtime) ? fields.runtime : null;
+  const listed = factsFromListing(listing, name);
+  const runtime = stored ? newerRuntime(stored, listed) : listed;
+  if (runtime === stored) return fields;
   const down = (typeof fields.taken_down === "object" && fields.taken_down !== null ? fields.taken_down : null) as DownFacts | null;
   const standing = standingOf(down, runtime);
   const out: Record<string, unknown> = { ...(fields as Record<string, unknown>), runtime, standing };
-  if (fields.choices !== undefined) out.choices = choicesFor(standing, runtime);
+  if (fields.choices !== undefined || status) out.choices = choicesFor(standing, runtime);
   const clearing = fields.clearing as ClearingFacts | undefined;
   if (clearing && Array.isArray(clearing.snapshots)) {
-    out.clearing = clearingWords(name, runtime, Boolean(clearing.purges), clearing.snapshots, typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null);
+    out.clearing = clearingWords(name, runtime, Boolean(clearing.purges), clearing.snapshots, typeof clearing.snapshot_capability === "string" ? clearing.snapshot_capability : null, clearing.copies_apart === true);
   }
   return out as T;
 }

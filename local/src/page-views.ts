@@ -294,7 +294,7 @@ interface Presence {
   readonly runtime: { readonly state: string; readonly checked_at: string; readonly note: string } | null;
   readonly down: { readonly at: string; readonly by: string } | null;
   readonly choices: { readonly take_down: boolean; readonly bring_back: boolean; readonly publish_again: boolean; readonly clear: boolean } | null;
-  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[] } | null;
+  readonly clearing: { readonly purges: boolean; readonly snapshots: readonly string[]; readonly copiesApart: boolean } | null;
 }
 
 const STANDINGS = ["running", "down", "removed_elsewhere", "vanished", "unconfirmed"] as const;
@@ -311,7 +311,7 @@ function presenceOf(status: unknown): Presence {
     runtime: runtime && typeof runtime.state === "string" ? { state: runtime.state, checked_at: str(runtime.checked_at), note: str(runtime.note) } : null,
     down: down ? { at: str(down.at), by: str(down.by) } : null,
     choices: choices ? { take_down: choices.take_down === true, bring_back: choices.bring_back === true, publish_again: choices.publish_again === true, clear: choices.clear === true } : null,
-    clearing: clearing ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean) } : null,
+    clearing: clearing ? { purges: clearing.purges === true, snapshots: items(clearing.snapshots).map(str).filter(Boolean), copiesApart: clearing.copies_apart === true } : null,
   };
 }
 
@@ -372,12 +372,12 @@ function lifeCard(ctx: PageContext, name: string, status: AppStatus): LifeCard |
   const actions: LifeAction[] = [];
   // Clearing is offered only with what it would delete and keep, which a Host from before these fields does not say.
   if (p.choices.clear && p.clearing) {
-    const deletes = [fill(w.clear_del_record, { name }), ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : [])];
+    const deletes = [fill(p.clearing.copiesApart ? w.clear_del_record : w.clear_del_folder, { name }), ...(removed && p.clearing.purges ? [fill(w.clear_del_space, { name })] : [])];
     const keeps = [
       ...(removed && !p.clearing.purges ? [fill(w.clear_keep_space, { name })] : []),
       ...(gone ? [fill(w.clear_keep_none, { name })] : []),
       ...(p.clearing.snapshots.length ? [fill(w.clear_keep_snapshots, { name, refs: p.clearing.snapshots.join(", ") })] : []),
-      w.clear_keep_copies,
+      ...(p.clearing.copiesApart ? [w.clear_keep_copies] : []),
     ];
     actions.push({ verb: "clear", label: w.clear, url: url("clear"), done: link(`/?done=${removed && !p.clearing.purges ? "cleared_kept" : "cleared"}`, ctx.lang), lines: [], deletes, keeps, typeName: name, typeLabel: fill(w.clear_type, { name }), variant: "secondary" });
   }
@@ -515,10 +515,13 @@ function uiWords(w: Words): Ui {
 /** The Host's refusals a write from the page can meet, each with its sentence (refuse_<code>). */
 const REFUSAL_CODES = [
   "preview_gone", "preview_unknown", "managed_elsewhere", "serving_uncertain", "malformed_pending", "previews_off", "preview_failed", "preview_refused", "draft_changed_after_check", "crosses_one_way_change", "plan_changed",
-  "app_down", "app_removed_elsewhere", "app_vanished", "clear_running", "confirm_name", "owner_required", "space_unknown",
+  "app_down", "app_removed_elsewhere", "app_vanished", "clear_running", "confirm_name", "owner_required", "space_unknown", "space_refused",
 ] as const;
 /** The Host's refusal of an act on whether the app is there that no longer fits where it is: one sentence for all. */
 const CANNOT_CODES = ["cannot_take_down", "cannot_bring_back", "cannot_publish_again", "cannot_clear"] as const;
+
+/** What `?done=` may say after one of the page's own writes: the same set for both editions' pages. */
+export const DONE_KEYS: ReadonlySet<string> = new Set(["live", "live_marked", "no", "back", "back_marked", "down", "up", "again", "cleared", "cleared_kept"]);
 
 const DONE_WORDS = {
   live: "done_live",

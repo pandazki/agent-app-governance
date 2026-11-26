@@ -129,6 +129,12 @@ export interface AppHostOptions {
    */
   readonly dataSnapshot?: HostDataSnapshot;
   /**
+   * Agents work in copies of the app held apart from this Host's directory (the Cloudflare edition's working copies):
+   * clearing an app leaves them where they are. Without it, the app's directory is the one agents work in (the local
+   * edition), and clearing deletes it with the record.
+   */
+  readonly workingCopiesApart?: boolean;
+  /**
    * This Host's own address as the person's machine reaches it, e.g. http://127.0.0.1:8090. When set,
    * the Host records it in `.appgov/host.json` of the apps directory and of every app (at start, and
    * when it creates or opens an app), so the CLI copies there find it without APPGOV_HOST.
@@ -2469,12 +2475,15 @@ export class AppHost {
       if (act.confirm !== name) throw new HostError(400, `clearing ${name} needs its name typed exactly as the confirmation; nothing changed`, "confirm_name");
       const now = await this.presence(name, record);
       this.refuseChoice(name, "clear", now);
-      const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null);
+      const facts = clearingFacts(name, record.history<HostEntryFields>(), now.runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true);
       // Previews of the changes that wait end with the app's record; each ends itself anyway.
       for (const pending of this.pendingChanges(paths, record).pending) await this.previews.drop(previewName(name, pending.change_id), pending.preview_app_id);
       let spaceHolds = now.runtime.state === "removed";
       if (spaceHolds && this.opts.space.purge) {
-        if (!(await this.opts.space.purge(name, this.manager.name))) throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing was cleared; ${name} is still taken down, with its data.`, "space_refused");
+        // A purge that did not answer in time may still have gone through: PneumaSpace says what it holds now.
+        if (!(await this.opts.space.purge(name, this.manager.name)) && runtimeFacts(await askApp(this.opts.space, name)).state !== "gone") {
+          throw new HostError(502, `PneumaSpace did not purge ${name} (it refused or did not answer). Nothing was cleared; ${name} is still taken down, with its data.`, "space_refused");
+        }
         spaceHolds = false;
       }
       rmSync(paths.root, { recursive: true, force: true });
@@ -2545,7 +2554,7 @@ export class AppHost {
       taken_down,
       standing,
       choices: choicesFor(standing, runtime),
-      clearing: clearingFacts(name, history, runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null),
+      clearing: clearingFacts(name, history, runtime, this.opts.space, this.opts.dataSnapshot?.id ?? null, this.opts.workingCopiesApart === true),
     };
   }
 
@@ -2737,9 +2746,9 @@ function refuseNotThere(name: string, act: "submit" | "approval" | "undo", recor
 }
 
 /** What clearing `name` would delete and keep, with this Host's runtime and data snapshot capability as they are. */
-export function clearingFacts(name: string, history: readonly HistoryEntry[], runtime: RuntimeFacts, space: Pick<SpaceRuntime, "purge">, snapshotCapability: string | null): ClearingFacts {
+export function clearingFacts(name: string, history: readonly HistoryEntry[], runtime: RuntimeFacts, space: Pick<SpaceRuntime, "purge">, snapshotCapability: string | null, copiesApart = false): ClearingFacts {
   const snapshots = [...new Set(history.map((entry) => entry.data_ref?.ref).filter((ref): ref is string => typeof ref === "string" && ref.length > 0))];
-  return clearingWords(name, runtime, Boolean(space.purge), snapshots, snapshotCapability);
+  return clearingWords(name, runtime, Boolean(space.purge), snapshots, snapshotCapability, copiesApart);
 }
 
 /** The one line status, list and the owner page show while `cannotVouch` holds; undefined otherwise. */
